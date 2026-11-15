@@ -47,7 +47,7 @@ export class FakeTimers implements Timers {
 /** Let queued promise callbacks and the generators waiting on them run. */
 export const flush = () => Bun.sleep(0);
 
-/** What the webview's replica does with frames (2.2.4); S3.1 builds the real one. */
+/** What the webview's replica does with frames. */
 export class Replica {
   rows = new Map<string, Entity>();
   cursor: Cursor | undefined;

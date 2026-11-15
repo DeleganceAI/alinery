@@ -35,7 +35,7 @@ type Endpoint = {
 
 type Live = { key: string; extension: InstalledExtension; endpoint: Endpoint; report: McpServerReport };
 
-/** The built-in `alinery` server is this binary run with `--mcp` (plan S5.1, O10 b). Under `bun run` the script comes first; in a
+/** The built-in `alinery` server is this binary run with `--mcp`. Under `bun run` the script comes first; in a
  * `bun build --compile` binary the entry is the binary itself, as for a job child. */
 export function selfMcpCommand(): { command: string; args: string[] } {
   const compiled = import.meta.url.includes("/$bunfs/");
@@ -108,7 +108,7 @@ export class McpHub {
   }
 }
 
-/** `rpc` is how the built-in server reaches this daemon: the socket and the AGENT token minted for it (O20 c). `resolveBuiltin` is the test seam for a stand-in server. */
+/** `rpc` is how the built-in server reaches this daemon: the socket and the AGENT token minted for it. `resolveBuiltin` is the test seam for a stand-in server. */
 export type McpHubOptions = { repo: string; appConfig: string; agentDir: string; rpc?: { socket: string; token: string }; resolveBuiltin?: () => string | null };
 
 function desiredServers(options: McpHubOptions): Desired[] {

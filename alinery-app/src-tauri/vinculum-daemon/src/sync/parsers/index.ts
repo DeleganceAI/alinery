@@ -1,4 +1,4 @@
-// The file parsers that feed the store (plan 2.2.8, feed 2). A parser owns a family of paths under
+// The file parsers that feed the store. A parser owns a family of paths under
 // `.alinery/`: `match` recognises one by its path relative to `.alinery/` (forward slashes), `key` names
 // the row it feeds (so a missing file can delete it), and `parse` reads the file. `null` means "no row":
 // the file is missing or unreadable as this kind, and the key is deleted.
@@ -19,7 +19,7 @@ export type Parser = {
 
 export const parsers: Parser[] = [sessionMeta, task, draftAttachments, touch, canvas];
 
-/** The parser that owns `rel`, with its key. A path no parser matches is dropped (S0.4 rules). */
+/** The parser that owns `rel`, with its key. A path no parser matches is dropped. */
 export function route(rel: string): { parser: Parser; key: string; m: RegExpMatchArray } | undefined {
   for (const parser of parsers) {
     const m = rel.match(parser.match);

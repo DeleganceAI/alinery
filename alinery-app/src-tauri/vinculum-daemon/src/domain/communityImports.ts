@@ -1,4 +1,4 @@
-// The community import registry (plan S4.10), ported from the app's `community_playbooks.rs`: which community playbooks this
+// The community import registry, ported from the app's `community_playbooks.rs`: which community playbooks this
 // repository downloaded, at what version, and whether the local copy still matches what was imported. The registry is
 // `community-imports.toml` beside the playbooks it describes (the repository's `.alinery/playbooks/`, or the machine's global
 // library for a download kept for every repository), so its read-modify-write runs under that library's lock. Beside it,

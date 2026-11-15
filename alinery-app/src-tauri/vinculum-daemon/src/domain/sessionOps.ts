@@ -1,4 +1,4 @@
-// The writes to a session's meta and name files (plan S4.4): the name, the read marks of its notifications, the
+// The writes to a session's meta and name files: the name, the read marks of its notifications, the
 // archived stamp. Ports session_name.rs and session_actions.rs; the shared conformance cases pin the bytes.
 // Every write is a read-modify-write of the fields it names, so it cannot clobber the ones the runner writes at the
 // same time (it runs in the same process, in one tick, with no await between the read and the write).

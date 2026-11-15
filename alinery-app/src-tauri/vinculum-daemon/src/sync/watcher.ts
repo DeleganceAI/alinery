@@ -1,4 +1,4 @@
-// The file watcher (plan S0.4 WA, 2.2.8): Bun `fs.watch`, one recursive watch on `.alinery/tasks`, one
+// The file watcher: Bun `fs.watch`, one recursive watch on `.alinery/tasks`, one
 // non-recursive on `.alinery/` for the three config files, and one on `.alinery/sessions` for taskless
 // sessions when that directory exists. It trusts nothing in an event but the path: names that can't
 // matter (`*.scrollback`, which every PTY byte appends to, and `.tmp.` files) are dropped before any
@@ -28,7 +28,7 @@ export class Watcher {
       log?: (line: string) => void;
       /** The global `app.toml`, which sits outside `.alinery/`: its directory is watched and the file reported as `app.toml`. */
       appConfig?: string;
-      /** The machine's playbook library, outside the repository (S4.6): reported as `global-playbooks/...`. */
+      /** The machine's playbook library, outside the repository: reported as `global-playbooks/...`. */
       globalPlaybooks?: string;
     } = {},
   ) {}
@@ -37,7 +37,7 @@ export class Watcher {
     this.add(join(this.alinery, "tasks"), true, (f) => `tasks/${f}`);
     this.add(this.alinery, false, (f) => (CONFIG_FILES.has(f) ? f : undefined));
     this.add(join(this.alinery, "sessions"), false, (f) => `sessions/${f}`);
-    // The playbook library (S4.6): the repository's two directories and the machine's. The projector redoes the rows on any of them.
+    // The playbook library: the repository's two directories and the machine's. The projector redoes the rows on any of them.
     this.add(join(this.alinery, "playbooks"), true, (f) => `playbooks/${f}`);
     this.add(join(dirname(this.alinery), "alinery", "playbooks"), true, (f) => `committed-playbooks/${f}`);
     if (this.o.globalPlaybooks) this.add(this.o.globalPlaybooks, true, (f) => `global-playbooks/${f}`);
@@ -64,7 +64,7 @@ export class Watcher {
   }
 
   // ENOSPC is inotify's watch limit. The store stays right through the reconcile pass; the status is
-  // what `daemon/_/status` reports (S2.5).
+  // what `daemon/_/status` reports.
   private failed(dir: string, e: unknown) {
     if ((e as NodeJS.ErrnoException)?.code === "ENOSPC") this.status.enospc = true;
     this.o.log?.(`watcher: cannot watch ${dir}: ${(e as Error)?.message ?? e}`);

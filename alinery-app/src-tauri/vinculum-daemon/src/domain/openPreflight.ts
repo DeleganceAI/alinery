@@ -1,4 +1,4 @@
-// The checks `open_session` made in the shell before it asked the daemon to spawn or resume (S4.3, plan 2.3.4): which
+// The checks `open_session` made in the shell before it asked the daemon to spawn or resume: which
 // sessions a task may launch, and which harness a session's meta may name. They read the files the daemon owns, so a
 // remote repository is checked by its own host with the same code. The hosted-inference refresh stays in the shell.
 import { readTask } from "./taskFiles.ts";

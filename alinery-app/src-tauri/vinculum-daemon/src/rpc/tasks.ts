@@ -1,4 +1,4 @@
-// TaskService and DraftService (plan S4.3): the writes of a task's life. The read side is the `task/<slug>` and
+// TaskService and DraftService: the writes of a task's life. The read side is the `task/<slug>` and
 // `draft/<slug>` entities. Each write is serialized with every other writer of the repository (the task-mutation lock),
 // the file it changed is re-read into the store before the reply, so the reply's cursor already covers it, and a
 // write that names `expected_revision` is checked against the row as the file is now (a mismatch is ABORTED).
@@ -37,7 +37,7 @@ export type TaskDeps = {
   telemetry: Sender;
   blobs: BlobStore;
   afterCreate?: AfterCreate;
-  /** The backups: an archive waits for the one it asks for, a push or a commit queues the automatic one (S4.9). */
+  /** The backups: an archive waits for the one it asks for, a push or a commit queues the automatic one. */
   backups?: BackupHost;
 };
 

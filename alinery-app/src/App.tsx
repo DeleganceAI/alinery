@@ -770,7 +770,7 @@ export default function App() {
     setSetupTab(tab);
   };
 
-  // The setup screen picked a repo: open it, and run onboarding there when its host has not run it (D9).
+  // The setup screen picked a repo: open it, and run onboarding there when its host has not run it.
   const openFromSetup = async (key: string, hostConnected: boolean): Promise<boolean> => {
     if (!(await setRepo(key, hostConnected))) return false;
     setSetupTab(null);

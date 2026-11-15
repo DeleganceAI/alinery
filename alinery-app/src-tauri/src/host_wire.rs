@@ -1,4 +1,4 @@
-//! The host service wire (plan S5.2, O15 b): `proto/alinery/v1/host.proto`, hand-encoded with prost like the admin messages in
+//! The host service wire: `proto/alinery/v1/host.proto`, hand-encoded with prost like the admin messages in
 //! `daemon_rpc.rs` (the shell has no generated Rust). The service is `alinery-vinculum-daemon --host-service` on the host, and
 //! the bytes here are tested against what protobuf-es writes from the same file (`proto/golden/host.json`).
 //!

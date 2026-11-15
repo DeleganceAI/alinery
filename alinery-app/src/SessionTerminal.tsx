@@ -74,7 +74,7 @@ export function SessionTerminal({
   phase: string;
   harness: string;
   model: string;
-  // Daemon op: "attach" (never spawns), "spawn" (fresh + seed phase), "resume" (P5, resume_args).
+  // Daemon op: "attach" (never spawns), "spawn" (fresh + seed phase), "resume" (resume_args).
   intent: "attach" | "spawn" | "resume";
   resumeToken?: string;
   terminalFontSize: number;

@@ -1,4 +1,4 @@
-// Taskless chat threads (plan S4.4): the rooted Vinculum sessions under `.alinery/sessions/`. Ports alinery-core chat.rs.
+// Taskless chat threads: the rooted Vinculum sessions under `.alinery/sessions/`. Ports alinery-core chat.rs.
 // A thread is a session (`session/_/<id>`) plus a `chat/_/<id>` entity for what only the rail shows: the branch it
 // works on and whether a later thread continues it. The file and git half is here; the process half (create, start,
 // kill, resume) is the `ChatSessions` the daemon passes in, so the logic is testable without a runner.

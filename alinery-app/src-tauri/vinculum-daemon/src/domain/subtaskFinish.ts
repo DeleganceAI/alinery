@@ -1,4 +1,4 @@
-// Finishing a sub-task (plan S5.1), ported from alinery-core `subtask.rs` (`inspect_subtask_finish`, `finalize_subtask`) so the manager
+// Finishing a sub-task, ported from alinery-core `subtask.rs` (`inspect_subtask_finish`, `finalize_subtask`) so the manager
 // agent's two tools are served by the daemon that owns the files. The git state, the blockers per mode and the snapshot's
 // provenance keep the shape the tools have always answered.
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, copyFileSync } from "node:fs";
@@ -236,7 +236,7 @@ export function finalizeSubtask(repo: string, managerSessionId: string, mode: Fi
       writeAtomic(parentPath, parentBytes);
       throw e;
     }
-    // The archive is written, so a failure to drop the byte copies (O27) is logged and does not undo it.
+    // The archive is written, so a failure to drop the byte copies is logged and does not undo it.
     try {
       pruneExecutionObjects(repo, child.slug);
     } catch (e) {

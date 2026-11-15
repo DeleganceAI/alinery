@@ -1,12 +1,12 @@
-// Product-usage telemetry from the daemon (plan S4.1, O17 c), ported from alinery-core `telemetry.rs`: the
+// Product-usage telemetry from the daemon, ported from alinery-core `telemetry.rs`: the
 // consent rule, the record shape, the allowlists, the ingest URL and the basic auth. Events are a closed
 // union, so a caller can never put a path, a name or free text on the wire. This is the only file in the
 // daemon that builds an ingest request (`check-telemetry-privacy.sh`). Events move here from the Rust
-// `TelemetryEvent` as the session that owns their command lands: `SettingsChange` (S4.1), the draft and archive events (S4.3), the git events (S4.7), the backup and purge events (S4.9).
+// `TelemetryEvent` as the session that owns their command lands: `SettingsChange`, the draft and archive events, the git events, the backup and purge events.
 import { type Global, parseGlobal } from "../domain/settings.ts";
 import { readFileSync } from "node:fs";
 
-// The write-only ingest credential of telemetry.rs, shipped as it is (O25 b): a Caddy proxy in front of
+// The write-only ingest credential of telemetry.rs, shipped as it is: a Caddy proxy in front of
 // OpenObserve lets it do exactly POST /api/default/alinery_usage/_json, so the network layer is the boundary.
 const ORG = "default";
 const STREAM = "alinery_usage";

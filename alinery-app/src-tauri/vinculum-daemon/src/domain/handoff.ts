@@ -1,6 +1,6 @@
-// Review handoff (plan S4.5), the two halves `send_review_handoff_for_repos` did in one process. The target's daemon installs
+// Review handoff, the two halves `send_review_handoff_for_repos` did in one process. The target's daemon installs
 // the evidence artifact and the inbound record and creates the session; the source's daemon writes the outbound record. Each
-// daemon owns its own repository, so the client carries the artifact's text one way and the record back (the plan, S4.5).
+// daemon owns its own repository, so the client carries the artifact's text one way and the record back.
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { writeAtomic } from "../platform/fs.ts";

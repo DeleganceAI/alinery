@@ -191,7 +191,7 @@ pub(crate) struct RemoteHost {
     /// connect keeps what it had, minus browser sign-ins, and records it here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) sharing: Option<RemoteSharing>,
-    /// Whether the onboarding steps have run on this host (S6.1, D9). Always written, so a file
+    /// Whether the onboarding steps have run on this host. Always written, so a file
     /// without the key is one from before the mark existed (`migrate_onboarded_marks`).
     #[serde(default)]
     pub(crate) onboarded: bool,
@@ -223,7 +223,7 @@ pub(crate) struct AppConfig {
     #[serde(default)]
     pub(crate) known_repos: Vec<String>,
     /// Whether the onboarding steps have run on this computer, the host that is always there
-    /// (S6.1, D9). Always written, like `RemoteHost::onboarded`.
+    ///. Always written, like `RemoteHost::onboarded`.
     #[serde(default)]
     pub(crate) local_onboarded: bool,
     /// Keyed by host id. Core's `AppConfig` has no such key and ignores it.

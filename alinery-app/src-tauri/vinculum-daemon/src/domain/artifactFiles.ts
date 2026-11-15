@@ -1,4 +1,4 @@
-// A task's artifact files (plan S4.5): the path rules and the scan every artifact reader shares, ported from alinery-core
+// A task's artifact files: the path rules and the scan every artifact reader shares, ported from alinery-core
 // `shared.rs` (`validate_artifact_filename`, `resolve_artifact_path`, `owned_artifact_names`, `compare_artifact_paths`). A
 // name is relative to `tasks/<slug>/artifacts/`; `attachments/` and `subtasks/` are namespaces the ordinary scan never
 // enters; a symlink anywhere on the way is refused, so nothing outside the artifacts directory is reachable by a name.

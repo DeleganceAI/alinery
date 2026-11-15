@@ -1,4 +1,4 @@
-// BlobService's bookkeeping (plan 2.1.5, S4.3): chunked uploads into a task's attachments or into the daemon's staging
+// BlobService's bookkeeping: chunked uploads into a task's attachments or into the daemon's staging
 // directory, and the reads of attachments and a draft's pasted images. A blob is named, never addressed by a path: the
 // client says which task and which file, and this module resolves and checks the path, so nothing outside `.alinery/`
 // is reachable. Staged chunks live in `.alinery/tmp/uploads/<upload_id>` and are cleared when the daemon starts.
@@ -19,7 +19,7 @@ export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_ATTACHMENT_SET_BYTES = 100 * 1024 * 1024;
 /** The size a client should cut chunks to (WA 256 KiB). */
 export const CHUNK_BYTES = 256 * 1024;
-/** Artifact bodies and step snapshots leave in smaller frames (WA, S4.5): a reader renders as the first ones arrive. */
+/** Artifact bodies and step snapshots leave in smaller frames : a reader renders as the first ones arrive. */
 export const ARTIFACT_FRAME_BYTES = 64 * 1024;
 
 export type UploadTarget = { kind: "attachment"; taskSlug: string; name: string } | { kind: "chat"; threadId: string; name: string } | { kind: "staged"; name: string };
@@ -217,7 +217,7 @@ export function artifactNodeBlob(repo: string, taskSlug: string, nodeId: string)
 }
 
 /**
- * A file an execution kept (O27): `executions/<execution_id>/objects/<sha256>`. A link anywhere on the way is
+ * A file an execution kept: `executions/<execution_id>/objects/<sha256>`. A link anywhere on the way is
  * PERMISSION_DENIED. An archived task's `objects/` is gone: NOT_FOUND, and the message says it was pruned.
  */
 export function stepObjectBlob(repo: string, taskSlug: string, executionId: string, sha256: string): BlobBytes {

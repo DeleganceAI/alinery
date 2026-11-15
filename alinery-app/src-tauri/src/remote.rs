@@ -462,7 +462,7 @@ pub(crate) enum RefusalKind {
     StopsProcesses,
 }
 
-/// Why a host cannot run a daemon, found by the probe before anything is installed on it (plan S6.2).
+/// Why a host cannot run a daemon, found by the probe before anything is installed on it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct Refusal {
     pub(crate) kind: RefusalKind,
@@ -551,7 +551,7 @@ pub(crate) fn select_target<'a>(probe: &Probe, manifest: &'a RuntimeManifest) ->
     .collect();
     if !missing.is_empty() {
         let mac_git = darwin && missing.iter().any(|tool| tool == "git");
-        // Nothing is installed on the host yet when this is shown (D6): the user installs the tools there, then sets the host up again.
+        // Nothing is installed on the host yet when this is shown: the user installs the tools there, then sets the host up again.
         return Err(Refusal {
             missing_tools: missing.clone(),
             fix: mac_git.then(|| "xcode-select --install".to_string()),
@@ -643,7 +643,7 @@ pub(crate) fn remote_config_dir(root: &str, local_identity: &str) -> String {
 /// stay at their defaults.
 ///
 /// The telemetry preferences are copied whole (enabled, prompted, install id, endpoint): the host's
-/// daemon sends the events for what it does there (plan S4.1, O17 c), under this install and this
+/// daemon sends the events for what it does there, under this install and this
 /// consent, so a user who declined, or never answered, sends nothing from the host either.
 pub(crate) fn render_remote_app_toml(local: &AppConfig, remote_repo_paths: &[String], share_grok: bool) -> Result<String, String> {
     let mut config = AppConfig {
@@ -923,7 +923,7 @@ pub(crate) const DISCONNECTED: &str = "remote host disconnected";
 
 type Pending = std::sync::Arc<Mutex<HashMap<u64, mpsc::Sender<HostReply>>>>;
 
-/// The long-lived `alinery-vinculum-daemon --host-service` process on the host (plan S5.2), spoken to over one ssh channel in
+/// The long-lived `alinery-vinculum-daemon --host-service` process on the host, spoken to over one ssh channel in
 /// the frames of `host_wire`. Closing it releases the repo locks it holds and stops nothing else.
 pub(crate) struct HostChannel {
     child: Mutex<Child>,
@@ -1440,7 +1440,7 @@ fn attach_remote_repo(state: &AppState, session: &RemoteSession, app_config: &Pa
     // starter's settings and sign-ins; the footer says whose.
     if compat.usable() || compat == DaemonCompat::AppConfigMismatch {
         state.set_daemon(Path::new(key), compat);
-        // The repository half of readying a repo, which a remote one never had (plan S4.1). A failure leaves the repo as it was.
+        // The repository half of readying a repo, which a remote one never had. A failure leaves the repo as it was.
         if let Err(error) = ensure_remote_repo_ready(session, path) {
             crate::daemon::log_ensure_ready_failed(app_config, key, &error);
         }
@@ -1630,7 +1630,7 @@ fn attach_host_repos<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, se
     push_hosted_inference(app, host_id);
 }
 
-/// Plan S4.11 (R-S4.11-5): the hosted token reaches a host's daemon as a settings write, not only as the
+/// The hosted token reaches a host's daemon as a settings write, not only as the
 /// `inference.json` that `sync_config` pushes at connect (a file that goes stale between connects). One call
 /// per host is enough: every daemon on a host shares its app-config directory. A host that was not
 /// offered the hosted models, or a local file that is not there, is left alone; a daemon this app cannot

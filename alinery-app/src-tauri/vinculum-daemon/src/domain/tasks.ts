@@ -1,5 +1,5 @@
-// Task create, duplicate, rename, archive, restore, auto-approve and related tasks (plan S4.3), ported from alinery-core
-// `task_creation.rs` and `task.rs`. Rust still provisions sub-tasks (S4.8) and reads these files, so every file written
+// Task create, duplicate, rename, archive, restore, auto-approve and related tasks, ported from alinery-core
+// `task_creation.rs` and `task.rs`. Rust still provisions sub-tasks and reads these files, so every file written
 // here keeps the shape Rust's serde reads. A task is reserved under the task-mutation lock, its worktree is added outside
 // it (git can be slow, and an uncertain outcome is never retried), and the result is committed under it again.
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
@@ -432,7 +432,7 @@ export function ensureTaskCanArchive(repo: string, slug: string): void {
   }
 }
 
-/** execution.rs `prune_execution_objects` (O27): the byte copies an execution kept go; manifests and artifacts stay. */
+/** execution.rs `prune_execution_objects`: the byte copies an execution kept go; manifests and artifacts stay. */
 export function pruneExecutionObjects(repo: string, slug: string): void {
   const root = join(taskDir(repo, slug), "executions");
   let entries: string[];

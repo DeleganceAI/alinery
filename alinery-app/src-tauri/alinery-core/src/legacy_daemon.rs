@@ -1,8 +1,8 @@
 //! The one JSON-lines client left: it talks to a daemon older than the gRPC server (protocol 38 and below).
 //!
-//! The daemon itself no longer speaks this wire (S5.3). The app keeps this module so a person who upgrades
+//! The daemon itself no longer speaks this wire. The app keeps this module so a person who upgrades
 //! with an old daemon still running can see that daemon's version and live sessions and stop it behind the
-//! same confirmation (O23). Three ops, nothing else: version, list and shutdown.
+//! same confirmation. Three ops, nothing else: version, list and shutdown.
 
 use crate::{alineryd_socket_path, daemon_compat, rpc_socket_path, DaemonCompat, SessionState, SessionTransport};
 use serde::{Deserialize, Serialize};
@@ -138,7 +138,7 @@ pub fn peer_process_identity(stream: &UnixStream) -> Result<PeerProcessIdentity,
 /// Protocol 18 dropped the agent process ops. Shutdown is still
 /// `{"op":"shutdown"}` acknowledged by `{"ok":true}`; the 24 to 38 daemons' handler
 /// (`vinculum-daemon/src/main.ts`, `op === "shutdown"`) still speaks exactly that; 25 added the RPC
-/// socket, 26 the settings services, 27 the execution service, 28 the task, draft and blob services (`create_task` stays as the wire `alinery-mcp` uses until S5.1), 29 the session and chat services, 30 the artifact service, 31 the playbook service, 32 the git service, 33 the sub-task service, 34 the backup service and the backup and purge jobs 35 the agent service and the community import calls 36 `SettingsService.WriteHostedInference` 37 the provider service (the `provider_*` and `custom_provider_*` ops left the JSON-lines wire) and 38 `AdminService.MintToken` and the three sub-task calls the MCP server makes, and each left this op alone.
+/// socket, 26 the settings services, 27 the execution service, 28 the task, draft and blob services (`create_task` stayed as the wire the old `alinery-mcp` used), 29 the session and chat services, 30 the artifact service, 31 the playbook service, 32 the git service, 33 the sub-task service, 34 the backup service and the backup and purge jobs 35 the agent service and the community import calls 36 `SettingsService.WriteHostedInference` 37 the provider service (the `provider_*` and `custom_provider_*` ops left the JSON-lines wire) and 38 `AdminService.MintToken` and the three sub-task calls the MCP server makes, and each left this op alone.
 pub fn audited_shutdown_protocol(protocol: Option<u32>) -> bool {
     matches!(
         protocol,

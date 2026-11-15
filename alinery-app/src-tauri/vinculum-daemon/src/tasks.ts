@@ -50,7 +50,7 @@ function executionState(repo: string, slug: string, lane: string, appIdentity: s
   if ((stored.kind === "stored" || stored.kind === "converted") && (stored.state.seeds.length > 0 || stored.state.executions.size > 0)) {
     Object.assign(state, mergedRecords(state, stored.state, repo, slug));
   }
-  // O21: records the old runner wrote are history. The views offer no approve or resume for them.
+  // Records the old runner wrote are history. The views offer no approve or resume for them.
   if (stored.kind === "history_only") state.history_only = true;
   state.owning_lane = typeof state.owning_lane === "string" ? state.owning_lane : lane;
   state.owning_app_config_identity = typeof state.owning_app_config_identity === "string" ? state.owning_app_config_identity : appIdentity;
@@ -186,7 +186,7 @@ export function addExecution(repo: string, slug: string, execution: Record<strin
     const state = JSON.parse(readFileSync(path, "utf8")) as { executions?: Record<string, unknown>; engine?: unknown; revision?: number };
     state.revision = (typeof state.revision === "number" ? state.revision : 0) + 1;
     state.executions = { ...(state.executions ?? {}), [String(execution.id)]: execution };
-    // Marks the task as this daemon's, so the records are not taken for the old runner's (O21). An old log has its own mark.
+    // Marks the task as this daemon's, so the records are not taken for the old runner's. An old log has its own mark.
     if (!state.engine && !existsSync(join(dirname(path), "engine.jsonl"))) state.engine = EMPTY_ENGINE;
     writeAtomic(path, JSON.stringify(state));
   });

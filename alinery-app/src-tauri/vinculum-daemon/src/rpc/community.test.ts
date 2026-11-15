@@ -1,4 +1,4 @@
-// The community import calls (plan S4.10): a package the shell downloaded and staged is written into the repository the daemon owns, the
+// The community import calls: a package the shell downloaded and staged is written into the repository the daemon owns, the
 // registry beside the playbooks records it, and `playbook/_/community` says what the local files look like now. The cases are the ones the
 // app's `community_playbooks.rs` tests held for import, update and the registry (the HTTP half stays in the shell and keeps its own).
 import { afterEach, expect, test } from "bun:test";

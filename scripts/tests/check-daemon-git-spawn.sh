@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The daemon starts git from one file: vinculum-daemon/src/platform/git.ts (invariant 3 of the thick-daemon plan).
+# The daemon starts git from one file: vinculum-daemon/src/platform/git.ts.
 #
 # `git -C <dir>` does not override an inherited GIT_DIR, so a raw spawn in the daemon acts on whatever repository its
 # environment names (the same hazard check-git-env-scrub.sh guards on the Rust side). platform/git.ts resolves git like

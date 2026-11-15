@@ -1,4 +1,4 @@
-// SettingsService and RepoService (plan S4.1): the repository's `config.toml` writes and the repository's
+// SettingsService and RepoService: the repository's `config.toml` writes and the repository's
 // first-use setup. The read side is the `settings/_/repo` entity, so these return only `Applied`.
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { join } from "node:path";

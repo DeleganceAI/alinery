@@ -41,7 +41,7 @@ pub(crate) struct AppState {
     pub(crate) daemon_origins: Mutex<HashMap<PathBuf, DaemonOrigin>>,
     /// Every daemon on each ssh host (by host id), read from the host's records at connect and attach, for the footer.
     pub(crate) box_daemons: Mutex<HashMap<String, Vec<crate::host_wire::HostDaemon>>>,
-    // R2: managed MCP child (one per active repo). Killed on app exit / repo switch.
+    // The managed MCP child (one per active repo). Killed on app exit / repo switch.
     pub(crate) mcp_child: Mutex<Option<ManagedMcpChild>>,
     pub(crate) mcp_spawn_error: Mutex<Option<String>>,
     // B6/#132: one exclusive flock for every repository this window has open. Active
@@ -257,7 +257,7 @@ impl AppState {
             }
         }
     }
-    // R2: MCP child management
+    // MCP child management
     pub(crate) fn kill_mcp(&self) {
         if let Ok(mut guard) = self.mcp_child.lock() {
             if let Some(mut managed) = guard.take() {

@@ -1,4 +1,4 @@
-// The 26 tools `alinery-mcp` has always listed, and the daemon RPCs behind each (plan S5.1, O18 b). The schemas are the ones the
+// The 26 tools `alinery-mcp` has always listed, and the daemon RPCs behind each. The schemas are the ones the
 // Rust server answered, recorded before it was deleted; `rpc/auth.test.ts` holds `AGENT_RPCS` equal to the union of `rpcs` here
 // (plus `AdminService/Hello`, which needs no capability), so an RPC added to a tool must be added to the AGENT set too.
 

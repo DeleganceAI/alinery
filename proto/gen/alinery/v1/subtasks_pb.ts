@@ -432,8 +432,8 @@ export const FinalizeSubtaskResponseSchema: GenMessage<FinalizeSubtaskResponse> 
   messageDesc(file_alinery_v1_subtasks, 12);
 
 /**
- * The life of a parent task's sub-task (S4.8): what the task page offers, the manager session that designs the child, and
- * killing a child or throwing away a setup that never made one. The last three calls are the manager agent's own (S5.1,
+ * The life of a parent task's sub-task: what the task page offers, the manager session that designs the child, and
+ * killing a child or throwing away a setup that never made one. The last three calls are the manager agent's own (
  * `alinery_create_subtask`, `alinery_inspect_subtask_finish`, `alinery_finalize_subtask`). The daemon owns every file these touch
  * and stops the sessions itself, so a repository on another machine answers the same calls. A write that changes a file the
  * store holds answers with the cursor that covers it.

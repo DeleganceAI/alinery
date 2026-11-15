@@ -1175,7 +1175,7 @@ export const ToolCallPartSchema: GenMessage<ToolCallPart> = /*@__PURE__*/
 
 /**
  * Pi sessions have transcripts, not just bytes. The read side of a session is the `session/<slug>/<id>` entity; the
- * unary calls are its writes (S4.4), each with MutationMeta first, and they replace the JSON-lines ops of the same job.
+ * unary calls are its writes, each with MutationMeta first, and they replace the JSON-lines ops of the same job.
  * The history reads are one-off byte answers, not entities.
  *
  * @generated from service alinery.v1.SessionService
@@ -1296,7 +1296,7 @@ export const SessionService: GenService<{
     output: typeof ArtifactReadyResponseSchema;
   },
   /**
-   * The turn controls of a live harness session (S5.3: the JSON-lines prompt, abort, set_model and set_thinking_level ops).
+   * The turn controls of a live harness session (they replaced the JSON-lines prompt, abort, set_model and set_thinking_level ops).
    *
    * ACT
    *

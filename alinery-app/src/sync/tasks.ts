@@ -1,4 +1,4 @@
-// The task writes (plan S4.3): create, duplicate, rename, archive, restore, auto-approve, related tasks, drafts and the
+// The task writes: create, duplicate, rename, archive, restore, auto-approve, related tasks, drafts and the
 // uploads that attachments travel in. What `create_task_for_repo`, `duplicate_task_for_repo`, `archive_task_for_repo`,
 // `write_draft_for_repo` and their neighbours answered is answered here from the daemon's TaskService, DraftService and
 // BlobService; the shapes are the ones the views have always read.

@@ -50,7 +50,7 @@ export function adminService(info: DaemonInfo, lifecycle: Lifecycle, epoch: stri
       console.error(`join ${req.approve ? "approved" : "denied"}: id=${req.requestId}`);
       return {};
     },
-    // O20 (c): the shell asks for the token its managed MCP runs with. Only AGENT can be minted, so no credential can be made that
+    // The shell asks for the token its managed MCP runs with. Only AGENT can be minted, so no credential can be made that
     // holds more than the RPCs behind MCP's tools.
     mintToken: (req, ctx) => {
       requireCapability(ctx, Capability.ADMIN);

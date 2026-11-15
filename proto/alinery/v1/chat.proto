@@ -6,7 +6,7 @@ import "alinery/v1/common.proto";
 import "alinery/v1/sessions.proto";
 import "alinery/v1/tasks.proto";
 
-// Taskless chat threads (S4.4). The read side is the chat scope: `chat/_/<id>` (ChatThread) beside `session/_/<id>`.
+// Taskless chat threads. The read side is the chat scope: `chat/_/<id>` (ChatThread) beside `session/_/<id>`.
 // These are the writes. A thread's attachments go through BlobService (`ChatAttachmentBlob`), never as a path.
 service ChatService {
   // Mints a thread (and its own worktree when asked) and starts it. A thread that could not start comes back with

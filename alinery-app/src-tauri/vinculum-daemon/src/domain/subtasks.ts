@@ -1,6 +1,6 @@
-// A parent task's sub-task (plan S4.8), ported from alinery-core `subtask.rs` and the manager prompts of `shared.rs`: what the
+// A parent task's sub-task, ported from alinery-core `subtask.rs` and the manager prompts of `shared.rs`: what the
 // task page offers, the manager session, creating the child, and killing a child or discarding a setup. Finishing a child
-// (`inspect_subtask_finish`, `finalize_subtask`) is `subtaskFinish.ts` (S5.1). Every file written
+// (`inspect_subtask_finish`, `finalize_subtask`) is `subtaskFinish.ts`. Every file written
 // here keeps the shape Rust's serde reads. A child is reserved by `provisionTask` with the parent's links written in the same
 // reservation (`ProvisionHooks`), so the parent never names a child that has no task.
 import { randomUUID } from "node:crypto";

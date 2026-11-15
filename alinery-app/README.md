@@ -1,15 +1,15 @@
 # alinery-app
 
-Desktop UI for the Alinery task-centric AI coding playbook (kanban, persistent PTY sessions via `alineryd`, worktrees, playbook phases). Runs on macOS.
+The Alinery desktop app: tasks run as playbooks, each in its own git worktree, with agent sessions that keep running after you quit. Runs on macOS and Linux. A repository can sit on this computer or on a Linux machine or Mac you reach over SSH.
 
 ## Using the app (quick start)
 
-1. **Pick a repo** on first launch (or via the repo switcher). Alinery stores everything under `<repo>/.alinery/`.
-2. **Create a task** (`⌘N` or the “+” button) — gives it a slug, optional description, and an automatic git worktree on its own branch.
-3. **Open the task** → Kanban shows its current playbok phase. Click any phase to spawn a session.
-4. **Session view** runs the chosen harness (claude / codex / …) in a real PTY via xterm.js. The session keeps running in `alineryd` even if you quit the app; reopening re-attaches.
-5. **Artifacts** are written after each phase. Use the artifact list or MCP tools to read them.
-6. **Settings** (gear) manages browser-based GitHub/Linear connections plus repository config, harnesses, and notifications.
+1. **Pick a repo** on the setup screen, on this computer or an SSH host. Alinery keeps everything under `<repo>/.alinery/`.
+2. **Create a task** (`⌘N` or New task). It gets a slug, an optional description, a playbook, and its own worktree on a branch named after the slug.
+3. **Open the task.** The header shows the current playbook step; artifacts and sessions open as tabs, the Files panel browses the worktree, and the Git tab shows its changes.
+4. **Sessions** run on Vinculum, the agent built into Alinery's per-repository daemon. The daemon keeps a session running when you quit the app; reopening reattaches and replays its scrollback. A Terminal session is a plain shell in a real PTY.
+5. **Artifacts** are the numbered markdown files each step writes. Read and comment on them in the task, or through the MCP tools.
+6. **Settings** holds model providers, GitHub and Linear connections, SSH hosts, the repository's config, notifications, backups and the MCP server.
 
 ### Blocking sub-tasks
 
@@ -17,10 +17,10 @@ Each task can own one active direct child. **Start sub-task** creates or opens a
 manager session; the manager must ask before calling `alinery_create_subtask`. Alinery derives the
 parent, base branch, and worktree from that manager ID, creates a proper child task with a
 dedicated worktree based on the parent's explicit branch, and starts the first playbook step with
-the repository's effective default harness and model unless that step specifies its own harness.
-The parent shows the active child in its Sessions panel. The child links back through its header and
-lists only its own sessions. The parent remains usable for ordinary sessions, but cannot start
-another direct child until the active child finishes.
+the repository's default model unless that step names its own. The parent shows the active child
+in its Sessions panel. The child links back through its header and lists only its own sessions.
+The parent remains usable for ordinary sessions, but cannot start another direct child until the
+active child finishes.
 
 Every child session prompt identifies its immediate parent ticket and artifact directory. The
 parent's artifact tree exposes the active child's files through a live logical
@@ -36,31 +36,18 @@ task records, sessions, artifacts, worktrees, branches, or manager transcript. T
 still opens the archived child and its manager when present. **Discard setup** remains the
 hard-delete path for a manager that never created a child.
 
-The three lifecycle tools are filesystem/Git control calls. Child creation also starts exactly the
-new child's initial playbook session through the manager's existing daemon lane. Finish inspection
-only observes existing daemon session IDs as advisory warnings; it does not attach to, write to, or
-stop those sessions.
+The three lifecycle tools are filesystem and git control calls. Child creation also starts exactly
+the new child's initial playbook session. Finish inspection only observes existing session IDs as
+advisory warnings; it does not attach to, write to, or stop those sessions.
 
-### Harness state and phase completion
+### Step completion
 
-`alineryd` remains the PTY/process authority. For an OMP session it launches through the
-exec-only `alinery-runner`, which injects Alinery's bundled run-local OMP extension. The extension
-reports typed agent events over the existing daemon socket, so the UI can distinguish
-in-progress, idle, waiting for input (`WI`), and waiting for approval (`WA`) without parsing
-terminal bytes.
-
-OMP is the only semantic adapter in v1. Claude, Codex, opencode, DS4, Grok, and custom
-harnesses still launch normally and remain interactive, but display `! Unsupported`; they
-do not emit semantic notifications or auto-advance.
-
-Playbook completion is explicit: the OMP prompt must call `alinery_phase_complete` after writing
-the assigned artifact and continue only when the tool reports that Alinery accepted it. Rejections
-identify invalid artifacts or stale session ownership so OMP can repair and retry; delivery
-failure is reported separately. `alineryd` persists one semantic checkpoint and creates an enabled
-next phase exactly once. Artifact presence, age, or stability never implies completion.
-
-For full walkthroughs, screenshots, and troubleshooting see the top-level [`README.md`](../README.md) and [`alinery-app/VERIFY.md`](VERIFY.md).
-
+Completion is explicit. The step's prompt tells the agent to save its assigned artifacts and then
+call `alinery_phase_complete`, and to go on only when Alinery reports that it accepted them. A
+rejection names the invalid artifact or the stale session ownership, so the agent can fix it and
+call again. The playbook engine records the accepted outputs once and starts the next eligible step
+once. An artifact's presence, age, or stability never implies completion.
+`docs/playbook-design-guidance.md` has the full rules.
 
 ## Running the app
 
@@ -72,76 +59,70 @@ npm run tauri dev          # dev mode
 npm run tauri build        # production bundle
 ```
 
-`npm run tauri dev` automatically launches **Alinery Dev** with identifier
-`ai.delegance.alinery.dev` and app config
-`~/Library/Application Support/ai.delegance.alinery.dev/app.toml`. `build` and every other
-non-`dev` Tauri command use **Alinery**, use `ai.delegance.alinery`, and keep the existing production
-config path. The development config is global to development launches, not per worktree;
-repository-local `.alinery/` data is unchanged, so use disposable repositories for live testing.
+`npm run tauri dev` launches **Alinery Dev** with identifier `ai.delegance.alinery.dev` and app
+config under `~/Library/Application Support/ai.delegance.alinery.dev/`. `build` and every other
+non-`dev` Tauri command use **Alinery**, `ai.delegance.alinery`, and the production config path.
+Each source checkout or worktree gets its own development config under
+`ai.delegance.alinery.dev/instances/<source-root-hash>/`. A repository's `.alinery/` data is the
+same whichever app opens it, so use disposable repositories for live testing.
 
 The built app lives in `src-tauri/target/release/bundle/`.
 
-### Provider connections
+### Connections
 
-GitHub connection uses the installed `gh` CLI and its system credential store. Linear uses OAuth PKCE and the macOS Keychain. The Delegance Alinery OAuth app is already registered with callback `http://127.0.0.1:43119/oauth/linear/callback`. Override with `ALINERY_LINEAR_CLIENT_ID` only if you are using a different Linear app.
+GitHub signs in through the browser. Linear uses OAuth PKCE with the Delegance Alinery OAuth app,
+whose callback is `http://127.0.0.1:43119/oauth/linear/callback`. Set `ALINERY_LINEAR_CLIENT_ID`
+only if you use a different Linear app.
 
-## MCP server (alinery-mcp)
+## MCP server
 
-`alinery-mcp` exposes Alinery tasks, sessions, artifacts, and settings to any MCP client
-(Claude Desktop, Cursor, etc.). **Primary install for Desktop hosts is stdio** — see also the
-[root README 2-minute guide](../README.md#connect-mcp-claude-desktop--cursor--2-minutes).
+The MCP server is the daemon binary started with `--mcp`. It exposes Alinery's tasks, sessions,
+artifacts, and settings to any MCP client (Claude Desktop, Cursor, and the like). Every tool is a call
+on the repository's daemon, made with a token the app mints; it writes nothing in `.alinery/` itself.
 
-### Stdio / host config (recommended for Claude Desktop, Cursor, …)
+### Stdio host config (Claude Desktop, Cursor, …)
 
-Point the host at the absolute `alinery-mcp` binary. One process serves every repo; `repo` is a
-per-call tool argument (a path from `alinery_list_repos`), not a launch flag. If the host already
-has other servers, **merge** the `alinery` entry — do not overwrite the whole `mcpServers` object.
+**Settings → MCP server** shows whether the binary is ready and a **Copy config** button that fills
+in the binary path and its arguments. One process serves every repository; `repo` is a per-call tool
+argument (a path from `alinery_list_repos`), not a launch flag. If the host already has other
+servers, **merge** the `alinery` entry; do not overwrite the whole `mcpServers` object.
 
 ```json
 {
   "mcpServers": {
     "alinery": {
-      "command": "/path/to/alinery-app/src-tauri/target/release/alinery-mcp"
+      "command": "/path/to/alinery-vinculum-daemon",
+      "args": ["--mcp", "--app-config", "...", "--endpoints-file", "..."]
     }
   }
 }
 ```
 
-**macOS host files:**
-
-| Host | Config file |
+| Host | Config file (macOS) |
 |------|-------------|
 | Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Cursor | `~/.cursor/mcp.json` and/or project `.cursor/mcp.json` |
 
-Binary locations: `alineryd`, `alinery-runner`, and `alinery-mcp` are sibling sidecars next to the Alinery
-app executable in a bundle; in dev they live under `src-tauri/target/debug/` (or `release`).
-Restart the host after editing MCP configuration.
+`alinery-vinculum-daemon` sits next to the Alinery executable in a bundle; in dev it is under
+`src-tauri/target/debug/` (or `release`). Restart the host after editing its MCP configuration.
 
-In the running app, **Settings → MCP Server** shows a binary readiness chip, the full envelope,
-and **Copy config**. Path ⧉ buttons and the managed socket live under **Advanced**.
+Tools are whatever the binary reports through `tools/list`; do not rely on a fixed count. Session
+tools can create playbook-step or auxiliary rows with additional instructions, start them, observe
+their state, and read their history. Sessions an MCP client starts outlive its disconnect, because
+the daemon owns them.
 
-Or run directly:
+Local repositories are read and write; remote ones are discovery only. No MCP mode offers
+interactive session control: no attach, input, resize, detach, kill, resume, takeover, or bulk
+orchestration.
 
-```bash
-alinery-mcp
-# then speak JSON-RPC over stdio; repo is a per-call tool argument
-```
+### Sessions Alinery starts
 
-Tools are whatever the current binary reports through `tools/list`; do not rely on a fixed count. Session tools can create playbook-step or auxiliary Generic rows with additive instructions, optionally start them through the detached daemon, start an eligible existing row by task/session ID, observe structured state, and read bounded screen or raw history. Started PTYs outlive stdio-host disconnects because `alineryd` owns them.
+Every Vinculum session gets the Alinery tools from its own daemon. You do not add Alinery MCP to it
+by hand.
 
-Local repos are read/write; remote repos are discovery-only. Stdio works without the Alinery window. Neither stdio nor managed mode exposes interactive PTY control: no attach, input, resize, detach, kill, resume, takeover, or bulk orchestration. The MCP client owns filtering, batching, and any merge policy.
+### Advanced: the app-managed socket
 
-### Alinery-launched OMP sessions
-
-Alinery automatically mounts a repository-scoped `alinery-mcp` stdio server in every OMP session it
-launches. `alinery-runner` supplies OMP with a private extension package containing both the Alinery
-extension and its `.mcp.json`; you do not need to add Alinery MCP to OMP manually. New sessions pick
-up rebuilt sidecars after the repository daemon restarts.
-
-### Advanced — app-managed socket
-
-When a repo is active and the managed toggle is on, the app can spawn an `alinery-mcp --serve` child
-at `<repo>/.alinery/mcp.sock`. That child dies when you quit Alinery or switch repos. It is **optional
-for Desktop hosts** and is not the default install path (debugging / same-machine tools only).
-See Settings → MCP → **Advanced — managed socket**.
+While a repository is active and the managed toggle is on, the app runs
+`alinery-vinculum-daemon --mcp --serve --managed` on `<repo>/.alinery/mcp.sock`. It stops when you
+quit Alinery or switch repositories. It is for debugging and same-machine tools, not the install
+path for desktop hosts. See **Settings → MCP server → Advanced**.

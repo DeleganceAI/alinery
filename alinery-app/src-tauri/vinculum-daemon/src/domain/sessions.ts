@@ -1,8 +1,7 @@
-// The live half of the session entity and the daemon's status row (plan 2.2.8, S2.5). The meta file
+// The live half of the session entity and the daemon's status row. The meta file
 // gives a Session its stored fields (parsers/sessionMeta.ts); this adds `status` and `wait`, which
 // exist only while the daemon runs the session. The feed calls `withLive` on every Session it
-// commits, so a watcher event for the meta file cannot overwrite the live state (the hazard
-// recorded in 4.1 at S2.3).
+// commits, so a watcher event for the meta file cannot overwrite the live state.
 import { clone, create } from "@bufbuild/protobuf";
 import { DaemonStatusSchema, type Entity, EntitySchema, SessionStatusSchema, SessionWaitSchema } from "alinery-proto/alinery/v1/entities_pb";
 import { lstatSync, openSync, readSync, closeSync } from "node:fs";
@@ -102,7 +101,7 @@ export function commitDaemonStatus(store: Store, info: { protocol: number; build
 export type LiveRow = LiveSession & { id: string; taskSlug: string };
 
 /**
- * The session-change hook (S2.5): the runner calls `changed` whenever a session row moves, and the
+ * The session-change hook: the runner calls `changed` whenever a session row moves, and the
  * session's entity and the live count are recommitted. `liveRows` is the daemon's own table, read at
  * commit time, so what lands in the store is what `list` would answer at that moment.
  */

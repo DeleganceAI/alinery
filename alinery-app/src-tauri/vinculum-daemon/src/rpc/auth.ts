@@ -1,4 +1,4 @@
-// Bearer-token auth and capabilities for the RPC socket (plan 2.1.10, R8).
+// Bearer-token auth and capabilities for the RPC socket.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import { Code, ConnectError, createContextKey, createContextValues, type ContextValues, type HandlerContext } from "@connectrpc/connect";
@@ -50,11 +50,11 @@ function matches(given: string, secret: Buffer): boolean {
   return actual.length === secret.length && timingSafeEqual(actual, secret);
 }
 
-/** The AGENT tokens this daemon has minted (plan 2.1.10, O20 c): the daemon's own for the MCP it runs for each harness, and the
+/** The AGENT tokens this daemon has minted: the daemon's own for the MCP it runs for each harness, and the
  * ones the shell asks for with `AdminService.MintToken`. They live in memory and die with the daemon. A label names one token, and a
  * second mint with the same label replaces it, so a client that refreshes does not pile them up. The token it replaced stays valid
  * until the mint after that: the shell re-mints every 30 s, and a tool call that read the endpoints file just before a mint is
- * still mid-call (R-S5.1-4). */
+ * still mid-call. */
 export class TokenRegistry {
   private readonly byLabel = new Map<string, { current: Buffer; previous?: Buffer }>();
 
@@ -76,7 +76,7 @@ export class TokenRegistry {
 
 const rpc = (service: string, method: string) => `alinery.v1.${service}/${method}`;
 
-/** What an AGENT credential may call: exactly the RPCs behind `alinery-mcp`'s 26 tools (plan S5.1, O18 b), each with the capability its
+/** What an AGENT credential may call: exactly the RPCs behind `alinery-mcp`'s 26 tools, each with the capability its
  * handler checks, which the credential holds for that call only. Never `Shutdown`, the rest of ADMIN, or anything that needs APPROVE.
  * `mcpServer/tools.ts` names the RPCs behind each tool, and `auth.test.ts` holds the two lists equal. */
 export const AGENT_RPCS: ReadonlyMap<string, Capability> = new Map([
@@ -108,7 +108,7 @@ export const AGENT_RPCS: ReadonlyMap<string, Capability> = new Map([
 export const JOIN_RPCS: ReadonlySet<string> = new Set([rpc("AdminService", "RequestJoin"), rpc("AdminService", "CollectJoin")]);
 
 /** Every request carries a token. A header that is not the daemon's own or a minted one, including an empty or malformed one, is
- * never treated as no header, and no header is UNAUTHENTICATED too (R8). `method` is `<service>/<method>`: a minted token holds AGENT, and
+ * never treated as no header, and no header is UNAUTHENTICATED too. `method` is `<service>/<method>`: a minted token holds AGENT, and
  * for a method in `AGENT_RPCS` also the capability that method checks. */
 export function credentials(header: Headers, peer: PeerClass, secret: Buffer, minted: TokenRegistry, method: string, members?: Members): ContextValues {
   // How a client without a token asks for one; the handlers hold no capability and answer only for the request itself. Only a

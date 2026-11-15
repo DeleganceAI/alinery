@@ -1,6 +1,6 @@
 // grpc-js on the wire, while daemon handlers keep Connect's ServiceImpl shape (async functions and
 // async generators that read ctx.signal). The same impl objects also run in memory under
-// createRouterTransport in tests, so there is one handler code path (plan 2.1.7).
+// createRouterTransport in tests, so there is one handler code path.
 import { create, fromBinary, toBinary, type DescService } from "@bufbuild/protobuf";
 import { ConnectError, createHandlerContext, type ContextValues, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import { setTrailerStatus } from "@connectrpc/connect/protocol-grpc";
@@ -82,7 +82,7 @@ export function addService<S extends DescService>(
         }
       };
     } else {
-      // The webview's fetch has no request stream; terminals use the split form (O8 a).
+      // The webview's fetch has no request stream; terminals use the split form.
       throw new Error(`${m.name}: client and bidi streams are not served`);
     }
   }

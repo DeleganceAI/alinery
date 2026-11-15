@@ -1,4 +1,4 @@
-// Task drafts (S4.3), ported from alinery-core `task_drafts.rs`: the half-written task the create form autosaves.
+// Task drafts, ported from alinery-core `task_drafts.rs`: the half-written task the create form autosaves.
 // A draft is a task with `draft = true` plus a ticket artifact and `draft-attachments.json`. Pasted images stay
 // base64 inside that file, as Rust wrote them, so a draft written by either side reads on the other.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";

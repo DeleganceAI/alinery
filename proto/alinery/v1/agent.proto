@@ -4,7 +4,7 @@ package alinery.v1;
 
 import "alinery/v1/common.proto";
 
-// The host's agent directory (S4.10, O12 a): `<config>/vinculum/config/agent/` beside the app config the daemon was started with,
+// The host's agent directory: `<config>/vinculum/config/agent/` beside the app config the daemon was started with,
 // so each host has its own and the daemon on it owns it. It holds the model roles (`config.yml`), the skills, the extensions
 // and the user MCP servers a session of that host loads. Nothing here is executed: the inventory only reads names and metadata.
 service AgentService {
@@ -20,7 +20,7 @@ service AgentService {
   // Brings back every included skill removed with `DeleteSkillRequest.included`.
   rpc RestoreIncludedSkills(RestoreIncludedSkillsRequest) returns (RestoreIncludedSkillsResponse);  // ACT
   rpc CustomizationPrompt(CustomizationPromptRequest) returns (CustomizationPromptResponse);  // VIEW
-  // The agent's built-in tools and the state of each MCP server connection (S5.3: the JSON-lines vinculum_customizations op).
+  // The agent's built-in tools and the state of each MCP server connection (it replaced the JSON-lines vinculum_customizations op).
   rpc ReadMcpStatus(ReadMcpStatusRequest) returns (ReadMcpStatusResponse);            // VIEW
   // What the office skills can run on this host: each program as the agent's shell finds it, and whether its Python is the
   // one the runtime bundles.

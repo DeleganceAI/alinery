@@ -20,7 +20,7 @@ export type SessionHooks = {
   stop(id: string): Promise<void>;
   /** A session the engine launched: it stands for this execution of this step. */
   bind(id: string, executionId: string, step: string): void;
-  /** A task's playbook engine saved its state to `execution.json`, so its execution entity may have changed (S2.4, S4.2). */
+  /** A task's playbook engine saved its state to `execution.json`, so its execution entity may have changed. */
   executionChanged?(taskSlug: string): void;
 };
 
@@ -260,7 +260,7 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
   // One daemon owns a task. The same check guards a session open (main.ts taskOpenAllowed).
   if (owner && ((typeof execution.owning_lane === "string" && execution.owning_lane !== owner.lane) || (typeof execution.owning_app_config_identity === "string" && execution.owning_app_config_identity !== owner.identity))) return;
   const stored = loadEngineState(repo, slug);
-  // O21: records the old Rust runner wrote. They stay as history; nothing is seeded, reserved or launched.
+  // Records the old Rust runner wrote. They stay as history; nothing is seeded, reserved or launched.
   if (stored.kind === "history_only") return;
   const parsed = parsePlaybookMd(readFileSync(sourcePath, "utf8"));
   if (!parsed.playbook) {

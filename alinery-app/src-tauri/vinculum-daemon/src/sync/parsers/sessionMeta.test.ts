@@ -39,7 +39,7 @@ describe("session meta conformance", () => {
         const entity = store.get(key);
         if (!entity) continue; // a file the parser refused
         const json = toJson(EntitySchema, entity, { useProtoFieldName: true }) as { session: Record<string, unknown> };
-        // `ref` comes from the path and `status` is S2.5's; neither is in the meta file.
+        // `ref` comes from the path and `status` is the live state; neither is in the meta file.
         const { ref: _ref, status: _status, ...meta } = json.session;
         actual[key] = meta;
       }

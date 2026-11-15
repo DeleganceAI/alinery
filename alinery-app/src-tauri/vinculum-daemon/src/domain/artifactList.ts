@@ -1,4 +1,4 @@
-// The artifact list of a task (plan S4.5): one row per visible artifact with the step, session, handoffs and execution
+// The artifact list of a task: one row per visible artifact with the step, session, handoffs and execution
 // that explain it, and one per attachment. Ports `list_artifacts_with_metadata_for`, `list_artifacts_with_execution_metadata`
 // and `board::artifacts_with_metadata` (alinery-core shared.rs, board.rs). The order is part of the answer: the rows of an
 // execution-driven task come step by step, newest depth first, then the files no execution claims, then the attachments.

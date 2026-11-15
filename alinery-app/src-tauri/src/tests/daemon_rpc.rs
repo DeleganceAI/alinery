@@ -885,7 +885,7 @@ fn a_takeover_is_bound_to_the_process_it_was_confirmed_for() {
             .spawn()
             .unwrap(),
     );
-    // Up to 30 s: a re-executed test binary starts slowly under full-workspace load (R-FLAKE-2).
+    // Up to 30 s: a re-executed test binary starts slowly under full-workspace load.
     let mut stream = None;
     for _ in 0..600 {
         match std::os::unix::net::UnixStream::connect(&child_socket) {

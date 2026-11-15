@@ -1,4 +1,4 @@
-// What the daemon does around the backup and purge jobs (S4.9): starts them, owns the automatic triggers, waits for the backup an
+// What the daemon does around the backup and purge jobs: starts them, owns the automatic triggers, waits for the backup an
 // archive needs, and reports each one that finished. The job bodies are jobs/child.ts (backup) and jobs/purge.ts; this is the
 // part that runs in the daemon itself, because it needs the daemon's sessions, its telemetry and its store.
 import { JobKind, type Job, JobState } from "alinery-proto/alinery/v1/entities_pb";

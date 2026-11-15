@@ -1,4 +1,4 @@
-// Views read entities through these (plan 2.2.10, 2.5). One replica per repo and scope, shared by
+// Views read entities through these. One replica per repo and scope, shared by
 // every view that asks for it; the stream closes when the last one lets go.
 import { create, toJsonString } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";

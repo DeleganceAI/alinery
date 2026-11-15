@@ -1,4 +1,4 @@
-// The library pieces the conformance cases do not reach (plan S4.6): the compiled-in set is the set of directories on disk, and the
+// The library pieces the conformance cases do not reach: the compiled-in set is the set of directories on disk, and the
 // no-repository roots reach the bundled and global scopes only.
 import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";

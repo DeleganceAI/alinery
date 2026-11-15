@@ -1,4 +1,4 @@
-// ProviderService (plan S4.12) through the real RPC socket, on the real provider runtime in a temp config directory: sign in with
+// ProviderService through the real RPC socket, on the real provider runtime in a temp config directory: sign in with
 // an API key (groq asks for the key and stores it, offline), poll, reply, sign out; a custom provider; the model list. The
 // capability rows are the point of the second half: every credential call is ADMIN, so a peer that is not the shell is refused.
 import { afterEach, expect, test } from "bun:test";

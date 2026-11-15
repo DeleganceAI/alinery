@@ -781,7 +781,7 @@ export const LoginMethodSchema: GenEnum<LoginMethod> = /*@__PURE__*/
   enumDesc(file_alinery_v1_providers, 0);
 
 /**
- * Provider sign-in, the custom OpenAI-compatible providers and the model list (S4.12). The credential files are the
+ * Provider sign-in, the custom OpenAI-compatible providers and the model list. The credential files are the
  * daemon's, so a repository on another machine signs in on that machine's daemon and lists that machine's models.
  * What stays in the shell is the browser: an `auth_url` event is opened by the page through the shell's `open_url`.
  * Everything that reads or writes a credential is ADMIN, the poll and the reply included (a poll carries the sign-in

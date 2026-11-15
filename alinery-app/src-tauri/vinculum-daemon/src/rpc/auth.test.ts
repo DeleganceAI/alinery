@@ -9,7 +9,7 @@ const headers = (token?: string) => new Headers(token === undefined ? {} : { aut
 const caps = (token: string | undefined, method: string, tokens: TokenRegistry, peer: "shell" | "other" | "ssh" = "shell") =>
   [...capabilitiesOf({ values: credentials(headers(token), peer, SECRET, tokens, method) } as never)].map((c) => Capability[c]).sort();
 
-test("an AGENT credential may call exactly the RPCs behind the 26 MCP tools (O18 b)", () => {
+test("an AGENT credential may call exactly the RPCs behind the 26 MCP tools", () => {
   expect(TOOLS.length).toBe(26);
   expect([...AGENT_RPCS.keys()].sort()).toEqual([...TOOL_RPCS].sort());
 });

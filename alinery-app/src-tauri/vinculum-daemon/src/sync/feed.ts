@@ -1,4 +1,4 @@
-// Files to store rows (plan 2.2.8, feed 2). `refresh(rel)` re-reads one path through its parser and
+// Files to store rows. `refresh(rel)` re-reads one path through its parser and
 // commits the result: a put (the store drops it when nothing changed) or a delete. It trusts no
 // event's kind: the answer is whatever the file is now. `scan()` runs every path through the same
 // parsers at start, and `reconcile()` is the 30 s pass that covers missed events.
@@ -8,25 +8,25 @@ import { join } from "node:path";
 import { parsers, route } from "./parsers/index.ts";
 import type { Store } from "./store.ts";
 
-const BATCH = 256; // stats or reads in flight at once; a synchronous pass would block the loop (2.2.8)
+const BATCH = 256; // stats or reads in flight at once; a synchronous pass would block the loop
 
 const MISSING = -1; // a `present` path whose file does not exist
 type Tracked = { key: string; mtimeMs: number; size: number };
 
 export class Feed {
   readonly tracked = new Map<string, Tracked>(); // by path relative to `.alinery/`
-  /** Told of every path a `refresh` re-read, matched by a parser or not: rows that derive from a whole directory (S4.5). */
+  /** Told of every path a `refresh` re-read, matched by a parser or not: rows that derive from a whole directory. */
   onChanged?: (rel: string) => void;
   private readonly chains = new Map<string, Promise<void>>();
 
   constructor(
     readonly store: Store,
     readonly alinery: string,
-    /** Applied to each entity before it is committed: the live state a file cannot hold (S2.5). */
+    /** Applied to each entity before it is committed: the live state a file cannot hold. */
     private readonly decorate: (entity: Entity) => Entity = (e) => e,
-    /** The paths to re-read after a path changed: rows derived from more than their own file (S3.5). Applied once, never to a path it caused. */
+    /** The paths to re-read after a path changed: rows derived from more than their own file. Applied once, never to a path it caused. */
     private readonly dependents: (rel: string) => string[] = () => [],
-    /** Paths that live outside `.alinery/`, by the name the feed knows them as (`app.toml`, S4.1). */
+    /** Paths that live outside `.alinery/`, by the name the feed knows them as (`app.toml`). */
     private readonly outside: Record<string, string> = {},
   ) {}
 

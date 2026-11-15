@@ -435,7 +435,7 @@ export enum Capability {
   ADMIN = 4,
 
   /**
-   * MCP: the four session tools until S5.1, then exactly the RPCs behind its tools (O18 b)
+   * MCP: exactly the RPCs behind its tools
    *
    * @generated from enum value: CAPABILITY_AGENT = 5;
    */
@@ -512,7 +512,7 @@ export const AdminService: GenService<{
     output: typeof ShutdownResponseSchema;
   },
   /**
-   * ADMIN (S5.1, O20 c)
+   * ADMIN
    *
    * @generated from rpc alinery.v1.AdminService.MintToken
    */
@@ -522,7 +522,7 @@ export const AdminService: GenService<{
     output: typeof MintTokenResponseSchema;
   },
   /**
-   * The sessions whose process is running, for the consent a takeover or a restart asks for (S5.3: the JSON-lines `list` op).
+   * The sessions whose process is running, for the consent a takeover or a restart asks for (it replaced the JSON-lines `list` op).
    *
    * ADMIN
    *

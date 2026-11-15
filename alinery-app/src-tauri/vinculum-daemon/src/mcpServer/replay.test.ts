@@ -1,6 +1,6 @@
-// The fixture replay (plan S5.1 Tests): the calls `alinery-mcp` (Rust) answered on a fixture repository, made again against a real daemon
+// The fixture replay: the calls `alinery-mcp` (Rust) answered on a fixture repository, made again against a real daemon
 // through this module. Each reply must equal the recorded one once the values that differ by construction (ids, times, the temp
-// directory) are normalised, except the calls in EXCEPTIONS, which are the changes the plan names, each with what it checks instead.
+// directory) are normalised, except the calls in EXCEPTIONS, which are the deliberate changes, each with what it checks instead.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -45,7 +45,7 @@ function paths(want: unknown, got: unknown, at = "$", out: string[] = []): strin
 const EXCEPTIONS: { when: (call: Recorded) => boolean; why: string; check: (actual: string, want: string, root: string) => void }[] = [
   {
     when: (c) => c.name === "alinery_get_task",
-    why: "get_task answers Bun.TOML.stringify of the task entity, not the file's text (plan S5.1): the same fields, normalised",
+    why: "get_task answers Bun.TOML.stringify of the task entity, not the file's text: the same fields, normalised",
     check: (actual, want, root) => expect(normalise(Bun.TOML.parse(actual) ? JSON.stringify(Bun.TOML.parse(actual)) : "", root)).toEqual(normalise(JSON.stringify(Bun.TOML.parse(want)), root)),
   },
   {
@@ -89,11 +89,11 @@ afterAll(async () => {
   if (daemon) rmSync(daemon.fixture.root, { recursive: true, force: true });
 });
 
-test("every recorded call gets its recorded reply, except the changes the plan names", async () => {
+test("every recorded call gets its recorded reply, except the deliberate changes", async () => {
   const { root, repo } = daemon.fixture;
   const endpointsFile = join(daemon.fixture.root, "endpoints.json");
   writeFileSync(endpointsFile, JSON.stringify({ version: 1, repos: { [repo]: { socket: daemon.socket, token: daemon.token } } }));
-  // The shell's managed MCP, the only one `alinery_send_review_handoff` is offered to (O22 a): one token per daemon, in a file.
+  // The shell's managed MCP, the only one `alinery_send_review_handoff` is offered to: one token per daemon, in a file.
   const ctx = daemon.context({ endpoints: new Endpoints(undefined, endpointsFile) });
   let sid = "";
   const differences: string[] = [];

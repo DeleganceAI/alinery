@@ -1,4 +1,4 @@
-// Mutation dedupe (plan 2.2.7): the last 256 mutation ids per client, each with its answer (or
+// Mutation dedupe: the last 256 mutation ids per client, each with its answer (or
 // error). In memory, so a restart clears it, which is what the epoch rule there expects.
 const KEEP = 256;
 

@@ -1,6 +1,6 @@
-// The 26 tools, each a call on the daemon's RPC (plan S5.1). MCP reads nothing from `.alinery/` and writes nothing there: a read is a
+// The 26 tools, each a call on the daemon's RPC. MCP reads nothing from `.alinery/` and writes nothing there: a read is a
 // one-shot subscription, a change is the RPC that owns it. The shapes of the replies are the ones `alinery-mcp` answered with
-// (`fixtures/rust-replies.json` holds what it answered for each); `docs/thick-daemon-plan.md` S5.1 names where they now differ.
+// (`fixtures/rust-replies.json` holds what it answered for each).
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";

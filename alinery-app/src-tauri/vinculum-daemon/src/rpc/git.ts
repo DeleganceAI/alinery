@@ -1,4 +1,4 @@
-// GitService (plan S4.7): the git work a task does, run by the daemon so a local and a remote repository answer the same
+// GitService: the git work a task does, run by the daemon so a local and a remote repository answer the same
 // calls. A write that changes task.md re-reads it into the store before the reply, so the reply's cursor already covers it.
 // Each write that reaches outside the repository (commit, push, remove a worktree) records a usage event, as the shell did.
 import type { ServiceImpl } from "@connectrpc/connect";
@@ -15,7 +15,7 @@ import { domain, metaOf } from "./errors.ts";
 
 export type GitDeps = {
   repo: string;
-  /** A commit or a push queues the automatic backup (S4.9). */
+  /** A commit or a push queues the automatic backup. */
   backups?: { publish(trigger: "post_push_commit"): void };
   refresh: (rel: string) => Promise<void>;
   telemetry: Sender;

@@ -1,4 +1,4 @@
-// The GitHub issue import (plan S4.10). The request goes out from this machine with this machine's credentials, whichever machine the
+// The GitHub issue import. The request goes out from this machine with this machine's credentials, whichever machine the
 // repository is on; the two facts that live with the repository come from its daemon: the `origin` URL a bare `#123` resolves against,
 // and the repository's own GitHub token override (null: it has none, so the global token applies).
 import * as ipc from "../ipc";

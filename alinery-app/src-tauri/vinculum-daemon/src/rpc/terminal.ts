@@ -1,4 +1,4 @@
-// TerminalService (plan 2.1.5, O8 a): Attach streams a shell's output from a scrollback offset, and the
+// TerminalService: Attach streams a shell's output from a scrollback offset, and the
 // input comes back as unary Write calls, which the daemon puts in input_seq order per attach.
 import { randomUUID } from "node:crypto";
 import { type MessageInitShape } from "@bufbuild/protobuf";

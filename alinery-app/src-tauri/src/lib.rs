@@ -238,7 +238,7 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 if let Some(state) = app.try_state::<AppState>() {
-                    state.kill_mcp(); // R2: ensure managed child dies with app
+                    state.kill_mcp(); // the managed MCP child dies with the app
                 }
             }
             // alineryd remains detached (on purpose)

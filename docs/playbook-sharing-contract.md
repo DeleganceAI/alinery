@@ -75,7 +75,7 @@ List, `GET :id`, and mine. No `body`. No `owner_id`. No email.
   "playbook_key": "review",
   "title": "Review",
   "description": "Review a change.",
-  "default_harness": "omp",
+  "default_harness": "vinculum",
   "has_coding_step": false,
   "step_count": 4,
   "version": 3,
@@ -223,7 +223,7 @@ Valid document, HTTP 200. `key_taken` is true only when this caller already has 
     "key": "review",
     "title": "Review",
     "description": "Review a change.",
-    "default_harness": "omp",
+    "default_harness": "vinculum",
     "step_count": 4,
     "has_coding_step": false
   }
@@ -445,7 +445,7 @@ key = "review"
 title = "Review"
 description = "Review a change."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 [[step]]
 key = "read"
 title = "Read"

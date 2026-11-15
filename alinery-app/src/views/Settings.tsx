@@ -317,7 +317,7 @@ export function Settings({
   const globalSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const [overrides, setOverrides] = useState<RepoOverrides>(EMPTY_OVERRIDES);
   // A repository's values come from the daemon's settings row. A write shows at once through the overlay and is
-  // dropped once the row has passed the write's cursor (plan 2.2.7).
+  // dropped once the row has passed the write's cursor.
   const repoRead = useRepoSettings(scope.kind === "repo" ? scope.repoPath : "");
   const written = useOverlay<{ cfg: Config; overrides: RepoOverrides }>();
   const repoBase = useMemo(() => (repoRead.settings ? { cfg: repoRead.settings.effective, overrides: repoRead.settings.overrides } : undefined), [repoRead.settings]);

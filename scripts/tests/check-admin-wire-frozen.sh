@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# O23: Hello, Shutdown and the messages they use (admin.proto, common.proto) are frozen once
+# Hello, Shutdown and the messages they use (admin.proto, common.proto) are frozen once
 # released, so an old app can always ask any daemon what it is. This runs `buf breaking` on those
 # two files only, against the last release tag that has a proto/ directory. The scope is on the
 # command line because buf.yaml has no "only these files" setting for breaking, only `ignore`.

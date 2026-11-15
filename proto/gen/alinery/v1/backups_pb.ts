@@ -167,9 +167,9 @@ export const VerifyBackupResponseSchema: GenMessage<VerifyBackupResponse> = /*@_
   messageDesc(file_alinery_v1_backups, 6);
 
 /**
- * The reads and checks around a backup (S4.9). Creating one is JobService.StartBackup; restoring one is not a daemon
+ * The reads and checks around a backup. Creating one is JobService.StartBackup; restoring one is not a daemon
  * call at all (it replaces the files under the daemon, so the shell stops the daemon and runs it, 2.3.5). The archives
- * are written and read with the host's `zip` and `unzip` (O11 b), so a repository on another machine lists and checks
+ * are written and read with the host's `zip` and `unzip`, so a repository on another machine lists and checks
  * the archives on its own disk.
  *
  * @generated from service alinery.v1.BackupService

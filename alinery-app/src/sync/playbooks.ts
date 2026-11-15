@@ -1,4 +1,4 @@
-// The playbook library from the daemon (plan S4.6): the catalog is the `playbook/*` rows of the repo scope, one definition is a
+// The playbook library from the daemon: the catalog is the `playbook/*` rows of the repo scope, one definition is a
 // unary read, validate and render are unary, and a write carries `expected_revision` (the row this window last saw). These keep the
 // names and shapes the views already use (`listPlaybookCatalog`, `readPlaybook`, ...), so a view changed only where it imported them.
 //

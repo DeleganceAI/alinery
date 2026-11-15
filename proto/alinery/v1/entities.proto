@@ -9,10 +9,6 @@ message SessionRef {
   string id = 2;
 }
 
-// Each entity message gets its real fields in the session that first produces it (plan 2.1.4):
-// session meta S2.3 (status and attention S2.5), execution S2.4, daemon status S2.5, job S2.6, task S3.5, the rest P4. Until then
-// an entity is empty, except Task and Session, which carry the few fields S2.1's tests need to
-// tell one row from another.
 message PlaybookRef {
   string scope = 1;  // bundled, global or repo
   string key = 2;
@@ -30,7 +26,7 @@ message BoardStep {
   string key = 1;
   string title = 2;
 }
-// What the board shows about a task that no single file holds: derived by the daemon (S3.5, rule R3)
+// What the board shows about a task that no single file holds: derived by the daemon
 // from the task, its non-archived sessions and its playbook, and recomputed when any of them commits.
 message BoardProjection {
   uint64 session_count = 1;  // non-archived sessions
@@ -101,16 +97,15 @@ message Draft {
   repeated DraftImageInfo images = 3;
 }
 // One task's execution state, as `getTaskExecution` returns it (`TaskExecutionState` and the playbook
-// definition) in JSON form. S4.2 replaces the two Structs with typed fields when it moves the state
-// into execution.json; until then the entity and the RPC read are built by the same function.
+// definition) in JSON form. The entity and the RPC read are built by the same function.
 message Execution {
   string slug = 1;
   google.protobuf.Struct state = 2;
   google.protobuf.Struct definition = 3;
 }
 // Fields 3 and up are `SessionMeta` (alinery-core types.rs), named as in the meta.json the daemon and
-// Rust both write, so the parser (S2.3) and Rust's serde output compare field by field. `ref` comes
-// from the file's path; `status` is the live state, which S2.5 fills.
+// Rust both write, so the parser and Rust's serde output compare field by field. `ref` comes
+// from the file's path; `status` is the live state.
 message SemanticCheckpoint {
   optional uint64 phase_completed_at = 1;
   optional string vinculum_session_id = 2;
@@ -133,7 +128,7 @@ message SessionStatus {
   string message_adapter = 8;
   string transport = 9;  // pty (a terminal session) or rpc (an agent session), as the `status` op reports it
 }
-// The Attention doc's `wait` (plan S2.5): what the agent is waiting on, a field of the session.
+// The Attention doc's `wait`: what the agent is waiting on, a field of the session.
 message SessionWait {
   string kind = 1;  // input or approval
   string correlation_id = 2;
@@ -179,7 +174,7 @@ message Session {
   optional string name = 36;
   string name_source = 37;  // auto or user
   optional string name_error = 38;
-  // What an attention notification calls this session: its task's name, else the slug, else "session" (S4.4). The
+  // What an attention notification calls this session: its task's name, else the slug, else "session". The
   // shell shows the OS notification; the text comes from here, so it reads no meta file.
   string attention_label = 39;
 }
@@ -198,7 +193,7 @@ message HandoffRecord {
   string target_phase = 11;
   uint64 created_at_ms = 12;
 }
-// One row of a task's artifact list (`artifact/<slug>/<name>`, S4.5), as `board::artifacts_with_metadata` made it: the visible
+// One row of a task's artifact list (`artifact/<slug>/<name>`), as `board::artifacts_with_metadata` made it: the visible
 // files, and the files an execution has yet to write (no `modified_at_ms`). `position` is the row's place in that list's order.
 message Artifact {
   string slug = 1;
@@ -251,16 +246,16 @@ message ReviewPending {
   string artifact = 2;
   string review = 3;  // the review file's name
 }
-// A taskless chat thread (key `chat/_/<id>`): what the rail shows beside the thread's `session/_/<id>` row (S4.4).
+// A taskless chat thread (key `chat/_/<id>`): what the rail shows beside the thread's `session/_/<id>` row.
 message ChatThread {
   string id = 1;
   string branch_label = 2;  // the branch the thread works on
   bool checkout = 3;        // true: the repository checkout; false: the thread's own worktree
   bool superseded = 4;      // a later thread continues this one (resume_of); the rail hides it
 }
-// A background job (plan 2.3.5): a child process of the daemon's binary, reported through this entity.
-// Progress arrives through Subscribe. The result's oneof numbers are fixed: backup = 10 and purge = 12 (S4.9),
-// storage = 11 (S2.6); import = 13 is S4.10's.
+// A background job: a child process of the daemon's binary, reported through this entity.
+// Progress arrives through Subscribe. The result's oneof numbers are fixed: backup = 10 and purge = 12,
+// storage = 11 and import = 13.
 message Job {
   string id = 1;
   JobKind kind = 2;
@@ -445,7 +440,7 @@ message EffectiveHarness {
   Harness harness = 1;
   SettingSource source = 2;
 }
-// `settings/_/repo` (S4.1): what `read_scoped_settings_strict` and `effective_harnesses_for` answered, built from
+// `settings/_/repo`: what `read_scoped_settings_strict` and `effective_harnesses_for` answered, built from
 // the repository's `config.toml` and `harnesses.toml` and the daemon's `app.toml`. When a file
 // is refused, as serde refuses it, only `error` is set.
 message Settings {
@@ -460,9 +455,9 @@ message DaemonStatus {
   uint32 protocol = 1;
   string build_id = 2;
   uint32 live_sessions = 3;  // sessions whose process is not exited
-  string host_guard_warning = 4;  // "" until S4.1 adds the host-tool check
+  string host_guard_warning = 4;  // "" when the host-tool check finds nothing
   bool watch_exhausted = 5;  // inotify ran out of watches (ENOSPC); the 30 s reconcile keeps the store right
-  // Agent-state counts over live sessions (S3.1): the status dot's busy/waiting colour needs them with no poll.
+  // Agent-state counts over live sessions: the status dot's busy/waiting colour needs them with no poll.
   uint32 busy = 6;
   uint32 waiting_for_input = 7;
   uint32 waiting_for_approval = 8;
@@ -476,7 +471,7 @@ message PlaybookDiagnostic {
   optional string field = 4;
   string severity = 5;
 }
-// One definition the library offers (`playbook/<scope>/<key>`, S4.6): bundled, global or the repository's. Only what the
+// One definition the library offers (`playbook/<scope>/<key>`): bundled, global or the repository's. Only what the
 // catalog shows; the whole definition is `PlaybookService.Read`, because the bundled set alone is half a megabyte of prompts.
 // A definition that does not parse is still a row, with `diagnostics` and no title.
 message Playbook {
@@ -546,7 +541,7 @@ message CommunityPublication {
   string id = 1;
   PlaybookRef reference = 2;
 }
-// `playbook/_/community` (S4.10): the repository's community import registry. `error` is why it could not be read (the list is then empty).
+// `playbook/_/community`: the repository's community import registry. `error` is why it could not be read (the list is then empty).
 message PlaybookCommunity {
   repeated CommunityImport imports = 1;
   string error = 2;
@@ -559,7 +554,7 @@ message Attachment {
   optional uint64 modified_at_ms = 3;
   uint32 position = 4;
 }
-// One node of the artifact tree a task shows (S4.5). `kind`: owned, attachment, subtask_folder or referenced. `source`: owned,
+// One node of the artifact tree a task shows. `kind`: owned, attachment, subtask_folder or referenced. `source`: owned,
 // parent_context, active_child or snapshot. `reveal_path` is the file's path below `.alinery/` on the daemon's machine, set on
 // every file node (not a folder), for Reveal and Copy path; a client names a file by `id` (BlobService `ArtifactNodeBlob`),
 // never by that path.

@@ -120,7 +120,7 @@ describe("session reads", () => {
   });
 });
 
-describe("the turn controls and the process (S5.3)", () => {
+describe("the turn controls and the process", () => {
   it("a prompt and an abort name the session; a prompt carries a mutation id and an abort does not", async () => {
     await promptSession("/r", "s1", "hello");
     await abortSession("/r", "s1");

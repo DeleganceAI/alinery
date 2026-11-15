@@ -1,4 +1,4 @@
-// One repository owner (plan S4.11), ported from alinery-core `repo_ownership.rs` onto platform/lock.ts. Lock markers are
+// One repository owner, ported from alinery-core `repo_ownership.rs` onto platform/lock.ts. Lock markers are
 // permanent: a lease is held until the daemon exits and its file is never unlinked. Under the task-mutation lock, every
 // previous owner and every retained task record is checked before anything is written; a live owner, a lock or socket that
 // cannot be inspected, or evidence that cannot be read blocks the whole project. When all owners are stopped, the project's
@@ -32,7 +32,7 @@ const stem = (lane: string) => (lane === "" ? "alineryd" : `alineryd-${lane}`);
 export const laneLockPath = (repo: string, lane: string) => join(alineryDir(repo), `.${stem(lane)}.lock`);
 /** The gRPC socket every daemon serves: `rpc.sock` or `rpc-<lane>.sock`. */
 export const laneSocketPath = (repo: string, lane: string) => join(alineryDir(repo), `${lane === "" ? "rpc" : `rpc-${lane}`}.sock`);
-/** Where a lane's daemon answers: its gRPC socket, and the JSON-lines one that only a daemon from before S5.3 still listens on. Either answering means the lane's daemon is running. */
+/** Where a lane's daemon answers: its gRPC socket, and the JSON-lines one that only a daemon of protocol 38 or older still listens on. Either answering means the lane's daemon is running. */
 export const laneSockets = (repo: string, lane: string) => [laneSocketPath(repo, lane), join(alineryDir(repo), `${stem(lane)}.sock`)];
 const repoLockPath = (repo: string) => join(alineryDir(repo), ".repo-owner.lock");
 

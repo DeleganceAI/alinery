@@ -1,10 +1,8 @@
 # Playbook design guidance
 
-**Draft reference for humans and coding agents working on Alinery.**
+Reference for humans and coding agents working on Alinery.
 
-Read this when changing playbook-related code: parser/validation, task creation, daemon commands, scheduling, artifact assignment, runner integration, MCP or UI. It captures the agreed **v2 design**, not a claim that the current release already implements it. Check the implementation and applicable repository instructions before making changes.
-
-“Draft” describes this reference document's prose, not the approval status of the underlying decisions. For implementation planning, start with the task's consolidated design `03-decide-004.md`, including its read-order and baseline-correction table; then use `03-decide-002.md` for the parser and `03-decide-003.md` for library storage. The original unsuffixed/split drafts are historical, not parallel specifications.
+Read this when changing playbook-related code: the engine (`playbook-engine/`), parsing and validation, task creation, the daemon's execution and playbook services, scheduling, artifact assignment, MCP or UI. It records the invariants of the v2 design. Check the implementation and AGENTS.md before relying on a detail.
 
 This is not a task plan, an approval record or a walkthrough for end users. Its purpose is to explain where behavior belongs, which invariants must survive a change, and which tempting shortcuts are incorrect.
 
@@ -18,7 +16,7 @@ Keep failures distinct from a harness intentionally asking for direction. Neithe
 
 ## The design in one paragraph
 
-The app owns reusable playbook authoring and user interaction. The daemon owns task creation, execution state, artifact assignments, permissions and process lifetime, using shared implementation in `alinery-core`. Each task retains one fixed playbook definition and one worktree. The engine binds concrete input/output occurrences for each execution, including loop passes; filenames do not drive scheduling. Harnesses write ordinary files and request completion. Human-gated executions stay interactive until explicitly allowed to finish. Accepted completion is followed by controlled shutdown before dependent work starts or coding exclusivity is released.
+The app owns reusable playbook authoring and user interaction. The daemon owns task creation, execution state, artifact assignments, permissions and process lifetime, and embeds the playbook engine (`playbook-engine/`) to do it. Each task retains one fixed playbook definition and one worktree. The engine binds concrete input/output occurrences for each execution, including loop passes; filenames do not drive scheduling. Harnesses write ordinary files and request completion. Human-gated executions stay interactive until explicitly allowed to finish. Accepted completion is followed by controlled shutdown before dependent work starts or coding exclusivity is released.
 
 ## Concepts that must not be conflated
 
@@ -42,19 +40,17 @@ Execution/session separation does not authorize automatic takeover, retries or m
 | Area | Owns |
 | --- | --- |
 | App/UI | Forms, library editor/import/save workflow, dialogs, human permission actions, picker preferences and presentation. |
-| `alinery-core` | Shared parser/validator/renderer, graph rules, storage helpers, data types, daemon request builders and reply parsing. |
-| `alineryd` | Authoritative task/execution creation, assignments, completion permissions, scheduling, failure state and processes. |
+| `playbook-engine/` | Parser, validator and renderer, graph rules, occurrence binding, scheduling, completion acceptance and the engine state saved in `execution.json`. |
+| Daemon (`vinculum-daemon`) | Authoritative task and execution creation, assignments, completion permissions, failure state and session lifetime (`domain/executions.ts`, `domain/executionStore.ts`), and the playbook library (`domain/playbookLibrary.ts`). |
 | MCP | Client of the same execution operations, including create/start; not a second task database or self-approval path. |
 
-Calling a core helper from the app still executes in the app process. Shared code alone does not establish daemon ownership.
+The app keeps no copy of these rules: it calls the daemon's services and reads their entities.
 
-- Task creation goes through daemon commands, including initial session setup. App/MCP do not first write authoritative execution metadata and then ask the daemon to launch it.
+- Task creation goes through the daemon's services, including initial session setup. App/MCP do not first write authoritative execution metadata and then ask the daemon to launch it.
 - Both clients support create-and-start and create-without-starting. Starting does not require a terminal attachment.
 - Initial, additional primary-playbook, child/imported-task and automatically advanced paths must not become alternate implementations of the same rules.
-- Reusable playbook authoring remains app-driven through core. It is not a task. The daemon independently validates the definition it will execute with the same parser.
+- Reusable playbook authoring is app-driven through the daemon's `PlaybookService`. It is not a task. The daemon validates the definition it will execute with the same parser.
 - Keep unrelated account, updater and connection behavior out of this change.
-
-Use the existing local command boundary. A future portable task request needs the definition and attachment contents, not laptop-local paths. Remote transport, authentication, repository provisioning, source synchronization and transfer protocols are **not** part of this work.
 
 ## Task-scoped live-session limit
 
@@ -253,7 +249,7 @@ The execution allocator reserves each exact path or wildcard family in `executio
 
 Harnesses write files whenever they choose. The shared engine assignment explicitly requires filesystem writes to the selected assigned paths, verification that the files were saved, a brief user-facing handoff, and an actual `alinery_phase_complete` call in the handoff turn. Printing an artifact in chat does not save it or complete the execution. These delivery instructions belong to the engine assignment, not repeated playbook boilerplate. The daemon controls whether completion is accepted and when dependent work starts.
 
-For OMP, that assignment supplies the actual invocation route: use `write` with `path: "xd://alinery_phase_complete"` and `content: "{}"`. This dispatches the extension tool; it does not write an artifact or require a separately listed completion tool. The user-facing handoff precedes acceptance because the accepted call requests session shutdown.
+The user-facing handoff precedes acceptance because the accepted call requests session shutdown.
 
 On accepted completion, record only the actual valid assigned publications in one immutable receipt. Later files cannot expand the accepted set through replay. Reservations and ownership remain attributed to the execution, including omitted assignments. Confirm source shutdown before dependent launch or capacity release. A file can exist and be readable before then without becoming scheduler-ready; acceptance does not promise every potential successor will run.
 
@@ -316,9 +312,9 @@ Authorized completion request
     -> release coding ownership and launch eligible successors
 ```
 
-A successful completion response acknowledges durable acceptance, not that successors are already running. Socket acknowledgement alone does not prove tool-result/history flush. Exercise the runner handshake rather than killing the process immediately after writing a reply.
+A successful completion response acknowledges durable acceptance, not that successors are already running. Do not end the session before its tool result and history are saved.
 
-Return the accepted tool result and request OMP's ordinary shutdown. The prompt asks the agent to finish without starting more work; this is not a host-enforced ban on queued turns. Retain coding ownership and live capacity until process exit and output drain are proven, even if shutdown stalls. An intentional completion-triggered signal exit is not automatically an execution failure; retain the actual lifecycle information.
+Return the accepted tool result and end the session the ordinary way. The prompt asks the agent to finish without starting more work; this is not a host-enforced ban on queued turns. Retain coding ownership and live capacity until process exit and output drain are proven, even if shutdown stalls. An intentional completion-triggered signal exit is not automatically an execution failure; retain the actual lifecycle information.
 
 History, metadata and artifacts remain readable. Completing one session does not archive/delete it, stop unrelated sessions or shut down the daemon.
 
@@ -382,29 +378,23 @@ Tests should prove observable behavior, not field copies, prompt wording or sour
 
 ## Boundaries and details not to improvise
 
-Keep file-backed persistence and shared core behavior. Do not add a database, compatibility fallback or duplicated app/MCP implementation as a shortcut.
+Keep file-backed persistence and one engine. Do not add a database, compatibility fallback or duplicated app/MCP implementation as a shortcut.
 
-New daemon wire operations require the existing protocol-version discipline. New frontend commands use the typed IPC boundary. Do not weaken packaged OMP/host guards or stop sessions on app quit, polling, reconnect or protocol mismatch. Completion-triggered stopping is a narrow approved lifecycle change, not a general teardown permission.
+New daemon wire operations require the existing protocol-version discipline. A new daemon RPC is called from `src/sync/*.ts`; a shell command, which is rare, goes through the typed IPC boundary. Do not weaken host guards or stop sessions on app quit, polling, reconnect or protocol mismatch. Completion-triggered stopping is a narrow approved lifecycle change, not a general teardown permission.
 
 Each task stores its retained `playbook.md` and authoritative `execution.json` beside `task.md`. Execution records own concrete bindings, output reservations, permissions, receipts and shutdown proof. Session metadata is a repairable projection. Successful empty collections can close without starting consumers; missing expected work remains an obligation, not a pruned branch. Human-steered loops use fresh accepted triggers, meaningful stopping reports or a visible pause for unresolved direction. Recovery uses existing sessions/MCP. Concurrency is a per-task creation-time live-session limit, default 10. Do not add configuration layers, conflicting local conventions or new failure/approval policies.
 
-## Implementation entry points and design sources
+## Implementation entry points
 
 Canonical implementation entry points:
 
-- [Core playbook/session/artifact helpers](../alinery-app/src-tauri/alinery-core/src/shared.rs)
-- [Strict parser and selector grammar](../alinery-app/src-tauri/alinery-core/src/playbook.rs)
-- [Scope-qualified library](../alinery-app/src-tauri/alinery-core/src/playbook_library.rs)
-- [Durable execution and allocation](../alinery-app/src-tauri/alinery-core/src/execution.rs)
-- [Occurrence-based scheduler](../alinery-app/src-tauri/alinery-core/src/playbook_scheduler.rs)
-- [Core types](../alinery-app/src-tauri/alinery-core/src/types.rs)
-- [Shared daemon client](../alinery-app/src-tauri/alinery-core/src/daemon_client.rs)
-- [Protocol compatibility](../alinery-app/src-tauri/alinery-core/src/protocol.rs)
-- [Daemon execution and reconciliation](../alinery-app/src-tauri/alineryd/src/execution.rs)
-- [App task commands](../alinery-app/src-tauri/src/task.rs)
-- [App playbook commands](../alinery-app/src-tauri/src/playbook.rs)
-- [MCP entry points](../alinery-app/src-tauri/mcp/src/main.rs)
-- [OMP extension](../alinery-app/src-tauri/runner/assets/omp-extension.ts)
-- [Typed frontend IPC](../alinery-app/src/ipc.ts)
-
-Design source: Alinery task **Implement v2 of playbook engine**. Start with consolidated design `03-decide-004.md` and its explicit cross-artifact corrections, then the parser baseline `03-decide-002.md` and storage baseline `03-decide-003.md`. In particular, the parser's broad historical coding-fan-out wording does not override its approved input-only guard; storage has no shadowing; the daemon invokes the shared parser; and existing tasks retain their fixed definition regardless of later library edits/deletion. Prior pending-approval banners are historical where superseded by the recorded user decisions.
+- [Playbook model and validation](../playbook-engine/src/playbook.ts) and [the `playbook.md` parser](../playbook-engine/src/playbook-md.ts)
+- [Occurrence-based scheduler](../playbook-engine/src/schedule.ts)
+- [Engine: launch, completion and live-session limit](../playbook-engine/src/engine.ts), [completion acceptance](../playbook-engine/src/accept.ts) and [saved state](../playbook-engine/src/state.ts)
+- [The harness boundary the engine drives](../playbook-engine/src/harness.ts)
+- [Daemon executions](../alinery-app/src-tauri/vinculum-daemon/src/domain/executions.ts) and [the `execution.json` store](../alinery-app/src-tauri/vinculum-daemon/src/domain/executionStore.ts)
+- [Playbook library](../alinery-app/src-tauri/vinculum-daemon/src/domain/playbookLibrary.ts) and [sub-tasks](../alinery-app/src-tauri/vinculum-daemon/src/domain/subtasks.ts)
+- [Execution and playbook wire](../proto/alinery/v1/executions.proto), [playbooks](../proto/alinery/v1/playbooks.proto)
+- [MCP tools](../alinery-app/src-tauri/vinculum-daemon/src/mcpServer/tools.ts)
+- [App calls](../alinery-app/src/sync/execution.ts) and [playbook library calls](../alinery-app/src/sync/playbooks.ts)
+- The Rust parser the conformance cases hold equal to the TypeScript one: [`alinery-core/src/playbook.rs`](../alinery-app/src-tauri/alinery-core/src/playbook.rs)

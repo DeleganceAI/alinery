@@ -1,4 +1,4 @@
-// The playbook library (plan S4.6), ported from alinery-core `playbook_library.rs`: three scopes of definitions
+// The playbook library, ported from alinery-core `playbook_library.rs`: three scopes of definitions
 // (bundled, compiled in; global, `<app config dir>/playbooks/<key>/playbook.md`; repo, `.alinery/playbooks/<key>/playbook.md`
 // and the maintainers' committed files under `alinery/playbooks/`), the catalog of them, save and delete, and the picker
 // preferences. Files are the registry; picker data is presentation, never definition lookup. The parser is the engine's

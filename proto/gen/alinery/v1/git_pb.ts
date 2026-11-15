@@ -676,9 +676,9 @@ export const GitOriginUrlResponseSchema: GenMessage<GitOriginUrlResponse> = /*@_
   messageDesc(file_alinery_v1_git, 26);
 
 /**
- * Git work on a task's repository and worktree (S4.7). The daemon runs git (platform/git.ts is its one spawn site), so the
+ * Git work on a task's repository and worktree. The daemon runs git (platform/git.ts is its one spawn site), so the
  * same calls serve a local repository and one on another machine. The GitHub API call that looks up a task's pull request
- * stays in the shell, which holds the token (2.3.4): the shell asks TaskPullRequestInputs, calls GitHub, then records what
+ * stays in the shell, which holds the token: the shell asks TaskPullRequestInputs, calls GitHub, then records what
  * it found with RecordDiscoveredPullRequest. A write that changes task.md answers with the cursor that covers it.
  *
  * @generated from service alinery.v1.GitService

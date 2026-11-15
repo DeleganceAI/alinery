@@ -1,10 +1,10 @@
-// The error shapes every mutation RPC shares: a ConnectError that carries the plan's machine-readable
+// The error shapes every mutation RPC shares: a ConnectError that carries the machine-readable
 // code as an ErrorDetail, the mutation id check, and the mapping from a domain refusal to a gRPC code.
 import { Code, ConnectError } from "@connectrpc/connect";
 import { ErrorDetailSchema, type MutationMeta } from "alinery-proto/alinery/v1/common_pb";
 import { DomainError } from "../platform/lock.ts";
 
-/** `fields` carries what a client needs to act on the refusal beyond its text (S4.6: the playbook library's tagged errors as JSON). */
+/** `fields` carries what a client needs to act on the refusal beyond its text (the playbook library's tagged errors as JSON, for one). */
 export const fail = (code: Code, detail: string, message: string, fields?: Record<string, string>) =>
   new ConnectError(message, code, undefined, [{ desc: ErrorDetailSchema, value: { code: detail, message, fields } }]);
 

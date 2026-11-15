@@ -1,4 +1,4 @@
-// The artifact tree of a task (plan S4.5): its own artifacts and attachments, the parent's artifacts as context, the
+// The artifact tree of a task: its own artifacts and attachments, the parent's artifacts as context, the
 // active child's, and the snapshots of finished sub-tasks. Ports alinery-core `artifact_tree.rs`. A node is named by an
 // id (a hash of where it sits for this viewer), never by a path: `resolveNode` turns an id back into a file and refuses
 // anything that is not a regular file below the root it was found under.
