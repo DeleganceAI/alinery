@@ -38,6 +38,7 @@ import {
   writeTaskUnlocked,
 } from "./taskFiles.ts";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES, uniqueAttachmentName } from "./blobs.ts";
+import { pinSpecs } from "./repoSpecs.ts";
 import { ensureIgnored } from "./settings.ts";
 
 type Json = Record<string, unknown>;
@@ -275,6 +276,8 @@ export async function provisionTask(d: CreateDeps, p: CreateTaskParams, hooks: P
       throw new Error(reservationError);
     }
     await worktreeAdd(repo, String(task.worktree), String(task.branch), p.baseRef?.trim() || undefined);
+    // The new worktree's HEAD is the commit the task branched from: the one its requirements are pinned to. A failure here only means the first launch pins instead.
+    await pinSpecs(taskDir(repo, task.slug), String(task.worktree)).catch(() => undefined);
     stage = "install_inputs";
     const copied: string[] = [];
     const dir = attachmentsDir(repo, task.slug);

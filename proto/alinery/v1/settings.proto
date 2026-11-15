@@ -13,6 +13,8 @@ service SettingsService {
   rpc WriteHostedInference(WriteHostedInferenceRequest) returns (WriteHostedInferenceResponse);  // ADMIN
   rpc ReadSpecs(ReadSpecsRequest) returns (ReadSpecsResponse);                                   // VIEW
   rpc WriteSpec(WriteSpecRequest) returns (WriteSpecResponse);                                   // ACT
+  rpc ReadTaskSpecs(ReadTaskSpecsRequest) returns (ReadTaskSpecsResponse);                       // VIEW
+  rpc RepinTaskSpecs(RepinTaskSpecsRequest) returns (RepinTaskSpecsResponse);                    // ACT
 }
 
 // The repository's requirement files: `specs/requirements.md`, `specs/tooling.md` and `specs/architecture.md` in the
@@ -37,6 +39,26 @@ message WriteSpecRequest {
   string text = 3;
 }
 message WriteSpecResponse {}
+
+// A task's requirements are pinned to the commit its worktree branched from (`tasks/<slug>/specs.lock.json`), so the
+// rules it is held to do not move when the repository changes. Not AGENT RPCs: an agent must not re-pin its own task.
+message ReadTaskSpecsRequest {
+  string slug = 1;
+}
+message ReadTaskSpecsResponse {
+  string commit = 1;  // empty: the task has no pin yet (it is pinned at its first launch)
+  repeated string files = 2;  // the spec files committed at that commit
+  uint32 head_files = 3;      // how many the repository's HEAD has now
+}
+// Pins the task to the repository's HEAD now. A step that is already running keeps the rules it started with.
+message RepinTaskSpecsRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+}
+message RepinTaskSpecsResponse {
+  string commit = 1;
+  repeated string files = 2;
+}
 
 message WriteOverridesRequest {
   MutationMeta meta = 1;

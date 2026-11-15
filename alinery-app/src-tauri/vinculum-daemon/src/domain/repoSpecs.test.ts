@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DomainError } from "../platform/lock.ts";
-import { readSpecs, requirementsBlock, SPEC_MAX_CHARS, writeSpec } from "./repoSpecs.ts";
+import { pinSpecs, readPin, readSpecs, requirementsBlock, requirementsFor, SPEC_MAX_CHARS, taskSpecs, writeSpec } from "./repoSpecs.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -112,4 +112,54 @@ test("a directory that is not a git repository reads as uncommitted and injects 
   await writeSpec(dir, "requirements.md", "x\n");
   expect((await readSpecs(dir))[0]).toMatchObject({ present: true, committed: false });
   expect(await requirementsBlock(dir)).toBe("");
+});
+
+const head = (dir: string) => {
+  const r = Bun.spawnSync(["git", "-C", dir, "rev-parse", "HEAD"], { stdout: "pipe" });
+  return r.stdout.toString().trim();
+};
+const taskDirIn = (dir: string) => {
+  const t = join(dir, ".alinery-task");
+  mkdirSync(t);
+  return t;
+};
+
+test("a task keeps the requirements it was pinned to when the repository changes", async () => {
+  const dir = repo();
+  await writeSpec(dir, "requirements.md", "v1\n");
+  commit(dir);
+  const task = taskDirIn(dir);
+  expect(await pinSpecs(task, dir)).toBe(head(dir));
+  expect(readPin(task)).toBe(head(dir));
+
+  await writeSpec(dir, "requirements.md", "v2\n");
+  await writeSpec(dir, "tooling.md", "ruff\n");
+  commit(dir);
+  const block = await requirementsFor(dir, task);
+  expect(block).toContain("v1");
+  expect(block).not.toContain("v2");
+  expect(block).not.toContain("tooling.md");
+  expect(await taskSpecs(dir, task)).toEqual({ commit: readPin(task)!, files: ["requirements.md"], headFiles: 2 });
+});
+
+test("a task with no pin is pinned at its first launch, and a repository with nothing to pin gives no requirements", async () => {
+  const dir = repo();
+  await writeSpec(dir, "tooling.md", "ruff\n");
+  commit(dir);
+  const task = taskDirIn(dir);
+  expect(await requirementsFor(dir, task)).toContain("ruff");
+  expect(readPin(task)).toBe(head(dir));
+
+  const plain = mkdtempSync(join(tmpdir(), "alinery-specs-nogit-"));
+  dirs.push(plain);
+  expect(await requirementsFor(plain, taskDirIn(plain))).toBe("");
+});
+
+test("a pin whose commit is gone fails the launch, and a malformed lock reads as no pin", async () => {
+  const dir = repo();
+  const task = taskDirIn(dir);
+  writeFileSync(join(task, "specs.lock.json"), JSON.stringify({ commit: "0".repeat(40) }));
+  await expect(requirementsFor(dir, task)).rejects.toThrow("no longer has");
+  writeFileSync(join(task, "specs.lock.json"), JSON.stringify({ commit: "--output=/tmp/x" }));
+  expect(readPin(task)).toBeUndefined();
 });

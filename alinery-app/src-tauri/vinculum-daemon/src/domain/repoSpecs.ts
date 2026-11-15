@@ -2,12 +2,13 @@
 // ever read, never the folder, because `specs/` is a common directory name that may hold unrelated files.
 //
 // Two views of the same files. Settings shows the working tree (what a person is editing, and whether it is committed).
-// A playbook step is given only the committed text at HEAD, so a half-edited file never steers a run and an agent's
-// edit in its own worktree never changes the rules it is held to.
-import { lstatSync, mkdirSync } from "node:fs";
+// A playbook step is given only committed text, from the commit its task is pinned to (`specs.lock.json`, written when
+// the task is created), so a half-edited file never steers a run, an agent's edit in its own worktree never changes the
+// rules it is held to, and a task keeps its rules when the repository changes later.
+import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeDurable } from "../platform/fs.ts";
-import { git } from "../platform/git.ts";
+import { git, gitText } from "../platform/git.ts";
 import { DomainError } from "../platform/lock.ts";
 
 export const SPEC_NAMES = ["requirements.md", "tooling.md", "architecture.md"] as const;
@@ -40,9 +41,9 @@ const statOf = (path: string) => {
 /** `specs` and the file must be what they look like: a symlink would let a read or write leave the repository. */
 const plainDir = (repo: string) => statOf(join(repo, "specs"))?.isDirectory() === true;
 
-async function committedText(repo: string, name: string): Promise<string | undefined> {
+async function committedText(repo: string, name: string, ref = "HEAD"): Promise<string | undefined> {
   try {
-    const r = await git(repo, ["show", `HEAD:specs/${name}`]);
+    const r = await git(repo, ["show", `${ref}:specs/${name}`]);
     return r.code === 0 ? r.stdout : undefined;
   } catch {
     return undefined; // git cannot start: nothing is committed as far as we can tell
@@ -84,12 +85,64 @@ export async function writeSpec(repo: string, name: string, text: string): Promi
 
 const capped = (text: string) => (text.length > SPEC_MAX_CHARS ? `${text.slice(0, SPEC_MAX_CHARS)}\n[truncated at ${SPEC_MAX_CHARS} characters]` : text);
 
-/** The block appended to a playbook step's prompt: the committed files that have content, or "" when there are none. */
-export async function requirementsBlock(repo: string): Promise<string> {
+/** The names of the files that have committed content at `ref`. */
+export async function committedSpecNames(repo: string, ref = "HEAD"): Promise<string[]> {
+  const names: string[] = [];
+  for (const name of SPEC_NAMES) if ((await committedText(repo, name, ref))?.trim()) names.push(name);
+  return names;
+}
+
+/** The block appended to a playbook step's prompt: the files that have content committed at `ref`, or "" when there are none. */
+export async function requirementsBlock(repo: string, ref = "HEAD"): Promise<string> {
   const parts: string[] = [];
   for (const name of SPEC_NAMES) {
-    const text = (await committedText(repo, name))?.trim();
+    const text = (await committedText(repo, name, ref))?.trim();
     if (text) parts.push(`### specs/${name}\n\n${capped(text)}`);
   }
   return parts.length ? [PREAMBLE, ...parts].join("\n\n") : "";
+}
+
+// ---- the pin ---------------------------------------------------------------------------------------------------
+
+const lockFile = (taskDir: string) => join(taskDir, "specs.lock.json");
+// A full object id only: the value goes into a git argument, and the file is one a person could edit.
+const OID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+/** The commit a task's requirements are pinned to, or undefined when it has none. */
+export function readPin(taskDir: string): string | undefined {
+  try {
+    const commit = (JSON.parse(readFileSync(lockFile(taskDir), "utf8")) as { commit?: unknown }).commit;
+    return typeof commit === "string" && OID.test(commit) ? commit : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Pins the task to `dir`'s HEAD: its worktree when the task is created (that is exactly the commit it branched from), the repository when an older task first launches. Returns the commit. */
+export async function pinSpecs(taskDir: string, dir: string): Promise<string> {
+  const commit = await gitText(dir, ["rev-parse", "HEAD"]);
+  await writeDurable(lockFile(taskDir), `${JSON.stringify({ commit })}\n`);
+  return commit;
+}
+
+/** What Task view shows: the pin, the files it holds, and how many the repository's HEAD has now (so "apply them" can be offered). */
+export async function taskSpecs(repo: string, taskDir: string): Promise<{ commit: string; files: string[]; headFiles: number }> {
+  const commit = readPin(taskDir) ?? "";
+  const files = commit ? await committedSpecNames(repo, commit) : [];
+  return { commit, files, headFiles: (await committedSpecNames(repo)).length };
+}
+
+/** A step's requirements: the pinned commit's files. A task with no pin (made before pins existed) is pinned now, to the repository's HEAD. A pin whose commit is gone fails the launch: dropping the rules silently is worse. */
+export async function requirementsFor(repo: string, taskDir: string): Promise<string> {
+  let commit = readPin(taskDir);
+  if (!commit) {
+    try {
+      commit = await pinSpecs(taskDir, repo);
+    } catch {
+      return ""; // not a git repository, or no commit yet: nothing is committed to pin
+    }
+  } else if ((await git(repo, ["cat-file", "-e", `${commit}^{commit}`])).code !== 0) {
+    throw new Error(`requirements are pinned to ${commit}, which this repository no longer has; re-pin them from the task's page`);
+  }
+  return requirementsBlock(repo, commit);
 }

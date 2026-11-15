@@ -20,3 +20,17 @@ export async function readSpecs(repo: string): Promise<Specs> {
 export async function writeSpec(repo: string, name: string, text: string): Promise<void> {
   await call(() => settings(repo).writeSpec({ meta: newMutationMeta(), name, text }));
 }
+
+export type TaskSpecs = { commit: string; files: string[]; headFiles: number };
+
+/** The commit a task's requirements are pinned to ("" until its first launch pins it), the files it holds, and how many the repository's HEAD has now. */
+export async function readTaskSpecs(repo: string, slug: string): Promise<TaskSpecs> {
+  const r = await call(() => settings(repo).readTaskSpecs({ slug }));
+  return { commit: r.commit, files: r.files, headFiles: r.headFiles };
+}
+
+/** Pins the task to the repository's HEAD now. A step already running keeps the rules it started with. */
+export async function repinTaskSpecs(repo: string, slug: string): Promise<{ commit: string; files: string[] }> {
+  const r = await call(() => settings(repo).repinTaskSpecs({ meta: newMutationMeta(), slug }));
+  return { commit: r.commit, files: r.files };
+}
