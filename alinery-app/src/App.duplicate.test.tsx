@@ -143,6 +143,23 @@ vi.mock("./DaemonConflictBanner", () => ({ DaemonConflictBanner: () => null, Rep
 vi.mock("./WindowChrome", () => ({ ResizeHandles: () => null, WindowControls: () => null, useWindowFullscreen: () => false }));
 vi.mock("./useDaemonStatus", () => ({ useDaemonStatus: () => ({ repo_busy: false, conflict: null, refresh: () => {} }) }));
 vi.mock("./useMcpStatus", () => ({ useMcpStatus: () => ({ binary_path: "", host_args: [] }) }));
+// Both board views share a stub because the duplicate coordinator handles either source.
+const boardStub = ({ onDuplicate }: { onDuplicate: (task: BoardTask) => void }) => (
+  <button type="button" onClick={() => onDuplicate(sourceBoardTask)}>
+    duplicate-source
+  </button>
+);
+vi.mock("./views/Grid", () => ({ Grid: boardStub }));
+vi.mock("./views/TaskDetail", () => ({
+  TaskDetail: ({ slug, onDuplicate }: { slug: string; onDuplicate: (task: Task) => void }) => (
+    <div>
+      <span>{`task:${slug}`}</span>
+      <button type="button" onClick={() => onDuplicate({ ...sourceTask, slug })}>
+        duplicate-current
+      </button>
+    </div>
+  ),
+}));
 
 Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
