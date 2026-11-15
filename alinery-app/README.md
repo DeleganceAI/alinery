@@ -60,10 +60,11 @@ npm run tauri build        # production bundle
 ```
 
 `npm run tauri dev` launches **Alinery Dev** with identifier `ai.delegance.alinery.dev` and app
-config `~/Library/Application Support/ai.delegance.alinery.dev/app.toml`. `build` and every other
+config under `~/Library/Application Support/ai.delegance.alinery.dev/`. `build` and every other
 non-`dev` Tauri command use **Alinery**, `ai.delegance.alinery`, and the production config path.
-The development config is shared by every development launch, not kept per worktree; a
-repository's `.alinery/` data is the same for both, so use disposable repositories for live testing.
+Each source checkout or worktree gets its own development config under
+`ai.delegance.alinery.dev/instances/<source-root-hash>/`. A repository's `.alinery/` data is the
+same whichever app opens it, so use disposable repositories for live testing.
 
 The built app lives in `src-tauri/target/release/bundle/`.
 

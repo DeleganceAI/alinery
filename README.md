@@ -20,7 +20,7 @@
   <a href="#mcp-server">MCP</a>
 </p>
 
-**Put a team of agents to work with a Playbook.** Give them a process, steer the important decisions, and build on the results. Playbooks define a ready-to-execute team of agents: who does what, how their work fits together, and where you step in to review or decide. Choose a Playbook for your task and adapt it to the way you want to work. Each task keeps its sessions, decisions, and artifacts together, so you can go down rabbit holes without losing track of the main task or the progress you’ve made.
+Alinery puts a team of agents to work on a Playbook: a process that says who does what, how their work fits together, and where you step in to review or decide. Pick a Playbook for the task and adapt it to how you work. Each task keeps its sessions, decisions, and artifacts together, so you can follow a side question as far as it goes and still find the main task, and your progress on it, where you left them.
 
 ## Install
 
@@ -30,19 +30,19 @@ For **macOS on Apple Silicon** and **Linux on x86_64**:
 curl -fsSL https://cdn.alinery.ai/install.sh | bash
 ```
 
-Alinery includes [OMP](https://github.com/can1357/oh-my-pi) for agent sessions and a Terminal option for shell work.
+Agent sessions run on Vinculum, the agent built into Alinery, so there is no separate agent CLI to install. A Terminal session is a plain shell. A repository can sit on your computer or on a Linux machine or Mac you reach over SSH.
 
 ## A different way to work
 
-Alinery encourages slower, deeper work with AI. Human review belongs in the Playbook from the beginning, with intentional pauses to align on the problem, approach, and tradeoffs before agents begin substantial work. The aim is **better outcomes and deeper flow states**.
+Alinery is built for slower, deeper work with AI. Human review is part of the Playbook from the start, with deliberate pauses to agree on the problem, the approach, and the tradeoffs before agents do substantial work. The aim is better outcomes and longer stretches of focus.
 
-Work in the wrong direction still takes time to review, and a large amount of generated code can create pressure to salvage an approach that should be reconsidered. Getting aligned early helps prevent that wasted effort.
+Work in the wrong direction still has to be reviewed, and a large pile of generated code creates pressure to salvage an approach that should be reconsidered. Agreeing early avoids most of that.
 
-- **Organize by task.** Keep the investigation, decisions, implementation, and review together as the work moves through different sessions.
-- **Review artifacts and code.** Direct agent chat is a low-level tool for debugging and intervention. Most of your attention should go to the work being produced and the decisions it requires.
-- **Make the process your own.** Customize Playbooks for your work so you can understand, inspect, and steer the process the agents follow.
-- **Build resonant software.** We aim to make Alinery a piece of resonant software, guided by the [Resonant Computing Manifesto](https://resonantcomputing.org/).
-- **Build confidence through process.** Much of knowledge work, including software design decisions, has outcomes you cannot fully know in advance. For consequential, complex tasks, Playbooks give agents a deliberate process of investigation, decisions, and review, providing a stronger basis for trusting the quality of the result.
+- **Organize by task.** The investigation, decisions, implementation, and review stay together as the work moves through sessions.
+- **Review artifacts and code.** Chatting with an agent directly is a low-level tool for debugging and intervention. Most of your attention belongs on the work it produces and the decisions that work needs.
+- **Make the process your own.** Customize Playbooks so you can understand, inspect, and steer the process the agents follow.
+- **Build resonant software.** We want Alinery to be resonant software, as the [Resonant Computing Manifesto](https://resonantcomputing.org/) describes it.
+- **Build confidence through process.** Much knowledge work, software design included, has outcomes you cannot know in advance. For complex, consequential tasks, a Playbook gives agents a deliberate sequence of investigation, decisions, and review, which is a better basis for trusting the result than the result alone.
 
 [Read the project vision →](VISION.md)
 
@@ -55,7 +55,7 @@ Work in the wrong direction still takes time to review, and a large amount of ge
 | **Session** | An agent or terminal session; a task can have many |
 | **Artifact** | A numbered Markdown output to inspect, comment on, and use in later Steps |
 | **Worktree** | An optional isolated Git checkout and branch for a task |
-| **Grid / Kanban** | Views of tasks grouped by their current Playbook Step |
+| **Grid** | Views of tasks grouped by their current Playbook Step |
 
 The default **SuperDevelop** Playbook takes a change through:
 
@@ -63,133 +63,70 @@ The default **SuperDevelop** Playbook takes a change through:
 Clarify → Investigate → Decide → Plan → Define Tests → Build → Prepare Review
 ```
 
-Review the decision before starting Plan. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. **Build a New Playbook** is the bundled meta-playbook for defining, drafting, and refining a new playbook, then saving it to a global or repository library after human approval. Find it in the bundled Playbooks list or the new-task picker.
+Review the decision before Plan starts. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. **Build a New Playbook** is a Playbook for making Playbooks: it defines, drafts, and refines a new one, then saves it to your global or repository library once you approve. It is in the bundled list and the new-task picker.
 
-**Image evidence at creation.** Paste clipboard images into Description, Evidence / pointers,
-or the Attachments input on New task. Each image has a preview (when supported), name, size,
-and Remove button. Accepted images and local files are kept in the selected task's
-`artifacts/attachments/` directory and can be revealed from Task Detail's Attachments view.
-The combined allowance is 25 MiB per file and 100 MiB per creation request; rejected files
-are reported while valid siblings are retained. URLs remain pointers and are never fetched.
-Pasted images are not saved with text drafts: Create attaches them, while Clear draft or
-leaving the form discards them.
+**Images and files at creation.** Paste clipboard images into Description, Evidence / pointers, or the Attachments input on New task. Each image shows a preview where supported, its name and size, and a Remove button. Accepted images and files are copied into the task's `artifacts/attachments/` directory, which Task Detail's Attachments view can reveal. The limit is 25 MiB per file and 100 MiB per creation; a rejected file is reported and the valid ones stay. URLs stay pointers and are never fetched. Pasted images are not saved with text drafts: Create attaches them, and Clear draft or leaving the form discards them.
 
-**Sessions survive app quit.** A per-repository daemon (`alineryd`) owns the agent and terminal processes. Leave sessions running when you close the app, then reconnect when you return. Stopping sessions is an explicit action; the quit dialog also offers **Quit & close all repos**.
+**Sessions survive app quit.** A per-repository daemon owns the agent and terminal sessions. Close the app with sessions running and they reconnect, scrollback included, when you return. Stopping them is always your choice; the quit dialog offers **Quit & close all repos** next to leaving them running.
 
-**Editable work names.** Task-attached OMP agents suggest a short, work-specific session name early in an ordinary working turn, once they understand the task. This uses the working agent, not a separate naming model or background upload service; an unavailable model or an older running extension can leave the session unnamed. Names appear beside status in the task's session table, in the global session list, session header, and search, with task and execution-type context retained.
+**Editable work names.** An agent in a task session suggests a short name for its work early in an ordinary turn, once it understands the task. The working agent does this itself, with no separate naming model or upload; if the model is unavailable, the session stays unnamed. Names appear beside status in the task's session table, the global session list, the session header, and search, along with the task and execution type.
 
-Use **Rename session** to correct any retained task-attached session, including never-started, exited, archived, and Terminal sessions, without starting it. Names are trimmed, single-line text, limited to 40 Unicode characters (generated names should prefer fewer than 30). A human correction always takes precedence over later automatic suggestions. Names persist independently of session lifecycle data and never change session IDs or execution state. Terminal names are manual only; the taskless Terminal drawer is unchanged.
+Use **Rename session** to correct the name of any retained task session, including never-started, exited, archived, and Terminal sessions, without starting it. Names are trimmed single-line text of at most 40 Unicode characters (suggested names aim for under 30). Your correction always wins over later suggestions. Names are stored apart from session lifecycle data and never change a session ID or execution state. Terminal names are manual only.
 
-In the task table and session header, hover the name or Tab to its pencil to edit it in place. Enter saves; Escape cancels. The check and cancel buttons provide the same actions without a keyboard. Finishing an edit returns focus to the name field, without leaving the pencil visible on a previously edited item.
+In the task table and the session header, hover the name or Tab to its pencil to edit in place. Enter saves and Escape cancels; the check and cancel buttons do the same without a keyboard. Finishing an edit returns focus to the name field and does not leave the pencil showing on the item you edited.
 
 Task records, sessions, and artifacts live under your repository's `.alinery/` directory. The app runs locally, and product-usage telemetry is opt-in.
 
-Task, session, and board browsing read saved metadata and the task's retained playbook even when its owning daemon is offline, incompatible, or belongs to another app instance. Artifact listings and saved content do not require a live owner. Task/session detail and Kanban+ use live execution data when available; otherwise they show validated saved progress with a separate availability notice and collapsed technical details. The app does not start, adopt, or take over a daemon just to browse.
+Browsing tasks, sessions, and the Grid reads saved metadata and each task's retained playbook, even when the repository's daemon is offline, incompatible, or was started by another Alinery version or another person. Artifact lists and saved content do not need a live daemon either. Task and session detail and the Grid use live execution data when they have it; otherwise they show validated saved progress with a notice and collapsed technical details. The app never starts, adopts, or takes over a daemon just so you can browse.
 
-The Kanban+ saved-progress notice has a dismiss button. Dismissal survives polling for the same affected tasks and availability states; the notice returns if those conditions change or live access recovers and later becomes unavailable again.
+The Grid's saved-progress notice can be dismissed. It stays dismissed for the same tasks and availability states, and comes back if those change, or if live access recovers and is later lost again.
 
-Completion grants, queued starts, and primary execution creation/recovery remain gated on live owner availability, with backend ownership checks unchanged. Unavailable live status is not proof that a session stopped or completed. Missing or corrupt retained data remains a storage error, not an empty execution state or a replacement from the current playbook library.
+Completion grants, queued starts, and starting or recovering a primary execution still need a live daemon, with the same ownership checks. Missing live status does not prove a session stopped or finished. Missing or corrupt saved data is reported as a storage error, never shown as an empty execution or replaced with the current playbook library's version.
 
-**GitHub pull requests.** Kanban cards and task detail show a clickable indicator for the
-task branch's PR: green for open, purple for merged, gray for closed without merging.
-Clicking opens the actual PR in your browser; it does not move or archive the task.
-Discovery uses the existing GitHub CLI connection (`gh`) in the background, with at most
-four task lookups running concurrently per batch. Results are shared between views
-and cached for 60 seconds after completion, with refreshes while the relevant view
-is open and visible. Discovered PR links survive branch/worktree removal.
-Lookup failures show an unavailable indicator, or mark the last known status stale.
-Compare links are not treated as existing PRs; automatic discovery is GitHub-only.
-In Grid, enable **pull request** under **Card properties** to show the same icon in
-any card mode. This option is off by default and saved per Grid view. Disabled
-properties and inactive Grid tabs do not request PR refreshes.
+**GitHub pull requests.** Task detail shows a clickable indicator for the task branch's pull request: green when open, purple when merged, gray when closed without merging. Clicking opens the pull request in your browser and does nothing to the task. Lookups use your GitHub CLI connection (`gh`) in the background, at most four tasks at a time per batch. Results are shared between views and cached for 60 seconds, and refresh while a view that shows them is open and visible. A discovered pull request link survives removing the branch or worktree. A failed lookup shows an unavailable indicator, or marks the last known status stale. Compare links do not count as pull requests, and discovery is GitHub only. In the Grid, turn on **pull request** under **Card properties** to show the same icon in any card mode. It is off by default and saved per Grid view, and a disabled property or an inactive Grid tab requests no refreshes.
 
-**Grid settings and presets.** Open the gear to adjust layout, filters, card properties,
-and tile width (up to 960px). Detailed and compact cards show every enabled property;
-scroll a card if its contents exceed the fixed tile height. Icon-only mode hides text.
-Draft tasks appear with a Draft label and open their saved creation form.
+**Grid settings and presets.** The gear adjusts layout, filters, card properties, and tile width (up to 960px). Detailed and compact cards show every enabled property and scroll when their contents outgrow the fixed tile height. Icon-only mode hides text. Draft tasks carry a Draft label and open their saved creation form.
 
-On a fresh workspace, the default Kanban+ view starts with **Progress lanes**: playbook
-steps left-to-right, all step labels, no grouping, repository fill, attention borders,
-manual lane order, compact cards, all tasks, fixed brightness, and archives
-hidden. Tile size is 150 × 78px, row/column spacing is 10/8px, and the first column is
-190px. Every card property except playbook is enabled. Existing saved Grid layouts
-are restored unchanged; additional Grid tabs retain their Step Kanban starting layout.
+On a fresh workspace the default Grid view, Canvas, starts with **Progress lanes**: playbook steps left to right, every step label, no grouping, repository fill, attention borders, manual lane order, compact cards, all tasks, fixed brightness, and archives hidden. Tiles are 150 × 78px, row and column spacing is 10 and 8px, and the first column is 190px. Every card property except playbook is on. Saved Grid layouts are restored as they were, and additional Grid tabs start from the Step Kanban layout.
 
-Enter a **New preset name** and choose **Save as new preset** to reuse the current
-settings across repositories and Grid tabs. Select a user-created preset to delete it;
-built-in presets cannot be deleted. Saving another name creates a new preset without
-changing the original. Each repository and Grid tab remembers its last settings and
-preset locally; task-specific manual ordering and hidden lanes stay with that workspace.
-Use **Show empty columns** in column layouts to include unoccupied columns, then
-collapse individual columns as needed. Classic Kanban also has **Show empty columns**
-and uses equal-height cards, with scrolling for overflowing content.
+Type a **New preset name** and choose **Save as new preset** to reuse the current settings across repositories and Grid tabs. Select a preset you made to delete it; built-in presets cannot be deleted. Saving under another name makes a new preset and leaves the original alone. Each repository and Grid tab remembers its last settings and preset on this machine, and task-specific manual ordering and hidden lanes stay with that workspace. In column layouts, **Show empty columns** includes unoccupied columns, which you can then collapse one by one. The Existing Kanban preset has **Show empty columns** too, and uses equal-height cards that scroll when their contents overflow.
 
-Step columns default to the declared order in each task's retained playbook, including
-when its daemon is offline. Legacy tasks without a retained definition use the current
-matching library playbook for display; this does not recover their execution state.
-Multiple playbooks share matching column titles and preserve compatible step sequences;
-conflicting orders use a deterministic playbook/task tie-break.
-Drag a column's grip (or focus it and press Left/Right) to change the order.
-Custom column order is remembered per grouping in each Grid view and included in saved
-presets. **Reset column order** restores the default without changing task execution.
+Step columns follow the declared order of each task's retained playbook, including while its daemon is offline. An older task without a retained definition is displayed with the matching playbook from the current library, which does not recover its execution state. Playbooks that share column titles keep compatible step sequences together, and conflicting orders fall back to a fixed playbook-then-task tie-break. Drag a column's grip, or focus it and press Left or Right, to reorder. A custom column order is remembered per grouping in each Grid view and saved with presets. **Reset column order** restores the default without touching task execution.
 
-For one row per task, choose **Position model → Stable task lanes**, **Progress by →
-Playbook step**, and **Path labels → Every playbook step** (or select **Progress lanes**).
-Each row shows its own playbook's steps in declaration order, with the task card under
-its latest recorded step. Labels show only step names, without execution-status suffixes,
-and remain visible when execution data is unavailable.
+For one row per task, choose **Position model → Stable task lanes**, **Progress by → Playbook step**, and **Path labels → Every playbook step**, or select **Progress lanes**. Each row shows its own playbook's steps in declared order, with the task card under its latest recorded step. Labels show step names only, with no execution-status suffix, and stay visible when execution data is unavailable.
 
 ### Sub-tasks
 
-Sub-tasks give rabbit holes a place of their own, so you can investigate a side question and return to the main task knowing exactly where you left off.
+A sub-task gives a side question its own place, so you can investigate it and come back to the main task knowing exactly where you left off.
 
-Use different agent Playbooks for different parts of a task: investigate a question, build a change, or review the result. Run sub-tasks in sequence, carry useful work forward, and discard approaches that don't hold up. For consequential work, you can run successive agent review Playbooks until you're satisfied with the result.
+Different parts of a task can use different Playbooks: investigate a question, build a change, review the result. Run sub-tasks in sequence, carry forward what works, and discard approaches that do not hold up. For consequential work, keep running review Playbooks until you are satisfied with the result.
 
 Each task can have one active direct child, with its own worktree, sessions, and artifacts.
 
 <details>
 <summary><strong>Sub-task creation, review, and history</strong></summary>
 
-A task can own one active direct child. Click **Start sub-task** on the parent to open one
-parent-owned manager session. The manager asks before it calls `alinery_create_subtask`; Alinery
-then creates the child on a dedicated worktree and branch based on the parent task's branch and starts
-the child's first playbook step with the repository's effective default harness and model. A
-step-specific harness still takes precedence. The child is a complete task, can own its own child,
-and receives the immediate parent's ticket and artifact paths in every generated session prompt.
-The parent shows the active child as its manager row; the child links back through its header
-instead of projecting the parent manager as one of its sessions. Parent sessions remain available
-while the child blocks the parent's sub-task slot.
+Click **Start sub-task** on the parent to open a manager session the parent owns. The manager asks before it calls `alinery_create_subtask`. Alinery then creates the child on its own worktree and branch, based on the parent task's branch, and starts the child's first playbook step with the repository's default model unless that step names its own. The child is a complete task, can have a child of its own, and gets the immediate parent's ticket and artifact paths in every session prompt. The parent shows the active child as its manager row, and the child links back to the parent from its header. The parent's other sessions stay usable while the child holds its sub-task slot.
 
-The manager proposes a descriptive child name through the existing creation approval. Use **Rename task** in the child heading or its parent row to edit that name later, including retained archived children. The child's current name and the manager session's own work name remain independent. Renaming changes no slug, branch, worktree, relationship, or historical artifact; task names do not inherit the session-name length limit.
+The manager proposes a descriptive name for the child when it asks to create it. Rename the task later from the child's heading or its row in the parent, including archived children. The child's name and the manager session's work name are independent. Renaming changes no slug, branch, worktree, relationship, or past artifact, and task names are not held to the session-name length limit.
 
-While the child is active, the parent's artifact tree shows a live logical `subtasks/<child>/`
-folder. `alinery_finalize_subtask` replaces that view with an immutable snapshot, archives the child,
-and clears the parent only after an explicit `artifacts_only`, `integrated_code`, or
-`archive_without_code` decision. Use `alinery_inspect_subtask_finish` before finalizing. The parent
-keeps the child in its Sessions panel as **FINISHED** for artifact-only or archive-without-code
-work, or **MERGED** for integrated code. Task List nests the retained lineage; Kanban hides child
-cards by default and can reveal them with **Show children**.
+While the child is active, the parent's artifact tree shows a live `subtasks/<child>/` folder. Call `alinery_inspect_subtask_finish` first; then `alinery_finalize_subtask`, with an explicit `artifacts_only`, `integrated_code`, or `archive_without_code` decision, replaces that folder with a fixed snapshot, archives the child, and frees the parent's slot. The parent keeps the child in its Sessions panel as **FINISHED** for artifact-only or archive-without-code work, or **MERGED** for integrated code. The Task List nests the retained lineage.
 
-If a setup manager cannot continue before it creates a child, use **Discard setup** to remove that
-unusable session. For a created child, use **Kill sub-task**. Alinery stops every live session in the
-active child lineage, archives those child tasks as **KILLED**, and clears the parent's active
-pointer. It preserves the task records, sessions, artifacts, worktrees, branches, and manager
-transcript as navigable history until normal archived-storage cleanup.
+If a manager cannot continue before it creates a child, **Discard setup** removes that session. For a child that exists, **Kill sub-task** stops every live session in the active child lineage, archives those tasks as **KILLED**, and frees the parent's slot. Task records, sessions, artifacts, worktrees, branches, and the manager transcript stay as navigable history until normal archived-storage cleanup.
 
 </details>
 
 ## Develop
 
-For development on macOS, install Xcode Command Line Tools, Rust stable, and Node.js 24.15+ on the Node 24 line. Start from the repository root:
+On macOS, install the Xcode Command Line Tools, stable Rust, Node.js 24.15 or later on the Node 24 line, and Bun. From the repository root:
 
 ```bash
 cd alinery-app
 npm install
-npm run omp:fetch
 npm run tauri dev
 ```
 
-`omp:fetch` installs the pinned OMP binary used by development sessions. Run `npm run omp:check` to inspect its location and version. Alinery uses its packaged OMP rather than an agent CLI from `PATH`.
+`npm run tauri dev` compiles the daemon (`alinery-vinculum-daemon`) with your Bun before it launches; without Bun it prints a line and agent sessions will not start. To fetch the pinned Bun and compile the daemon by hand, run `./scripts/dev-fetch-bun.sh` from the repository root. It also builds the runtimes Alinery installs on SSH hosts: the first run downloads Bun's cross-compile targets, and a failure there only warns.
 
 Run checks from the **repository root**:
 
@@ -198,64 +135,53 @@ Run checks from the **repository root**:
 ./scripts/check.sh            # plus slow behavioural suites
 ```
 
-Enable the pre-push hook once per clone: `git config core.hooksPath scripts/hooks`. Bypass with `ALINERY_SKIP_CHECK=1 git push`.
-
 <details>
 <summary><strong>Development instances and build notes</strong></summary>
 
-`npm run tauri dev` automatically launches **Alinery Dev**. The launcher reserves port
-`1420` when available and otherwise selects the next free local port, keeping Vite and
-Tauri on the same URL. Set `ALINERY_DEV_PORT` to an available port when a test needs a
-deterministic value. Each source checkout or worktree uses its own app state at
-`~/Library/Application Support/ai.delegance.alinery.dev/instances/<source-root-hash>/app.toml`,
-and the full launcher worktree path appears in the bottom **ALINERY SOURCE** bar. Separate
-source worktrees can run concurrently against different target repositories. The existing
-repository lock still refuses concurrent use of the same target repository.
+`npm run tauri dev` launches **Alinery Dev**. It takes port `1420` when that port is free, and otherwise the next free local port, with Vite and Tauri on the same URL. Set `ALINERY_DEV_PORT` to a free port when a test needs a fixed value. Each source checkout or worktree keeps its own app state at `~/Library/Application Support/ai.delegance.alinery.dev/instances/<source-root-hash>/app.toml`, and the bottom **ALINERY SOURCE** bar shows the full path of the worktree that launched it. Separate worktrees can run at the same time against different target repositories; two instances cannot own the same target repository at once.
 
-Builds and installs remain **Alinery** and keep the production
-`~/Library/Application Support/ai.delegance.alinery/app.toml` path. Repository-local data
-continues to live under each target repository's `.alinery/`, so use disposable repositories
-for live development writes.
+Builds and installs are **Alinery** and use the production `~/Library/Application Support/ai.delegance.alinery/app.toml`. A repository's data lives in its own `.alinery/` whichever app opens it, so use disposable repositories for live development writes.
 
-First launch compiles Rust. Native notification banners only appear from a real `.app` bundle, not `tauri dev`.
+The first launch compiles Rust. Native notification banners appear only from a real `.app` bundle, not from `tauri dev`.
 
-> **Don't run `cargo update`.** `time` is pinned to `0.3.51` in `Cargo.lock` (Tauri v2 build break otherwise).
+> **Don't run `cargo update`.** `time` is pinned to `0.3.51` in `Cargo.lock`; anything newer breaks the Tauri v2 build.
 
 </details>
 
 ## MCP Server
 
-Point any MCP host that runs **command + args** at the `alinery-mcp` binary. Stdio is the install path — you do not need the Alinery window open for FS/task tools. One process serves every repo; `repo` is a per-call tool argument (a path from `alinery_list_repos`), not a launch flag.
+The MCP server is the daemon binary run with `--mcp`. Any MCP host that takes **command + args** can use it. In the app, **Settings → MCP server** has **Copy config**, which fills in the binary path and its arguments. One process serves every repository; `repo` is an argument to each tool call (a path from `alinery_list_repos`), not a launch flag. Every tool is a call on that repository's daemon.
 
 ```json
 {
   "mcpServers": {
     "alinery": {
-      "command": "/absolute/path/to/alinery-mcp"
+      "command": "/absolute/path/to/alinery-vinculum-daemon",
+      "args": ["--mcp", "--app-config", "...", "--endpoints-file", "..."]
     }
   }
 }
 ```
 
+Agent sessions Alinery starts get these tools automatically.
+
 ### Authoring playbooks through MCP
 
-- `alinery_read_playbook({repo, reference: {scope, key}})` reads the exact `bundled`, `global`, or `repo` definition, including complete prompt source. There is no scope fallback.
-- `alinery_save_playbook({repo, target: {scope, key}, source, overwrite?})` creates or replaces a `global` or `repo` definition using the existing v2 parser and atomic library persistence. `source` is the complete Markdown document; its declared key must equal `target.key`. `overwrite` defaults to `false`; replacing an existing destination requires explicit `true`. Bundled writes are refused.
-- Both return the existing `ScopedPlaybook` as JSON in MCP text content: `source: {reference: {scope, key}, path}`, `definition`, `source_text`, and `modified_at_ms`. On save, the path and canonical `source_text` describe what was actually persisted. Failures set `isError: true` and retain JSON errors (`kind`, plus diagnostics, source/reference, or message). Invalid arguments and repository selection use `invalid_arguments` and `invalid_repo`.
+- `alinery_read_playbook({repo, reference: {scope, key}})` reads the exact `bundled`, `global`, or `repo` definition, including its complete prompt source. It never falls back to another scope.
+- `alinery_save_playbook({repo, target: {scope, key}, source, overwrite?})` creates or replaces a `global` or `repo` definition, parsed and saved atomically. `source` is the complete Markdown document, and its declared key must equal `target.key`. `overwrite` defaults to `false`, so replacing an existing definition needs an explicit `true`. Bundled definitions cannot be written.
+- Both return the scoped playbook as JSON in the MCP text content: `source: {reference: {scope, key}, path}`, `definition`, `source_text`, and `modified_at_ms`. After a save, the path and `source_text` describe what was actually written. A failure sets `isError: true` and keeps a JSON error (`kind`, plus diagnostics, the source or reference, or a message). Bad arguments and an unknown repository report `invalid_arguments` and `invalid_repo`.
 
-Use a registered repository root from `alinery_list_repos`, not the agent's task worktree. Global storage uses the server's app-config identity, including the stable global root for dev instances; it is not guessed from the agent's HOME. Repo saves acquire the existing exclusive repository ownership lock and fail with an `io` error containing `repo-busy` while an Alinery window owns that repository. Use that window's editor, or release its repository ownership before retrying; MCP does not borrow GUI ownership. Global saves do not require that lock. Reads remain available while a repository is owned.
+Pass a registered repository root from `alinery_list_repos`, not the agent's task worktree. Global playbooks are stored under the server's app-config identity (dev instances share one stable global root), never a path derived from the agent's HOME. A repo save goes through the repository's daemon, so it works while an Alinery window has that repository open. Global saves need no repository ownership.
 
-**Approval is agent-followed, not backend-enforced.** Review the complete source with the user, ask global versus a specific repository (recommend global), then call the existing OMP extension tool `alinery_ask_approval({title, message})` for that source and exact destination. Name creation versus replacement explicitly—for example, “Save ‘Incident Review’ to your global playbook library (`global/incident-review`)?” or “Replace `global/incident-review` with these reviewed changes?” For repo scope, also name the repository. Call save only after `details.approved === true`; Deny, missing/unavailable UI, or an approval error means keep the draft and do not save. Material source or destination changes require renewed approval. A create conflict is not permission to retry with `overwrite: true`: review the existing definition and obtain replacement approval first. Save accepts no `approved` flag or approval receipt.
+**The agent is trusted to ask for approval; the backend does not check.** Review the complete source with the user and ask whether it goes to the global library (recommended) or a specific repository. Then get the user's explicit approval for that source and that exact destination, naming create or replace and, for repo scope, the repository: for example, "Save 'Incident Review' to your global playbook library (`global/incident-review`)?" or "Replace `global/incident-review` with these reviewed changes?" Save only after a clear yes. A denial or no answer means keep the draft. Any material change to the source or destination needs a new approval. A create conflict is not permission to retry with `overwrite: true`: review the existing definition and get approval to replace it first. Save accepts no approval flag or receipt.
 
-Reload with `alinery_list_playbooks({repo})` to discover saved entries; the desktop library and new-task picker use the same catalog. External MCP saves do not push a live-refresh event to an already-open library; reopen the Playbooks view to reload. Saves do not change preferences, create trial tasks, or modify existing tasks' retained definitions.
-
-The approval tool requires an OMP session with its UI transport. If an older installed runner reports `this.pendingRequests`, its embedded extension may be detaching `ui.confirm` from its receiver. Deploy the rebuilt runner and start a new session; changing repository source does not hot-reload an existing session's extension.
+Call `alinery_list_playbooks({repo})` to see saved entries; the app's Playbooks library and the new-task picker read the same catalog. Saves do not change preferences, create trial tasks, or alter the retained definitions of existing tasks.
 
 ## Get involved
 
-Join the [Discord community](https://discord.gg/tgAUKEv5U) to discuss Playbooks and share how you use Alinery. Visit [alinery.ai](https://alinery.ai) for the project website, report bugs in [GitHub issues](https://github.com/DeleganceAI/alinery/issues), and read [VISION.md](VISION.md) for the direction behind the project.
+Join the [Discord community](https://discord.gg/tgAUKEv5U) to talk about Playbooks and how you use Alinery. The project website is [alinery.ai](https://alinery.ai), bugs go in [GitHub issues](https://github.com/DeleganceAI/alinery/issues), and [VISION.md](VISION.md) explains where the project is headed.
 
-For code contributions, read [AGENTS.md](AGENTS.md) for the repository's engineering conventions and run `./scripts/check.sh` before submitting a change.
+Before contributing code, read [AGENTS.md](AGENTS.md) for the repository's engineering conventions, and run `./scripts/check.sh` before submitting a change.
 
 ## License
 
