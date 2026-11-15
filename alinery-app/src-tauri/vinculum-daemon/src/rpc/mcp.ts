@@ -1,9 +1,9 @@
 import { create } from "@bufbuild/protobuf";
 import type { ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
-import { McpState, McpStatusSchema, McpTokenAction, type McpService } from "alinery-proto/alinery/v1/mcp_pb";
-import { clearToken, type MachineLink, type McpStatus, rotateToken } from "../domain/machineMcp.ts";
-import { currentToken } from "../mcpServer/machine.ts";
+import { McpHttpSchema, McpState, McpStatusSchema, McpTokenAction, type McpService } from "alinery-proto/alinery/v1/mcp_pb";
+import { clearToken, type MachineLink, type McpStatus, rotateToken, writeHttp } from "../domain/machineMcp.ts";
+import { currentToken, type MachinePaths } from "../mcpServer/machine.ts";
 import { requireCapability } from "./auth.ts";
 import { domain } from "./errors.ts";
 
@@ -19,10 +19,11 @@ const toProto = (s: McpStatus) =>
     daemons: s.daemons,
     socketPath: s.socket,
     tokenRequired: s.tokenRequired,
+    http: create(McpHttpSchema, s.http),
   });
 
 /** ADMIN only and absent from AGENT_RPCS: the app's view of the machine MCP, never an agent's. */
-export function mcpService(link: MachineLink, keyPath: string): ServiceImpl<typeof McpService> {
+export function mcpService(link: MachineLink, paths: MachinePaths): ServiceImpl<typeof McpService> {
   return {
     status: async (_req, ctx) => {
       requireCapability(ctx, Capability.ADMIN);
@@ -39,9 +40,16 @@ export function mcpService(link: MachineLink, keyPath: string): ServiceImpl<type
     token: (req, ctx) => {
       requireCapability(ctx, Capability.ADMIN);
       return domain(() => {
-        if (req.action === McpTokenAction.ROTATE) return { token: rotateToken(keyPath) };
-        if (req.action === McpTokenAction.CLEAR) clearToken(keyPath);
-        return { token: currentToken(keyPath) ?? "" };
+        if (req.action === McpTokenAction.ROTATE) return { token: rotateToken(paths.key) };
+        if (req.action === McpTokenAction.CLEAR) clearToken(paths);
+        return { token: currentToken(paths.key) ?? "" };
+      });
+    },
+    setHttp: (req, ctx) => {
+      requireCapability(ctx, Capability.ADMIN);
+      return domain(async () => {
+        writeHttp(paths, { enabled: req.enabled, bind: req.bind, port: req.port });
+        return { status: toProto(await link.restart()) };
       });
     },
   };

@@ -1,6 +1,6 @@
 # Machine MCP and the runtime status panel
 
-Status: v0.4, 2026-11-15. P0 is done: M1 to M10 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 is built. P3 is built (local). P4 is built. P5 onward is not started.
+Status: v0.4, 2026-11-15. P0 is done: M1 to M10 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 is built. P3 is built (local). P4 and P5 are built. P6 is not started.
 
 v0.4 adds M9 (an app update asks the MCP to exit) and M10 (HTTP is a bound port the user wires up; Settings shows its address and token per host). v0.3 recorded the decisions: full reach for every caller with an optional token (M2, M5), Restart and Force restart in the panel (M3), refuse protocol mismatches (M7), register over the socket (M8). v0.2 had reviewed the plan against the code.
 
@@ -205,6 +205,7 @@ Each phase ships on its own and leaves the old paths working. While iterating, r
 - The runtime build on this Mac needed vtool and codesign hidden to skip darwin: the darwin Python stage fails on `cryptography==50.0.0` (from main's dependabot merge #206), which has no distribution yet. That predates this branch and blocks `tauri build`.
 
 **P5. Optional HTTP listener (M4, M10).** Streamable HTTP, refused unless the M2 token is set, Origin and Host checks, the bind address picked per host in Settings (loopback, all interfaces, or one address) with the cleartext warning, and the per-host URL and token with a copy button and the M10 note. A remote host's settings go through its daemon's `McpService` (ADMIN), so no new host op. Tests include a rebinding attempt, a missing key and a call that spans a rotation.
+- Built: `mcpServer/http.ts`, started by the machine MCP from `machine-mcp[-ns].http.json` beside the key (read once; `McpService.SetHttp` validates, writes it owner-only and restarts the MCP). JSON answers only: POST to `/mcp`, a notification gets 202, GET gets 405 (no server stream). Every request needs the token, loopback too, read per request so a rotation needs no restart. A loopback bind requires a loopback Host (DNS rebinding); any bind requires an Origin, when sent, to name the Host. The bind is 127.0.0.1, 0.0.0.0 or one of the machine's own non-link-local addresses (listed in `McpStatus.http.addresses`). Turning HTTP on without the token and clearing the token while HTTP is on are both refused. The panel's HTTP row per host: on/off (disabled until a token exists), bind, port, the cleartext confirmation and warning off loopback, the URL with Copy, and the M10 note. Still protocol 49: unreleased, so no second bump.
 
 **P6. Harness migration and deletion (optional, after a soak).** Point the harness's `McpHub` at the machine socket (no scoped handshake, M2), then remove `--serve --managed`, `ensure_mcp_server`, `refresh_mcp_endpoints`, `ManagedMcpChild`, the endpoints file and the preflight patterns that referred to them. Update `AGENTS.md`.
 

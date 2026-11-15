@@ -19,3 +19,6 @@ export const restartMachineMcp = async (repo: string) => status(await call(() =>
 const ACTION = { read: McpTokenAction.READ, rotate: McpTokenAction.ROTATE, clear: McpTokenAction.CLEAR } as const;
 /** The current token after the action, empty when none is set. */
 export const machineMcpToken = async (repo: string, action: keyof typeof ACTION) => (await call(() => mcp(repo).token({ action: ACTION[action] }))).token;
+
+/** The HTTP listener's settings; the daemon refuses turning it on without the token, then restarts the MCP. */
+export const setMachineMcpHttp = async (repo: string, http: { enabled: boolean; bind: string; port: number }) => status(await call(() => mcp(repo).setHttp(http)));

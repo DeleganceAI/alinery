@@ -51,12 +51,13 @@ const mcpStatus = (state: number, extra = {}) => ({
   tokenRequired: false,
   ...extra,
 });
-const machine = vi.hoisted(() => ({ status: vi.fn(), restart: vi.fn(), token: vi.fn() }));
+const machine = vi.hoisted(() => ({ status: vi.fn(), restart: vi.fn(), token: vi.fn(), http: vi.fn() }));
 vi.mock("../sync/mcp", async (original) => ({
   ...(await original<typeof import("../sync/mcp")>()),
   machineMcpStatus: machine.status,
   restartMachineMcp: machine.restart,
   machineMcpToken: machine.token,
+  setMachineMcpHttp: machine.http,
 }));
 const confirms = vi.hoisted(() => ({ danger: vi.fn(), ask: vi.fn() }));
 vi.mock("../confirm", () => ({ confirmDanger: confirms.danger, askConfirm: confirms.ask }));
@@ -76,7 +77,7 @@ vi.mock("../sync/agent", () => ({
 
 import * as ipc from "../ipc";
 import { McpState } from "../sync/mcp";
-import { RuntimePanel } from "./RuntimePanel";
+import { mcpHttpUrl, RuntimePanel } from "./RuntimePanel";
 
 const mcp: McpStatusHandle = {
   enabled: true,
@@ -208,4 +209,35 @@ it("asks each connected host's MCP through a daemon on that host, and offers For
   expect(await screen.findByText("Not answering")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Force restart…" })).toBeNull();
   expect(screen.getAllByText("No daemon running here to ask")).toHaveLength(1);
+});
+
+const httpOf = (extra = {}) => ({ enabled: false, bind: "127.0.0.1", port: 39470, listening: false, error: "", addresses: ["192.168.1.20", "fd00::5"], ...extra });
+
+it("keeps HTTP off until a token is set, then serves on all interfaces only after the cleartext warning, and shows the URL", async () => {
+  machine.status.mockResolvedValue(mcpStatus(McpState.OK, { http: httpOf() }));
+  const { unmount } = render(<RuntimePanel mcp={mcp} />);
+  expect(await screen.findByText(/Require a token first/)).toBeTruthy();
+  expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
+  unmount();
+
+  machine.token.mockResolvedValue("feedface00112233");
+  machine.http.mockResolvedValue(mcpStatus(McpState.OK));
+  confirms.ask.mockResolvedValueOnce("cancel").mockResolvedValueOnce("confirm");
+  render(<RuntimePanel mcp={mcp} />);
+  await waitFor(() => expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.change(screen.getByRole("combobox", { name: "Bind address" }), { target: { value: "0.0.0.0" } });
+  expect(screen.getByText(/token is sent unencrypted/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(confirms.ask).toHaveBeenCalledTimes(1));
+  expect(machine.http).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(machine.http).toHaveBeenCalledWith("/Users/me/app", { enabled: true, bind: "0.0.0.0", port: 39470 }));
+});
+
+it("names the URL a client uses: the bind, the first address for all interfaces, IPv6 in brackets", () => {
+  expect(mcpHttpUrl(httpOf({ listening: true }), "box")).toBe("http://127.0.0.1:39470/mcp");
+  expect(mcpHttpUrl(httpOf({ bind: "0.0.0.0" }), "box")).toBe("http://192.168.1.20:39470/mcp");
+  expect(mcpHttpUrl(httpOf({ bind: "fd00::5", port: 8080 }), "box")).toBe("http://[fd00::5]:8080/mcp");
+  expect(mcpHttpUrl(httpOf({ bind: "0.0.0.0", addresses: [] }), "box")).toBe("http://box:39470/mcp");
 });

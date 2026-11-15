@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/mcp.proto.
  */
 export const file_alinery_v1_mcp: GenFile = /*@__PURE__*/
-  fileDesc("ChRhbGluZXJ5L3YxL21jcC5wcm90bxIKYWxpbmVyeS52MSI/CglNY3BEYWVtb24SDAoEcmVwbxgBIAEoCRIQCghwcm90b2NvbBgCIAEoDRISCgpjb21wYXRpYmxlGAMgASgIIg8KDVN0YXR1c1JlcXVlc3QiNwoOU3RhdHVzUmVzcG9uc2USJQoGc3RhdHVzGAEgASgLMhUuYWxpbmVyeS52MS5NY3BTdGF0dXMiDwoNRW5zdXJlUmVxdWVzdCI3Cg5FbnN1cmVSZXNwb25zZRIlCgZzdGF0dXMYASABKAsyFS5hbGluZXJ5LnYxLk1jcFN0YXR1cyIQCg5SZXN0YXJ0UmVxdWVzdCI4Cg9SZXN0YXJ0UmVzcG9uc2USJQoGc3RhdHVzGAEgASgLMhUuYWxpbmVyeS52MS5NY3BTdGF0dXMiygEKCU1jcFN0YXR1cxIjCgVzdGF0ZRgBIAEoDjIULmFsaW5lcnkudjEuTWNwU3RhdGUSDQoFYnVpbGQYAiABKAkSEAoIcHJvdG9jb2wYAyABKA0SEQoJdXB0aW1lX21zGAQgASgEEg8KB2NsaWVudHMYBSABKA0SJgoHZGFlbW9ucxgGIAMoCzIVLmFsaW5lcnkudjEuTWNwRGFlbW9uEhMKC3NvY2tldF9wYXRoGAcgASgJEhYKDnRva2VuX3JlcXVpcmVkGAggASgIIjoKDFRva2VuUmVxdWVzdBIqCgZhY3Rpb24YASABKA4yGi5hbGluZXJ5LnYxLk1jcFRva2VuQWN0aW9uIh4KDVRva2VuUmVzcG9uc2USDQoFdG9rZW4YASABKAkqeAoITWNwU3RhdGUSGQoVTUNQX1NUQVRFX1VOU1BFQ0lGSUVEEAASFAoQTUNQX1NUQVRFX0FCU0VOVBABEhAKDE1DUF9TVEFURV9PSxACEhQKEE1DUF9TVEFURV9CRUhJTkQQAxITCg9NQ1BfU1RBVEVfU1RVQ0sQBCqGAQoOTWNwVG9rZW5BY3Rpb24SIAocTUNQX1RPS0VOX0FDVElPTl9VTlNQRUNJRklFRBAAEhkKFU1DUF9UT0tFTl9BQ1RJT05fUkVBRBABEhsKF01DUF9UT0tFTl9BQ1RJT05fUk9UQVRFEAISGgoWTUNQX1RPS0VOX0FDVElPTl9DTEVBUhADMpACCgpNY3BTZXJ2aWNlEj8KBlN0YXR1cxIZLmFsaW5lcnkudjEuU3RhdHVzUmVxdWVzdBoaLmFsaW5lcnkudjEuU3RhdHVzUmVzcG9uc2USPwoGRW5zdXJlEhkuYWxpbmVyeS52MS5FbnN1cmVSZXF1ZXN0GhouYWxpbmVyeS52MS5FbnN1cmVSZXNwb25zZRJCCgdSZXN0YXJ0EhouYWxpbmVyeS52MS5SZXN0YXJ0UmVxdWVzdBobLmFsaW5lcnkudjEuUmVzdGFydFJlc3BvbnNlEjwKBVRva2VuEhguYWxpbmVyeS52MS5Ub2tlblJlcXVlc3QaGS5hbGluZXJ5LnYxLlRva2VuUmVzcG9uc2ViBnByb3RvMw");
+  fileDesc("ChRhbGluZXJ5L3YxL21jcC5wcm90bxIKYWxpbmVyeS52MSI/CglNY3BEYWVtb24SDAoEcmVwbxgBIAEoCRIQCghwcm90b2NvbBgCIAEoDRISCgpjb21wYXRpYmxlGAMgASgIIg8KDVN0YXR1c1JlcXVlc3QiNwoOU3RhdHVzUmVzcG9uc2USJQoGc3RhdHVzGAEgASgLMhUuYWxpbmVyeS52MS5NY3BTdGF0dXMiDwoNRW5zdXJlUmVxdWVzdCI3Cg5FbnN1cmVSZXNwb25zZRIlCgZzdGF0dXMYASABKAsyFS5hbGluZXJ5LnYxLk1jcFN0YXR1cyIQCg5SZXN0YXJ0UmVxdWVzdCI4Cg9SZXN0YXJ0UmVzcG9uc2USJQoGc3RhdHVzGAEgASgLMhUuYWxpbmVyeS52MS5NY3BTdGF0dXMi7QEKCU1jcFN0YXR1cxIjCgVzdGF0ZRgBIAEoDjIULmFsaW5lcnkudjEuTWNwU3RhdGUSDQoFYnVpbGQYAiABKAkSEAoIcHJvdG9jb2wYAyABKA0SEQoJdXB0aW1lX21zGAQgASgEEg8KB2NsaWVudHMYBSABKA0SJgoHZGFlbW9ucxgGIAMoCzIVLmFsaW5lcnkudjEuTWNwRGFlbW9uEhMKC3NvY2tldF9wYXRoGAcgASgJEhYKDnRva2VuX3JlcXVpcmVkGAggASgIEiEKBGh0dHAYCSABKAsyEy5hbGluZXJ5LnYxLk1jcEh0dHAiawoHTWNwSHR0cBIPCgdlbmFibGVkGAEgASgIEgwKBGJpbmQYAiABKAkSDAoEcG9ydBgDIAEoDRIRCglsaXN0ZW5pbmcYBCABKAgSDQoFZXJyb3IYBSABKAkSEQoJYWRkcmVzc2VzGAYgAygJIj0KDlNldEh0dHBSZXF1ZXN0Eg8KB2VuYWJsZWQYASABKAgSDAoEYmluZBgCIAEoCRIMCgRwb3J0GAMgASgNIjgKD1NldEh0dHBSZXNwb25zZRIlCgZzdGF0dXMYASABKAsyFS5hbGluZXJ5LnYxLk1jcFN0YXR1cyI6CgxUb2tlblJlcXVlc3QSKgoGYWN0aW9uGAEgASgOMhouYWxpbmVyeS52MS5NY3BUb2tlbkFjdGlvbiIeCg1Ub2tlblJlc3BvbnNlEg0KBXRva2VuGAEgASgJKngKCE1jcFN0YXRlEhkKFU1DUF9TVEFURV9VTlNQRUNJRklFRBAAEhQKEE1DUF9TVEFURV9BQlNFTlQQARIQCgxNQ1BfU1RBVEVfT0sQAhIUChBNQ1BfU1RBVEVfQkVISU5EEAMSEwoPTUNQX1NUQVRFX1NUVUNLEAQqhgEKDk1jcFRva2VuQWN0aW9uEiAKHE1DUF9UT0tFTl9BQ1RJT05fVU5TUEVDSUZJRUQQABIZChVNQ1BfVE9LRU5fQUNUSU9OX1JFQUQQARIbChdNQ1BfVE9LRU5fQUNUSU9OX1JPVEFURRACEhoKFk1DUF9UT0tFTl9BQ1RJT05fQ0xFQVIQAzLUAgoKTWNwU2VydmljZRI/CgZTdGF0dXMSGS5hbGluZXJ5LnYxLlN0YXR1c1JlcXVlc3QaGi5hbGluZXJ5LnYxLlN0YXR1c1Jlc3BvbnNlEj8KBkVuc3VyZRIZLmFsaW5lcnkudjEuRW5zdXJlUmVxdWVzdBoaLmFsaW5lcnkudjEuRW5zdXJlUmVzcG9uc2USQgoHUmVzdGFydBIaLmFsaW5lcnkudjEuUmVzdGFydFJlcXVlc3QaGy5hbGluZXJ5LnYxLlJlc3RhcnRSZXNwb25zZRI8CgVUb2tlbhIYLmFsaW5lcnkudjEuVG9rZW5SZXF1ZXN0GhkuYWxpbmVyeS52MS5Ub2tlblJlc3BvbnNlEkIKB1NldEh0dHASGi5hbGluZXJ5LnYxLlNldEh0dHBSZXF1ZXN0GhsuYWxpbmVyeS52MS5TZXRIdHRwUmVzcG9uc2ViBnByb3RvMw");
 
 /**
  * @generated from message alinery.v1.McpDaemon
@@ -178,6 +178,11 @@ export type McpStatus = Message<"alinery.v1.McpStatus"> & {
    * @generated from field: bool token_required = 8;
    */
   tokenRequired: boolean;
+
+  /**
+   * @generated from field: alinery.v1.McpHttp http = 9;
+   */
+  http?: McpHttp | undefined;
 };
 
 /**
@@ -186,6 +191,100 @@ export type McpStatus = Message<"alinery.v1.McpStatus"> & {
  */
 export const McpStatusSchema: GenMessage<McpStatus> = /*@__PURE__*/
   messageDesc(file_alinery_v1_mcp, 7);
+
+/**
+ * The HTTP listener's settings, and whether the running MCP listens with them.
+ *
+ * @generated from message alinery.v1.McpHttp
+ */
+export type McpHttp = Message<"alinery.v1.McpHttp"> & {
+  /**
+   * @generated from field: bool enabled = 1;
+   */
+  enabled: boolean;
+
+  /**
+   * 127.0.0.1 (loopback), 0.0.0.0 (all interfaces) or one of `addresses`.
+   *
+   * @generated from field: string bind = 2;
+   */
+  bind: string;
+
+  /**
+   * @generated from field: uint32 port = 3;
+   */
+  port: number;
+
+  /**
+   * @generated from field: bool listening = 4;
+   */
+  listening: boolean;
+
+  /**
+   * Why it does not listen while enabled, from the MCP; empty otherwise.
+   *
+   * @generated from field: string error = 5;
+   */
+  error: string;
+
+  /**
+   * This machine's non-loopback addresses, for picking one.
+   *
+   * @generated from field: repeated string addresses = 6;
+   */
+  addresses: string[];
+};
+
+/**
+ * Describes the message alinery.v1.McpHttp.
+ * Use `create(McpHttpSchema)` to create a new message.
+ */
+export const McpHttpSchema: GenMessage<McpHttp> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_mcp, 8);
+
+/**
+ * @generated from message alinery.v1.SetHttpRequest
+ */
+export type SetHttpRequest = Message<"alinery.v1.SetHttpRequest"> & {
+  /**
+   * @generated from field: bool enabled = 1;
+   */
+  enabled: boolean;
+
+  /**
+   * @generated from field: string bind = 2;
+   */
+  bind: string;
+
+  /**
+   * @generated from field: uint32 port = 3;
+   */
+  port: number;
+};
+
+/**
+ * Describes the message alinery.v1.SetHttpRequest.
+ * Use `create(SetHttpRequestSchema)` to create a new message.
+ */
+export const SetHttpRequestSchema: GenMessage<SetHttpRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_mcp, 9);
+
+/**
+ * @generated from message alinery.v1.SetHttpResponse
+ */
+export type SetHttpResponse = Message<"alinery.v1.SetHttpResponse"> & {
+  /**
+   * @generated from field: alinery.v1.McpStatus status = 1;
+   */
+  status?: McpStatus | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.SetHttpResponse.
+ * Use `create(SetHttpResponseSchema)` to create a new message.
+ */
+export const SetHttpResponseSchema: GenMessage<SetHttpResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_mcp, 10);
 
 /**
  * @generated from message alinery.v1.TokenRequest
@@ -202,7 +301,7 @@ export type TokenRequest = Message<"alinery.v1.TokenRequest"> & {
  * Use `create(TokenRequestSchema)` to create a new message.
  */
 export const TokenRequestSchema: GenMessage<TokenRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_mcp, 8);
+  messageDesc(file_alinery_v1_mcp, 11);
 
 /**
  * @generated from message alinery.v1.TokenResponse
@@ -221,7 +320,7 @@ export type TokenResponse = Message<"alinery.v1.TokenResponse"> & {
  * Use `create(TokenResponseSchema)` to create a new message.
  */
 export const TokenResponseSchema: GenMessage<TokenResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_mcp, 9);
+  messageDesc(file_alinery_v1_mcp, 12);
 
 /**
  * @generated from enum alinery.v1.McpState
@@ -341,6 +440,16 @@ export const McpService: GenService<{
     methodKind: "unary";
     input: typeof TokenRequestSchema;
     output: typeof TokenResponseSchema;
+  },
+  /**
+   * The optional HTTP listener (M4): writes its settings beside the key and restarts the MCP. Turning it on needs the token set.
+   *
+   * @generated from rpc alinery.v1.McpService.SetHttp
+   */
+  setHttp: {
+    methodKind: "unary";
+    input: typeof SetHttpRequestSchema;
+    output: typeof SetHttpResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_mcp, 0);

@@ -3,8 +3,11 @@
 // and registers again after a drop. `McpService` reads and restarts the MCP through here; nothing here ever signals it.
 import { randomBytes } from "node:crypto";
 import { unlinkSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { connect, type Socket } from "node:net";
 import { writeOwnerOnly } from "../platform/fs.ts";
+import { DomainError } from "../platform/lock.ts";
+import { type HttpSettings, readHttpSettings } from "../mcpServer/http.ts";
 import { answers, ask, currentToken, ensureMachine, type MachinePaths, STATUS_TIMEOUT_MS } from "../mcpServer/machine.ts";
 
 /** Backoff between registration attempts after a drop or a failed start. */
@@ -21,9 +24,11 @@ export function rotateToken(keyPath: string, now = Date.now()): string {
   return token;
 }
 
-export function clearToken(keyPath: string): void {
+/** Clearing the token while HTTP is on would leave a listener that refuses everyone, so it is refused instead. */
+export function clearToken(paths: MachinePaths): void {
+  if (readHttpSettings(paths.http).enabled) throw new DomainError("failed_precondition", "turn HTTP off before clearing the token");
   try {
-    unlinkSync(keyPath);
+    unlinkSync(paths.key);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
   }
@@ -39,7 +44,25 @@ export type McpStatus = {
   daemons: { repo: string; protocol: number; compatible: boolean }[];
   socket: string;
   tokenRequired: boolean;
+  http: HttpSettings & { listening: boolean; error: string; addresses: string[] };
 };
+
+/** This machine's non-loopback addresses, the "one address" choices for the HTTP bind. */
+export const machineAddresses = () =>
+  Object.values(networkInterfaces())
+    .flat()
+    .filter((a) => a && !a.internal && !a.address.startsWith("fe80:"))
+    .map((a) => (a as { address: string }).address);
+
+/** Validates and writes the HTTP settings; the caller restarts the MCP so it listens with them. */
+export function writeHttp(paths: MachinePaths, settings: HttpSettings): void {
+  const { enabled, bind, port } = settings;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new DomainError("invalid_argument", `port ${port} is not 1 to 65535`);
+  if (!["127.0.0.1", "0.0.0.0", ...machineAddresses()].includes(bind)) throw new DomainError("invalid_argument", `${bind} is not loopback, all interfaces or an address of this machine`);
+  // M4: every listener needs the token, loopback too (other OS users and DNS rebinding reach it).
+  if (enabled && !currentToken(paths.key)) throw new DomainError("failed_precondition", "set the MCP token before turning HTTP on");
+  writeOwnerOnly(paths.http, JSON.stringify({ enabled, bind, port }));
+}
 
 export type MachineLinkOptions = {
   paths: MachinePaths;
@@ -129,7 +152,8 @@ export class MachineLink {
   /** M3: absent when nothing answers, stuck when it does not answer `status` in time, behind when its build is not this daemon's. */
   async status(): Promise<McpStatus> {
     const { paths, build, protocol } = this.options;
-    const base = { build: "", protocol: 0, uptimeMs: 0, clients: 0, daemons: [], socket: paths.socket, tokenRequired: currentToken(paths.key) !== undefined };
+    const http = { ...readHttpSettings(paths.http), listening: false, error: "", addresses: machineAddresses() };
+    const base = { build: "", protocol: 0, uptimeMs: 0, clients: 0, daemons: [], socket: paths.socket, tokenRequired: currentToken(paths.key) !== undefined, http };
     if (!(await answers(paths.socket))) return { ...base, state: "absent" };
     let reply: Record<string, unknown>;
     try {
@@ -147,6 +171,7 @@ export class MachineLink {
       uptimeMs: Number(reply.uptime_ms ?? 0),
       clients: Number(reply.clients ?? 0),
       daemons,
+      http: { ...http, ...(reply.http as { listening: boolean; error: string } | undefined) },
     };
   }
 

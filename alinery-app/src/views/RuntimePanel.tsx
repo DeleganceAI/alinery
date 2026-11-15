@@ -7,7 +7,7 @@ import { updateDaemon } from "../SyncLinks";
 import { repoName } from "../shared";
 import { type OfficeTools, readOfficeTools } from "../sync/agent";
 import { useLiveSessionsByRepo } from "../sync/hooks";
-import { McpState, type McpStatus, machineMcpStatus, machineMcpToken, restartMachineMcp } from "../sync/mcp";
+import { McpState, type McpStatus, machineMcpStatus, machineMcpToken, restartMachineMcp, setMachineMcpHttp } from "../sync/mcp";
 import { toast } from "../toast";
 import type { HostRuntime, RepoRuntime, RuntimeStatus } from "../types";
 import { type McpStatusHandle, mcpStatusLabel } from "../useMcpStatus";
@@ -85,6 +85,91 @@ const yes = (title: string, body: string, label: string) =>
 
 /** A host's machine MCP (docs/machine-mcp-plan.md), read and restarted through `repo`'s daemon on that host; its token below it.
  *  Force restart signals a process, so it is offered for this computer's only (M3). */
+const LOOPBACK = "127.0.0.1";
+const ALL = "0.0.0.0";
+
+/** The URL a client on another machine (or this one, for loopback) uses; all interfaces names the first address. */
+export function mcpHttpUrl(http: { bind: string; port: number; addresses: string[] }, fallbackHost: string): string {
+  const host = http.bind === ALL ? (http.addresses[0] ?? fallbackHost) : http.bind;
+  return `http://${host.includes(":") ? `[${host}]` : host}:${http.port}/mcp`;
+}
+
+/** M4, M10: the optional HTTP listener, edited here and saved through the host's daemon (which restarts the MCP). */
+function McpHttpRow({ repo, status, token, hostLabel, onSaved }: { repo: string; status: McpStatus; token: string; hostLabel: string; onSaved: () => void }) {
+  const http = status.http;
+  const [draft, setDraft] = useState({ enabled: false, bind: LOOPBACK, port: 39470 });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (http) setDraft({ enabled: http.enabled, bind: http.bind, port: http.port });
+  }, [http]);
+  if (!http) return null;
+  const changed = draft.enabled !== http.enabled || draft.bind !== http.bind || draft.port !== http.port;
+  const exposed = draft.enabled && draft.bind !== LOOPBACK;
+  const save = async () => {
+    if (
+      exposed &&
+      !(await yes(
+        "Serve the MCP beyond this machine?",
+        "It speaks plain HTTP: the token and every tool call cross the network unencrypted unless you put TLS or a tunnel in front.",
+        "Serve on the network",
+      ))
+    )
+      return;
+    setBusy(true);
+    try {
+      await setMachineMcpHttp(repo, draft);
+      toast.success(draft.enabled ? "HTTP is on; the MCP restarted" : "HTTP is off; the MCP restarted");
+    } catch (cause) {
+      toast.error(String(cause));
+    } finally {
+      setBusy(false);
+      onSaved();
+    }
+  };
+  const url = mcpHttpUrl(http, hostLabel);
+  return (
+    <tr>
+      <td />
+      <td className="dim">HTTP</td>
+      <td colSpan={2}>
+        <label>
+          <input type="checkbox" checked={draft.enabled} disabled={busy || (!token && !http.enabled)} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} /> On
+        </label>{" "}
+        <select aria-label="Bind address" value={draft.bind} disabled={busy} onChange={(e) => setDraft({ ...draft, bind: e.target.value })}>
+          <option value={LOOPBACK}>Loopback only</option>
+          <option value={ALL}>All interfaces</option>
+          {http.addresses.map((address) => (
+            <option key={address} value={address}>
+              {address}
+            </option>
+          ))}
+        </select>{" "}
+        <input type="number" aria-label="Port" min={1} max={65535} value={draft.port} disabled={busy} onChange={(e) => setDraft({ ...draft, port: Number(e.target.value) })} />
+        {!token && !http.enabled && <div className="dim">Require a token first: HTTP is never served without one.</div>}
+        {exposed && <div className="t-warn">Plain HTTP: the token is sent unencrypted unless you put TLS in front.</div>}
+        {http.enabled && http.error && <div className="t-warn">{http.error}</div>}
+        {http.enabled && http.listening && (
+          <div>
+            <span className="mono">{url}</span>{" "}
+            <button type="button" className="btn ghost small" onClick={() => void copyTextToClipboard(url).then(() => toast.success("Copied the URL"))}>
+              Copy URL
+            </button>
+            <div className="dim">
+              TLS, a tunnel and the firewall are yours to set up. Claude's custom connectors need a public HTTPS URL and take the token as a Bearer header; Claude Desktop's local
+              config can reach this URL through mcp-remote.
+            </div>
+          </div>
+        )}
+      </td>
+      <td>
+        <button type="button" className="btn ghost small" disabled={busy || !changed} onClick={() => void save()}>
+          Save
+        </button>
+      </td>
+    </tr>
+  );
+}
+
 function MachineMcpRows({ repo, label, local }: { repo: string | undefined; label: string; local: boolean }) {
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [token, setToken] = useState("");
@@ -195,6 +280,7 @@ function MachineMcpRows({ repo, label, local }: { repo: string | undefined; labe
           )}
         </td>
       </tr>
+      {status && <McpHttpRow repo={repo} status={status} token={token} hostLabel={label} onSaved={load} />}
     </>
   );
 }

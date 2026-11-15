@@ -10,6 +10,7 @@ import { tryLockExclusive } from "../platform/lock.ts";
 import { selfCommand, spawnDetached } from "../platform/process.ts";
 import type { Endpoint } from "./client.ts";
 import { Endpoints } from "./endpoints.ts";
+import { readHttpSettings, serveHttp } from "./http.ts";
 import { serveLines } from "./server.ts";
 
 type Json = Record<string, unknown>;
@@ -19,13 +20,13 @@ export const IDLE_MS = 10 * 60_000;
 /** A `status` that takes longer than this reads as stuck (M3). */
 export const STATUS_TIMEOUT_MS = 2_000;
 
-export type MachinePaths = { socket: string; lock: string; key: string };
+export type MachinePaths = { socket: string; lock: string; key: string; http: string };
 
-/** `machine-mcp[-ns].sock`, `.lock` and `.key` in the app-config directory, the namespace cut as `mcpPaths` cuts it. */
+/** `machine-mcp[-ns].sock`, `.lock`, `.key` and `.http.json` (the HTTP listener's settings) in the app-config directory, the namespace cut as `mcpPaths` cuts it. */
 export function machinePaths(configDir: string, namespace?: string): MachinePaths {
   const clean = (namespace ?? "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 48);
   const stem = clean ? `machine-mcp-${clean}` : "machine-mcp";
-  return { socket: join(configDir, `${stem}.sock`), lock: join(configDir, `${stem}.lock`), key: join(configDir, `${stem}.key`) };
+  return { socket: join(configDir, `${stem}.sock`), lock: join(configDir, `${stem}.lock`), key: join(configDir, `${stem}.key`), http: join(configDir, `${stem}.http.json`) };
 }
 
 type KeyFile = { token?: unknown; previous?: unknown; previous_until_ms?: unknown };
@@ -67,6 +68,7 @@ export type MachineStatus = {
   uptime_ms: number;
   clients: number;
   daemons: { repo: string; protocol: number; state: "ok" | "incompatible" }[];
+  http: { listening: boolean; error: string };
 };
 
 const unlinkQuiet = (path: string) => {
@@ -111,6 +113,7 @@ export async function serveMachine(options: { paths: MachinePaths; protocol: num
     uptime_ms: Math.round(performance.now() - started),
     clients,
     daemons: [...registrations.values()].map((r) => ({ repo: r.repo, protocol: r.protocol, state: r.protocol === protocol ? "ok" : "incompatible" })),
+    http: { listening: http.listening, error: http.error },
   });
 
   const server = createServer((connection: Socket) => {
@@ -178,6 +181,9 @@ export async function serveMachine(options: { paths: MachinePaths; protocol: num
     server.listen(paths.socket, resolve);
   });
   console.error(`machine MCP: listening on ${paths.socket}`);
+  // Read once: SetHttp restarts the MCP. The token is read on every request, so a rotation needs no restart.
+  const http = serveHttp(readHttpSettings(paths.http), ctx, () => acceptedTokens(paths.key));
+  if (http.error) console.error(`machine MCP: ${http.error}`);
   armIdle();
   // No SIGTERM handler, on purpose: Force restart (M3) relies on the default action ending even a wedged loop.
   return new Promise<number>(() => {});

@@ -1140,7 +1140,7 @@ await serveRpc({
   playbooks: { repo, appConfig, projector: playbookProjector, blobs: taskDeps.blobs },
   agent: { appConfig, blobs: taskDeps.blobs, mcp: mcpHub, shell: { path: agentEnv.PATH ?? "", python }, includedSkills: includedSkillsDir },
   providers: { providers, repo, appConfig },
-  mcp: { link: machineLink, keyPath: machine.key },
+  mcp: { link: machineLink, paths: machine },
   artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
   transcripts: async (taskSlug, id) => {
     const row = live.get(id);
