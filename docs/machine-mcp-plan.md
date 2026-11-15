@@ -1,8 +1,8 @@
 # Machine MCP and the runtime status panel
 
-Status: v0.3, 2026-11-15. P0 is done: M1 to M8 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 onward is not started.
+Status: v0.4, 2026-11-15. P0 is done: M1 to M10 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 onward is not started.
 
-v0.3 records the decisions: full reach for every caller with an optional token (M2, M5), Restart and Force restart in the panel (M3), refuse protocol mismatches (M7), register over the socket (M8). v0.2 had reviewed the plan against the code.
+v0.4 adds M9 (an app update asks the MCP to exit) and M10 (HTTP is a bound port the user wires up; Settings shows its address and token per host). v0.3 recorded the decisions: full reach for every caller with an optional token (M2, M5), Restart and Force restart in the panel (M3), refuse protocol mismatches (M7), register over the socket (M8). v0.2 had reviewed the plan against the code.
 
 This plan is grounded in the code on `experimental-pi-durable-as-a-harness` at `195f6fb9`. Where a claim rests on something I did not read, it is listed under "Unverified" at the end instead of being stated as fact.
 
@@ -54,10 +54,12 @@ Settled with the user on 2026-11-15 (P0). Where the user's answer went beyond th
 | M1 | What "machine" means | **One per OS user and per lane.** | The app-config identity and socket namespace daemons already use. Sockets are 0600; a second OS user's process is never served. On a shared box each user has their own machine MCP and reaches only daemons that registered with it (their own, plus any they joined, whose member token works). | Recommendation applied, 2026-11-15 |
 | M2 | Cross-repo reach (changes O20 c and O22 a) | **Full reach for every caller, the harness included, with an optional auth token that guards the MCP.** | No harness-scoped connection: a harness uses the machine MCP like any client, and `alinery_send_review_handoff` is offered to everyone. The token is off by default; when the user sets one, every caller presents it, on the socket and over HTTP. The stdio bridge and a harness read it from the owner-only key file, so the token keeps out other OS users and remote HTTP callers, not processes of this user (section 2). | User, 2026-11-15 |
 | M3 | A stuck MCP | **The panel shows "stuck", and the panel has a Restart MCP button.** | "Stuck" is a `status` op that does not answer within a timeout. Restart sends `{"op":"exit"}`, waits for the socket to go quiet, then connect-or-spawn. If the MCP does not answer, the panel offers **Force restart…** behind `confirmDanger`, which names the connected clients. Force restart reuses confirmed takeover's identity: the shell connects to the MCP socket and takes the kernel-authenticated peer process (`alinery_core::legacy_daemon::peer_process_id`, `LOCAL_PEERPID` / `SO_PEERCRED`), the confirmation binds to that incarnation, and only that process gets SIGTERM, refused if the incarnation changed. The machine MCP installs no SIGTERM handler, so the default action ends even a wedged event loop. There are no pid files and no automatic kill: it is a user's confirmed click, like Take over. It adds one reasoned line to `check-no-auto-session-kill.sh`. No watchdog. | User, 2026-11-15 |
-| M4 | HTTP listener | **Opt-in, off by default, loopback bind, Origin and Host validated, no TLS, its own phase (P5).** | HTTP cannot be turned on without the M2 token, because other OS users and any page doing DNS rebinding can reach loopback. iOS and claude.ai connectors still need a public HTTPS endpoint, which is a tunnel the user runs. | Recommendation applied, 2026-11-15 |
+| M4 | HTTP listener | **Opt-in per host, off by default, Streamable HTTP only, no TLS, its own phase (P5). The user picks the bind address per host in Settings: loopback (the default), all interfaces, or one address such as a Tailscale IP.** | HTTP cannot be turned on without the M2 token, because other OS users and any page doing DNS rebinding can reach even loopback. Origin and Host are validated. A non-loopback bind shows a warning that the listener speaks plain HTTP, so the token crosses that network unencrypted unless the user puts TLS in front (a reverse proxy, a tunnel, Tailscale). The warning stays even when they have: the app cannot see a proxy, and a proxy on another machine still talks plain HTTP to the listener. No legacy SSE transport. | User, 2026-11-15 |
 | M5 | The token | **Merged into M2.** One token in an owner-only `machine-mcp[-ns].key`, set, rotated or cleared from the panel, never in argv or env. | A rotation keeps the old token valid for one overlap window (the R-S5.1-4 lesson). Per-client tokens are out of scope. | Follows M2, 2026-11-15 |
 | M6 | Ownership and exit | **Daemons and the stdio bridge do connect-or-spawn; the MCP exits after 10 minutes with no registered daemon; the app never owns it.** | The app can restart it (M3) and start it, like any client. | Recommendation applied, 2026-11-15 |
 | M7 | Version skew | **Refuse mismatches.** | The MCP calls only daemons whose `Hello` protocol equals its own and lists the rest as `incompatible` in its tool output and the panel. The bridge reads the MCP's protocol from `status` and refuses a mismatch with a message naming Restart MCP. `behind` is a state, never an automatic stop. | User, 2026-11-15 |
+| M9 | The machine MCP across an app update | **The updater asks it to exit during the swap.** | The swap sends the frozen `{"op":"exit"}` over the socket and waits for it to go quiet, never a signal; the next client (a daemon registering, the bridge) starts the new build. The update is the user's click, so nothing stops on its own. A remote host's MCP is not touched: it stays `behind` with Restart MCP in its panel row. | User, 2026-11-15 |
+| M10 | How outside clients reach the HTTP port | **Alinery runs the server and binds the port; connecting is the user's job.** | Nothing is built on the client side: no `--url` bridge, no tunnel. Settings shows, per host, the listener's URL (bind address and port) and its token with a copy button, plus a short note: wrap it in TLS, a tunnel or a firewall rule yourself; Claude's custom connectors connect from Anthropic's cloud, so they need a public HTTPS URL, and accept the token as a fixed `Authorization: Bearer` header; Claude Desktop's local config launches processes, so a generic bridge such as `mcp-remote` points it at the URL. | User, 2026-11-15 |
 | M8 | How daemons register | **Over the socket.** | Each daemon connects to the MCP socket, sends `{"op":"register"}` with its repo, socket path, protocol and a freshly minted AGENT token, and keeps the connection open; a closed connection means the daemon is gone. On a drop the daemon does connect-or-spawn again (single-flight, the flock picks the winner, backoff 1, 5, 30 s). The idle timer is "no registered connection for 10 minutes". The `/var/tmp/alinery-daemons/` box records (`domain/boxRegistry.ts`, world-readable, no tokens) stay a display source and are not used for credentials. | User, 2026-11-15 |
 
 Confirmed with the user on 2026-11-15, against the topology diagrams:
@@ -171,7 +173,7 @@ Each row is something the code or history already shows, and what this plan does
 
 Each phase ships on its own and leaves the old paths working. While iterating, run targeted tests only (`cargo check -p alinery-app`, `bun test` in the daemon, `vitest` for a file). Run `./scripts/check.sh` once at check-in. Do not launch the app unless asked.
 
-**P0. Decisions.** Settle M1 to M8. P1 does not wait for this. Exit: recorded in the style of `thick-daemon-plan.md`'s decision table.
+**P0. Decisions.** Done: M1 to M10, section 3. Exit: recorded in the style of `thick-daemon-plan.md`'s decision table.
 
 **P1. Read-only Runtime panel.** No daemon or proto change. Built in `7bd85be2`: `runtime_status` in `remote.rs`, `RemoteSession.triple`, `runtime_is_stale(manifest, triple, hash)` now used by `stop_remote_daemon` too (one fewer ssh probe per restart; a new bundle that raises the glibc or macOS floor now fails the reconnect instead of falling back to the old runtime), `views/RuntimePanel.tsx` under Settings → Updates. Live sessions show only for attached repos. Not yet seen against aagent in the app.
 - Rust: `runtime_status` command in `remote.rs` or a new small module, store the selected triple on `RemoteSession`, compute stale without ssh.
@@ -192,17 +194,17 @@ Each phase ships on its own and leaves the old paths working. While iterating, r
 
 **P4. Remote hosts.** Spawn through the launcher recipe (transient unit on systemd hosts), per-host panel rows with Restart MCP through the host daemon's `McpService`. No client forward or bridge (section 1). Rebuild runtimes. Run the live tests against the Docker sshd (`scripts/tests/remote-sshd/run.sh`).
 
-**P5. Optional HTTP listener (M4).** Loopback bind, refused unless the M2 token is set, Origin and Host checks, bind address a setting. Tests include a rebinding attempt, a missing key and a call that spans a rotation.
+**P5. Optional HTTP listener (M4, M10).** Streamable HTTP, refused unless the M2 token is set, Origin and Host checks, the bind address picked per host in Settings (loopback, all interfaces, or one address) with the cleartext warning, and the per-host URL and token with a copy button and the M10 note. A remote host's settings go through its daemon's `McpService` (ADMIN), so no new host op. Tests include a rebinding attempt, a missing key and a call that spans a rotation.
 
 **P6. Harness migration and deletion (optional, after a soak).** Point the harness's `McpHub` at the machine socket (no scoped handshake, M2), then remove `--serve --managed`, `ensure_mcp_server`, `refresh_mcp_endpoints`, `ManagedMcpChild`, the endpoints file and the preflight patterns that referred to them. Update `AGENTS.md`.
 
 ## 8. Unverified
 
-- Whether claude.ai and the mobile apps call connectors from Anthropic's servers, and what auth they require. Check Anthropic's current docs before P5.
+- Resolved 2026-11-15: Claude's custom connectors connect from Anthropic's cloud (a loopback or LAN URL is unreachable) and accept a fixed bearer header (static credentials are in beta). Recheck the docs when P5 starts.
 - Whether a Bun worker can terminate the whole process from a stalled main loop. Only matters if M3 (b) is ever chosen.
 - Whether an MCP built against one proto version can safely call a daemon of another; M7 (a) avoids the question by refusing mismatches.
 - Which MCP tools touch the local filesystem directly (pitfall 21).
-- How the in-app updater would ask a running machine MCP to exit before the swap. The `preflight.sh` and `update.rs` interaction needs reading first.
+- Where in `preflight.sh` and `update.rs` the M9 exit request goes, so it runs after the quiet-machine gate passes and before the swap.
 
 ## 9. Documentation to change
 
