@@ -9,4 +9,4 @@ python-pptx
 python-docx
 reportlab
 # pdfminer.six needs it; 49 and later ship no Intel macOS wheel.
-cryptography<51
+cryptography<49

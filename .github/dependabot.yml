@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Security updates only: open-pull-requests-limit 0 turns version updates
+  # off, and the ignore rule below still shapes the security PRs.
+  - package-ecosystem: pip
+    directory: /scripts/python-runtime
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      # cryptography 49 and later ship no Intel macOS wheel, and stage.sh
+      # needs one for x86_64-apple-darwin (see requirements.in).
+      - dependency-name: cryptography
+        versions: [">=49"]
