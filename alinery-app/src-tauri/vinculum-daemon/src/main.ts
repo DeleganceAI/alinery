@@ -354,7 +354,7 @@ const machineLink = new MachineLink({
   protocol: PROTOCOL,
   build: appPackage.version,
   mint: () => agentTokens.mint("machine-mcp"),
-  spawn: () => spawnMachine(appConfig, namespace),
+  spawn: () => spawnMachine(appConfig, namespace, flag("--machine-launch") === "systemd_run" ? "systemd_run" : "direct", machine),
   log: (line) => console.error(line),
 });
 void mcpHub.refresh();

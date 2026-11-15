@@ -297,9 +297,13 @@ describe("spawnDaemon", () => {
     expect(text).toContain("xai=xai-test host= remote=1\n");
   });
 
+  test("a host's daemon joins the host's machine MCP, started the way the daemon was", () => {
+    expect(daemonArguments(params("/r", { launch: "systemd_run", unit: "u" })).slice(-3)).toEqual(["--machine-mcp", "--machine-launch", "systemd_run"]);
+  });
+
   test("the arguments leave out what was not given", () => {
     const args = daemonArguments(params("/r", { namespace: "", rpcSecretFile: "" }));
-    expect(args).toEqual(["--repo", "/r/repo", "--app-config", "/r/app.toml", "--build-id", "hash1", "--app-version", "9.9.9"]);
+    expect(args).toEqual(["--repo", "/r/repo", "--app-config", "/r/app.toml", "--build-id", "hash1", "--app-version", "9.9.9", "--machine-mcp", "--machine-launch", "direct"]);
   });
 
   test("a binary that is not there is an error; systemd_run needs a unit name", async () => {

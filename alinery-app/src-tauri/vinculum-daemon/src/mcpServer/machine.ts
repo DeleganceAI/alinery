@@ -2,6 +2,7 @@
 // register over that socket with an AGENT token minted for it (M8), every client reaches every registered daemon (M2), and an
 // optional token in an owner-only key file guards it. The socket speaks the JSON lines the managed MCP's socket speaks: MCP
 // requests, plus the control ops `auth`, `status`, `register` and the frozen `exit`.
+import { createHash } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import { connect, createServer, type Socket } from "node:net";
 import { join } from "node:path";
@@ -231,10 +232,25 @@ export function answers(path: string): Promise<boolean> {
   });
 }
 
-/** Starts `--mcp --machine` detached, with the daemon's own recipe (a new session, no stdio). */
-export function spawnMachine(appConfig: string, namespace: string | undefined, idleMs?: number): void {
-  const args = ["--mcp", "--machine", "--app-config", appConfig, ...(namespace ? ["--socket-namespace", namespace] : []), ...(idleMs ? ["--idle-ms", String(idleMs)] : [])];
-  spawnDetached(selfCommand(...args), { stdio: ["ignore", "ignore", "ignore"] }).unref();
+export type MachineLaunch = "direct" | "systemd_run";
+
+/** The transient unit a host's machine MCP runs in: one per app-config directory and lane, so two installs never share one. */
+export function machineUnit(paths: MachinePaths): string {
+  return `alinery-mcp-${createHash("sha256").update(paths.socket).digest("hex").slice(0, 12)}`;
+}
+
+/**
+ * Starts `--mcp --machine` with the daemon's own recipe. `direct` is a new session with no stdio. `systemd_run` is its own transient
+ * user unit, because a child left in the daemon's unit dies with it when that unit stops (pitfall 7).
+ */
+export function spawnMachine(appConfig: string, namespace: string | undefined, launch: MachineLaunch = "direct", paths?: MachinePaths): void {
+  const command = selfCommand("--mcp", "--machine", "--app-config", appConfig, ...(namespace ? ["--socket-namespace", namespace] : []));
+  if (launch === "systemd_run" && paths) {
+    // The unit's environment is the user manager's; the MCP needs this PATH to find git.
+    spawnDetached(["systemd-run", "--user", "--collect", "--quiet", `--unit=${machineUnit(paths)}`, `--setenv=PATH=${process.env.PATH ?? ""}`, "--", ...command], { stdio: ["ignore", "ignore", "ignore"] }).unref();
+    return;
+  }
+  spawnDetached(command, { stdio: ["ignore", "ignore", "ignore"] }).unref();
 }
 
 let spawning: Promise<boolean> | undefined;

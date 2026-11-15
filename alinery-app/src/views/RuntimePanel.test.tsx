@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
 import type { McpStatusHandle } from "../useMcpStatus";
 
+const runtime = vi.hoisted(() => ({ extra: [] as never[] }));
 vi.mock("../ipc", () =>
   mockIpc({
     runtimeStatus: async () => ({
@@ -26,6 +27,7 @@ vi.mock("../ipc", () =>
         },
         { repo: "alinery+ssh://h2/srv/shared", state: "joined", issues: [], host: "h2", version: "0.25.0", started_by: "sam", os_user: "sam", mine: false },
         { repo: "/Users/me/idle", state: "not_attached", issues: [], host: "local", version: null, started_by: "", os_user: "", mine: true },
+        ...runtime.extra,
       ],
       local_link: { calls: 0, bytes_up: 0, bytes_down: 0 },
     }),
@@ -91,6 +93,7 @@ const mcp: McpStatusHandle = {
 };
 
 afterEach(() => {
+  runtime.extra = [];
   cleanup();
   vi.clearAllMocks();
 });
@@ -194,4 +197,15 @@ it("requires a token only after a yes, and shows no Force restart for an MCP tha
   await waitFor(() => expect(machine.token).toHaveBeenCalledWith("/Users/me/app", "rotate"));
   expect(await screen.findByText("feedface…")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Force restart…" })).toBeNull();
+});
+
+it("asks each connected host's MCP through a daemon on that host, and offers Force restart for this computer's only", async () => {
+  const remote = { repo: "alinery+ssh://h2/srv/api", state: "current" as const, issues: [], host: "h2", version: "0.600.0", started_by: "", os_user: "", mine: true };
+  runtime.extra = [remote as never];
+  machine.status.mockImplementation(async (repo: string) => mcpStatus(repo === remote.repo ? McpState.STUCK : McpState.OK));
+  render(<RuntimePanel mcp={mcp} />);
+  await waitFor(() => expect(machine.status).toHaveBeenCalledWith(remote.repo));
+  expect(await screen.findByText("Not answering")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Force restart…" })).toBeNull();
+  expect(screen.getAllByText("No daemon running here to ask")).toHaveLength(1);
 });

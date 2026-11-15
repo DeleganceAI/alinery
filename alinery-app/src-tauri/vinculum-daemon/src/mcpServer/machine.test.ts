@@ -10,7 +10,7 @@ import { connect } from "node:net";
 import { McpService, McpTokenAction } from "alinery-proto/alinery/v1/mcp_pb";
 import { MachineLink, rotateToken } from "../domain/machineMcp.ts";
 import { daemonProtocol, type RunningDaemon, SECRET, startDaemon } from "./daemonFixture.testutil.ts";
-import { acceptedTokens, answers, ask, machinePaths } from "./machine.ts";
+import { acceptedTokens, answers, ask, machinePaths, machineUnit } from "./machine.ts";
 
 const SERVE = join(import.meta.dir, "machineServe.testutil.ts");
 const MAIN = join(import.meta.dir, "..", "main.ts");
@@ -185,4 +185,10 @@ test("McpService is the app's alone: it is not an agent RPC, and an AGENT token 
     );
   await expect(client(daemon.token).token({ action: McpTokenAction.READ })).rejects.toThrow(/ADMIN/);
   expect((await client(SECRET).token({ action: McpTokenAction.READ })).token).toBe("");
+});
+
+test("each app-config directory and lane gets its own systemd unit name, valid as a unit name", () => {
+  const units = [machinePaths("/home/a/cfg1"), machinePaths("/home/a/cfg2"), machinePaths("/home/a/cfg1", "dev")].map(machineUnit);
+  expect(new Set(units).size).toBe(3);
+  for (const unit of units) expect(unit).toMatch(/^alinery-mcp-[0-9a-f]{12}$/);
 });

@@ -83,8 +83,9 @@ const yes = (title: string, body: string, label: string) =>
     defaultKey: "cancel",
   }).then((key) => key === "confirm");
 
-/** This computer's machine MCP (docs/machine-mcp-plan.md), read and restarted through `repo`'s daemon; its token below it. */
-function MachineMcpRows({ repo }: { repo: string | undefined }) {
+/** A host's machine MCP (docs/machine-mcp-plan.md), read and restarted through `repo`'s daemon on that host; its token below it.
+ *  Force restart signals a process, so it is offered for this computer's only (M3). */
+function MachineMcpRows({ repo, label, local }: { repo: string | undefined; label: string; local: boolean }) {
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -98,7 +99,7 @@ function MachineMcpRows({ repo }: { repo: string | undefined }) {
     return (
       <tr>
         <td>Machine MCP</td>
-        <td className="dim">this computer</td>
+        <td className="dim">{label}</td>
         <td />
         <td className="dim">No daemon running here to ask</td>
         <td />
@@ -152,7 +153,7 @@ function MachineMcpRows({ repo }: { repo: string | undefined }) {
     <>
       <tr>
         <td>Machine MCP</td>
-        <td className="dim">this computer</td>
+        <td className="dim">{label}</td>
         <td className="dim">{status ? machineMcpDetail(status) : ""}</td>
         <td title={status?.socketPath}>{status ? MCP_STATE[state] : "Could not ask"}</td>
         <td>
@@ -161,7 +162,7 @@ function MachineMcpRows({ repo }: { repo: string | undefined }) {
               {state === McpState.ABSENT ? "Start MCP" : "Restart MCP"}
             </button>
           )}
-          {state === McpState.STUCK && (
+          {local && state === McpState.STUCK && (
             <button type="button" className="btn ghost small" disabled={busy} onClick={() => void force()}>
               Force restart…
             </button>
@@ -324,7 +325,14 @@ export function RuntimePanel({ mcp }: { mcp: McpStatusHandle }) {
                 )}
               </Fragment>
             ))}
-            <MachineMcpRows repo={status.repos.find((repo) => !isRemoteRepo(repo.repo) && (repo.state === "current" || repo.state === "build_drift"))?.repo} />
+            {[{ host_id: "local", label: "this computer" }, ...status.hosts.filter((host) => host.state === "connected")].map((host) => (
+              <MachineMcpRows
+                key={`mcp:${host.host_id}`}
+                label={host.label}
+                local={host.host_id === "local"}
+                repo={status.repos.find((repo) => repo.host === host.host_id && (repo.state === "current" || repo.state === "build_drift"))?.repo}
+              />
+            ))}
             <tr>
               <td>MCP</td>
               <td className="dim">managed · {mcp.repo ? repoName(mcp.repo) : "no repo"}</td>

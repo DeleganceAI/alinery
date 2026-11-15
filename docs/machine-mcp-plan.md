@@ -1,6 +1,6 @@
 # Machine MCP and the runtime status panel
 
-Status: v0.4, 2026-11-15. P0 is done: M1 to M10 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 is built. P3 is built (local). P4 onward is not started.
+Status: v0.4, 2026-11-15. P0 is done: M1 to M10 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 is built. P3 is built (local). P4 is built. P5 onward is not started.
 
 v0.4 adds M9 (an app update asks the MCP to exit) and M10 (HTTP is a bound port the user wires up; Settings shows its address and token per host). v0.3 recorded the decisions: full reach for every caller with an optional token (M2, M5), Restart and Force restart in the panel (M3), refuse protocol mismatches (M7), register over the socket (M8). v0.2 had reviewed the plan against the code.
 
@@ -201,6 +201,8 @@ Each phase ships on its own and leaves the old paths working. While iterating, r
   - Not built: the "Exit" check against Claude Desktop by hand, and the M9 updater exit. A daemon whose registration drops respawns the MCP after 1 s, so the M9 exit must come after the swap has replaced the binary, or the old build comes back.
 
 **P4. Remote hosts.** Spawn through the launcher recipe (transient unit on systemd hosts), per-host panel rows with Restart MCP through the host daemon's `McpService`. No client forward or bridge (section 1). Rebuild runtimes. Run the live tests against the Docker sshd (`scripts/tests/remote-sshd/run.sh`).
+- Built: the host service passes `--machine-mcp --machine-launch <launch>` to every daemon it starts, and the daemon starts its MCP the same way (`spawnMachine`: `systemd-run --user --collect` in its own unit `alinery-mcp-<hash of the socket>` with the daemon's PATH, else a new session). One MCP per host app-config directory, so two apps on a shared box never share one. The panel shows an MCP row for this computer and for each connected host, read and restarted through the first running daemon on it; Force restart is this computer's only (it needs the peer's pid). Live tests pass against the Docker sshd (Launch::Direct there), and a host-side bridge reached the registered repo. The systemd path is unit-tested for its arguments only.
+- The runtime build on this Mac needed vtool and codesign hidden to skip darwin: the darwin Python stage fails on `cryptography==50.0.0` (from main's dependabot merge #206), which has no distribution yet. That predates this branch and blocks `tauri build`.
 
 **P5. Optional HTTP listener (M4, M10).** Streamable HTTP, refused unless the M2 token is set, Origin and Host checks, the bind address picked per host in Settings (loopback, all interfaces, or one address) with the cleartext warning, and the per-host URL and token with a copy button and the M10 note. A remote host's settings go through its daemon's `McpService` (ADMIN), so no new host op. Tests include a rebinding attempt, a missing key and a call that spans a rotation.
 
