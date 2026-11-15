@@ -1,4 +1,4 @@
-// GitService over the real socket (plan S4.7): the calls the views make, the usage events, the retry that must not push twice,
+// GitService over the real socket: the calls the views make, the usage events, the retry that must not push twice,
 // and the ref cleanup an archive does.
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

@@ -535,7 +535,7 @@ export const ResumeChatThreadResponseSchema: GenMessage<ResumeChatThreadResponse
   messageDesc(file_alinery_v1_chat, 23);
 
 /**
- * Taskless chat threads (S4.4). The read side is the chat scope: `chat/_/<id>` (ChatThread) beside `session/_/<id>`.
+ * Taskless chat threads. The read side is the chat scope: `chat/_/<id>` (ChatThread) beside `session/_/<id>`.
  * These are the writes. A thread's attachments go through BlobService (`ChatAttachmentBlob`), never as a path.
  *
  * @generated from service alinery.v1.ChatService

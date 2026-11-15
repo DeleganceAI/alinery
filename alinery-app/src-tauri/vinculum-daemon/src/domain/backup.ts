@@ -1,5 +1,5 @@
-// Backups of a repository's `.alinery/` data (plan S4.9), ported from alinery-core `backup.rs`: a curated set of files in one
-// zip, written and read with the host's `zip` and `unzip` (O11 b, platform/zip.ts). The layout is the one Rust wrote, which
+// Backups of a repository's `.alinery/` data, ported from alinery-core `backup.rs`: a curated set of files in one
+// zip, written and read with the host's `zip` and `unzip` (platform/zip.ts). The layout is the one Rust wrote, which
 // the Rust reader (the MCP tool's) still reads: `backup-meta.json` at the root, then each curated file named relative to
 // `.alinery/`. Two rules the rest leans on, both from the Rust file:
 //   * `CURATED` is the one list of what is backed up, and restore replaces exactly that set, so nothing replaced was unsaved.

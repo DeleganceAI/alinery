@@ -1,6 +1,6 @@
 //! The one model-role write the shell still makes: the hosted default role (`ensure_default_model_role`, called by `hosted.rs` after a
-//! sync) into this machine's agent directory. Reading and writing the roles a person edits is the daemon's `AgentService` (S4.10, O12 a);
-//! its `domain/agentDir.ts` holds the same line parser and renderer, and S4.11 moves the hosted default there too.
+//! sync) into this machine's agent directory. Reading and writing the roles a person edits is the daemon's `AgentService`;
+//! its `domain/agentDir.ts` holds the same line parser and renderer, and the hosted default is written there too.
 use crate::*;
 
 fn vinculum_agent_config_yml(agent_dir: &Path) -> PathBuf {

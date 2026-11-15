@@ -45,7 +45,7 @@ test("a daemon of another protocol is named and left alone: the call fails, the 
   expect(JSON.parse((ok as { result: { content: { text: string }[] } }).result.content[0].text)).toContain("first-task");
 });
 
-test("a repo no endpoint covers is refused with the reason, and a handoff is the machine MCP's only (O22 a)", async () => {
+test("a repo no endpoint covers is refused with the reason, and a handoff is the machine MCP's only", async () => {
   const ctx = daemon.context({ endpoints: new Endpoints() });
   const call = async (name: string, args: object) => ((await handleRequest(ctx, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } })) as { result: { content: { text: string }[] } }).result.content[0].text;
   expect(await call("alinery_list_tasks", { repo: daemon.fixture.repo })).toMatch(/^error: /);
@@ -73,7 +73,7 @@ test("the hub starts the bridge as the built-in server, which starts the machine
   for (const tool of TOOLS) expect(names).toContain(`mcp__alinery__${tool.name}`);
 }, 60_000);
 
-test("a connection whose token the shell re-minted twice keeps working once it reads the new one (the 30 s refresh, R-S5.1-4)", async () => {
+test("a connection whose token the shell re-minted twice keeps working once it reads the new one (the 30 s refresh)", async () => {
   const first = await daemon.mint("refresh");
   const conn = new DaemonConnection({ socket: daemon.socket, token: first }, daemonProtocol());
   const scope = { kind: { case: "repo", value: {} } } as const;

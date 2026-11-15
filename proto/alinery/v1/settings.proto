@@ -5,12 +5,59 @@ package alinery.v1;
 import "alinery/v1/common.proto";
 import "alinery/v1/entities.proto";
 
-// Repository settings (S4.1). The read is the `settings/_/repo` entity (entities.proto); global settings
+// Repository settings. The read is the `settings/_/repo` entity (entities.proto); global settings
 // stay in the shell.
 service SettingsService {
   rpc WriteOverrides(WriteOverridesRequest) returns (WriteOverridesResponse);  // ACT
   rpc ClearOverride(ClearOverrideRequest) returns (ClearOverrideResponse);     // ACT
   rpc WriteHostedInference(WriteHostedInferenceRequest) returns (WriteHostedInferenceResponse);  // ADMIN
+  rpc ReadSpecs(ReadSpecsRequest) returns (ReadSpecsResponse);                                   // VIEW
+  rpc WriteSpec(WriteSpecRequest) returns (WriteSpecResponse);                                   // ACT
+  rpc ReadTaskSpecs(ReadTaskSpecsRequest) returns (ReadTaskSpecsResponse);                       // VIEW
+  rpc RepinTaskSpecs(RepinTaskSpecsRequest) returns (RepinTaskSpecsResponse);                    // ACT
+}
+
+// The repository's requirement files: `specs/requirements.md`, `specs/tooling.md` and `specs/architecture.md` in the
+// repository root, and no other file in that folder. ReadSpecs answers with the working tree (what Settings edits);
+// a playbook step is given the committed text instead. WriteSpec creates or replaces one file and never commits. It is
+// not an AGENT RPC: an agent must not write the rules it is held to.
+message ReadSpecsRequest {}
+message SpecFile {
+  string name = 1;       // one of the three names
+  bool present = 2;
+  string text = 3;       // empty when absent or too_large
+  bool committed = 4;    // present and identical to HEAD's copy
+  bool too_large = 5;    // over max_chars: no text is returned, since saving a cut-down copy would lose the rest
+}
+message ReadSpecsResponse {
+  repeated SpecFile files = 1;  // always the three names, in order
+  uint32 max_chars = 2;
+}
+message WriteSpecRequest {
+  MutationMeta meta = 1;
+  string name = 2;  // not one of the three, or text over max_chars: INVALID_ARGUMENT
+  string text = 3;
+}
+message WriteSpecResponse {}
+
+// A task's requirements are pinned to the commit its worktree branched from (`tasks/<slug>/specs.lock.json`), so the
+// rules it is held to do not move when the repository changes. Not AGENT RPCs: an agent must not re-pin its own task.
+message ReadTaskSpecsRequest {
+  string slug = 1;
+}
+message ReadTaskSpecsResponse {
+  string commit = 1;  // empty: the task has no pin yet (it is pinned at its first launch)
+  repeated string files = 2;  // the spec files committed at that commit
+  uint32 head_files = 3;      // how many the repository's HEAD has now
+}
+// Pins the task to the repository's HEAD now. A step that is already running keeps the rules it started with.
+message RepinTaskSpecsRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+}
+message RepinTaskSpecsResponse {
+  string commit = 1;
+  repeated string files = 2;
 }
 
 message WriteOverridesRequest {
@@ -30,7 +77,7 @@ message ClearOverrideResponse {
   Applied applied = 1;
 }
 
-// The hosted-inference credential (S4.11, R-S4.11-5). The shell mints and refreshes the token (it holds the account)
+// The hosted-inference credential. The shell mints and refreshes the token (it holds the account)
 // and sends the whole `inference.json` here; the daemon writes it, owner-only, beside its own app config, so a
 // daemon on another host gets a fresh token without a file push. ADMIN: it is a credential. The body must parse
 // as an inference file (a token, an expiry, a catalog); anything else is INVALID_ARGUMENT and nothing is written.
@@ -40,7 +87,7 @@ message WriteHostedInferenceRequest {
 }
 message WriteHostedInferenceResponse {}
 
-// The repository half of `set_active_repo` (plan 2.3.4).
+// The repository half of `set_active_repo`.
 service RepoService {
   rpc EnsureReady(EnsureReadyRequest) returns (EnsureReadyResponse);  // ADMIN
 }

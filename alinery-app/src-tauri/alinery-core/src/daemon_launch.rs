@@ -1,5 +1,5 @@
 //! Launching the daemon: where its binary is, the build stamp the app compares, and the one recipe for starting it detached.
-//! Moved here from the JSON-lines client when S5.3 retired that wire.
+//! Moved here from the JSON-lines client when that wire was retired.
 
 use crate::login_shell_path;
 use std::fs;
@@ -127,7 +127,7 @@ pub fn daemon_command(
         .arg(app_config)
         .arg("--build-id")
         .arg(build_id)
-        // The version a telemetry event carries (plan S4.1). All three crates move together, so this is the app's.
+        // The version a telemetry event carries. All three crates move together, so this is the app's.
         .arg("--app-version")
         .arg(env!("CARGO_PKG_VERSION"))
         .arg("--started-by")

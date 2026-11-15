@@ -1,4 +1,4 @@
-// A task's artifact rows (plan S4.5): the list, the attachments, the review comments, the drafts, the pending marks and the
+// A task's artifact rows: the list, the attachments, the review comments, the drafts, the pending marks and the
 // tree, all derived from files, all committed to the store as `<kind>/<slug>/...` rows. One task is recomputed whole and
 // diffed against the keys it owned, so a file that vanished, or a comment that left its file, leaves the store too (the
 // store drops an unchanged put, so recomputing is cheap on the wire). The feed says which tasks to redo; an RPC that wrote a

@@ -1,4 +1,4 @@
-// Settings (plan S4.1). The conformance cases are the ones Rust's `cargo test -p alinery-core --test conformance`
+// Settings. The conformance cases are the ones Rust's `cargo test -p alinery-core --test conformance`
 // also runs: same `input/`, same `expected.json`, and for a write the same bytes under `after/`.
 import { create, fromJson, type JsonObject, toJson } from "@bufbuild/protobuf";
 import { type Entity, RepoOverridesSchema, SettingSource, SettingsSchema } from "alinery-proto/alinery/v1/entities_pb";

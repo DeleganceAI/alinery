@@ -66,7 +66,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 49;
+const PROTOCOL = 50;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -111,13 +111,13 @@ if (args.includes("--protocol-version")) {
   process.exit(0);
 }
 
-// A job child (plan 2.3.5) is this binary run with --job <kind>; it does nothing a daemon does.
+// A job child is this binary run with --job <kind>; it does nothing a daemon does.
 if (args.includes("--job")) process.exit(await runJobChild(args[args.indexOf("--job") + 1] ?? ""));
-// The MCP server (plan S5.1, O10 b) is this binary run with --mcp: a client of a daemon, never one itself.
+// The MCP server is this binary run with --mcp: a client of a daemon, never one itself.
 if (args.includes("--mcp")) process.exit(await runMcp(args, PROTOCOL, appPackage.version));
-// The host service (plan S5.2, O15 b) is this binary run with --host-service: the work a host needs while no daemon runs.
+// The host service is this binary run with --host-service: the work a host needs while no daemon runs.
 if (args.includes("--host-service")) process.exit(await runHostService(args));
-// The restore of a backup (S4.9) is run by the shell after it has stopped the daemon: `--restore-backup <repo> <archive>`.
+// The restore of a backup is run by the shell after it has stopped the daemon: `--restore-backup <repo> <archive>`.
 if (args.includes("--restore-backup")) process.exit(await runRestoreBackup(args[args.indexOf("--restore-backup") + 1] ?? "", args[args.indexOf("--restore-backup") + 2] ?? ""));
 
 function flag(name: string): string {
@@ -127,7 +127,7 @@ function flag(name: string): string {
 
 const repo = flag("--repo");
 const appConfig = flag("--app-config");
-// The RPC bearer token (R8): a file the app wrote, read and deleted before the daemon listens or
+// The RPC bearer token: a file the app wrote, read and deleted before the daemon listens or
 // resumes anything, then held only in memory.
 const rpcSecretFile = flag("--rpc-secret-file");
 const rpcSecret = rpcSecretFile ? takeSecretFile(rpcSecretFile) : Buffer.alloc(0);
@@ -164,7 +164,7 @@ const publisher = new SessionPublisher(store, feed, () => [...live.values()].map
   // Peers of the shell role are screened against the app's executable; a local daemon started without one cannot, and the shell says so (a remote one is started without by design).
   hostGuardWarning: process.env.ALINERY_HOST_EXECUTABLE || process.env.ALINERY_REMOTE_LAUNCH ? undefined : "no canonical executable for dynamic host screening",
 });
-// One owner per repository (S4.11): a second daemon, of any lane, is refused here and exits, and this one's sessions are not touched.
+// One owner per repository: a second daemon, of any lane, is refused here and exits, and this one's sessions are not touched.
 try {
   await acquireRepoOwnership(repo, lane ?? "", identity);
 } catch (error) {
@@ -341,7 +341,7 @@ const agentEnv = agentShellEnv({
   path: process.env.PATH,
   libreOffice: libreOfficeDir(),
 });
-// The AGENT tokens this daemon mints (O20 c): the one it registers with the machine MCP, and the ones the shell asks for.
+// The AGENT tokens this daemon mints: the one it registers with the machine MCP, and the ones the shell asks for.
 const agentTokens = new TokenRegistry();
 // The harnesses' built-in MCP is the stdio bridge to the machine MCP, like any other client (docs/machine-mcp-plan.md P6).
 // Only with --machine-mcp, like the registration: the bridge starts a machine MCP, and a test daemon must not leave one behind.
@@ -467,7 +467,7 @@ function liveView(row: Live) {
   return { id: row.id, taskSlug: row.taskSlug, ...sessionState({ ...row, playbook: enginePlaybook(row.id) ?? row.playbook }), transport: isPty(row.id) ? "pty" : "rpc", wait: row.wait };
 }
 
-// S2.5: every change to a session row goes through here, so a subscriber needs no poll.
+// Every change to a session row goes through here, so a subscriber needs no poll.
 function commitSession(taskSlug: string, id: string) {
   publisher.changed(taskSlug, id);
 }
@@ -1023,14 +1023,14 @@ async function exitWhenJobsEnded(): Promise<never> {
 }
 
 repairSessionMetas();
-// Files reach the store (2.2.8): scan with the parsers, then watch, then the 30 s reconcile, and only
+// Files reach the store: scan with the parsers, then watch, then the 30 s reconcile, and only
 // then does the RPC server listen, so a first Subscribe never sees a half-built store.
 await feed.scan();
 const watcher = new Watcher(join(repo, ".alinery"), (rel) => void feed.refresh(rel).catch((e) => console.error(`feed ${rel}: ${(e as Error).message}`)), { log: (line) => console.error(line), appConfig, globalPlaybooks: join(appConfigDirOf(appConfig), "playbooks") });
 watcher.start();
 publisher.commitStatus();
 new Reconciler(feed, { log: (line) => console.error(line) }).start();
-// Backups and purges (S4.9): jobs the daemon starts itself, and the automatic triggers that publish into them.
+// Backups and purges: jobs the daemon starts itself, and the automatic triggers that publish into them.
 let backupHost: BackupHost;
 const jobs = new JobRunner(store, { onEnd: (job, params) => backupHost.ended(job, params) });
 backupHost = new BackupHost(jobs, {
@@ -1066,7 +1066,7 @@ const taskDeps: TaskDeps = {
     };
   },
 };
-// Session writes and chat threads (S4.4): the processes stay with this file, the files and the store with the domain code.
+// Session writes and chat threads: the processes stay with this file, the files and the store with the domain code.
 const chat = new ChatPublisher(store, repo);
 const runner: ChatSessions = {
   create: (request) => createExecutionSession(repo, request, openCreated),
@@ -1106,10 +1106,10 @@ const sessionControl: SessionControl = {
 };
 await chat.refreshAll();
 setInterval(() => void chat.refreshAll(), 30_000).unref();
-// Artifact rows (S4.5): every task once, then on each change the feed reports and on the 30 s pass for a missed event.
+// Artifact rows: every task once, then on each change the feed reports and on the 30 s pass for a missed event.
 const taskExecution = (slug: string) => getTaskExecution(repo, slug, lane, identity);
 const artifactProjector = new ArtifactProjector(store, repo, executionRecords(taskExecution));
-// Playbook library rows (S4.6): the compiled-in set, the machine's and the repository's, once, then on each change the watcher reports and on the 30 s pass.
+// Playbook library rows: the compiled-in set, the machine's and the repository's, once, then on each change the watcher reports and on the 30 s pass.
 const playbookProjector = new PlaybookProjector(store, { globalConfigDir: appConfigDirOf(appConfig), repoDir: repo });
 feed.onChanged = (rel) => {
   artifactProjector.changed(rel);

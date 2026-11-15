@@ -49,7 +49,7 @@ export interface EngineOptions {
    */
   save: (state: State) => void | Promise<void>;
   /**
-   * Parent of every execution's `objects/` directory (O27). Omit it and no file states are kept.
+   * Parent of every execution's `objects/` directory. Omit it and no file states are kept.
    */
   historyDir?: string;
   /** Records the worktree an accepted coding step produced, as a tree kept alive under a ref. */
@@ -78,6 +78,11 @@ export interface EngineOptions {
    * When set, it replaces `PROMPT_EXTRA` and `REVIEW_HANDOFF_FILE` for that launch, including with empty strings.
    */
   stepTokens?: (step: string) => { PROMPT_EXTRA?: string; REVIEW_HANDOFF_FILE?: string } | undefined;
+  /**
+   * The repository's standing requirements, read each time a step launches and appended to its prompt as one block.
+   * Empty adds nothing. A throw fails that launch, so a requirement is never dropped without a trace.
+   */
+  requirements?: () => string | Promise<string>;
   /** Values for prompt tokens that are not derived from the execution. `{{ARTIFACTS_DIR}}` is each execution's own output directory. */
   tokens?: {
     TICKET_FILE?: string;
@@ -223,7 +228,7 @@ export class Engine {
     const step = this.#step(e.step);
     if (this.#occupying().length >= this.#liveCap()) throw new Error('task is at its live-session cap');
     if (step.isCodingStep && this.#codingHeld()) throw new Error('another coding execution holds the worktree');
-    const launch = this.#launchFor(e, step);
+    const launch = await this.#launchFor(e, step);
     const consumed = this.#consumedFor(e);
     const sessionId = e.sessionId ? await this.#opts.harness.resume(e.sessionId, launch) : await this.#opts.harness.start(launch);
     this.#append({ t: 'resumed', execId, sessionId, ...consumed });
@@ -290,7 +295,7 @@ export class Engine {
       try {
         // Captured before the agent exists, so it cannot touch an input first.
         const consumed = this.#consumedFor(e);
-        const sessionId = await this.#opts.harness.start(this.#launchFor(e, step));
+        const sessionId = await this.#opts.harness.start(await this.#launchFor(e, step));
         this.#append({ t: 'started', execId: e.id, sessionId, ...consumed });
       } catch (err) {
         this.#append({ t: 'failed', execId: e.id, reason: `launch failed: ${message(err)}` });
@@ -300,7 +305,7 @@ export class Engine {
 
   // ---- helpers -------------------------------------------------------------
 
-  #launchFor(e: Execution, step: Step): Launch {
+  async #launchFor(e: Execution, step: Step): Promise<Launch> {
     const byId = new Map(occurrences(this.#state).map((o) => [o.id, o]));
     const inputs = Object.fromEntries(Object.entries(e.inputs).map(([slot, ids]) => [slot, ids.map((id) => byId.get(id)!.path)]));
     const outputs = Object.fromEntries(step.outputs.map((o) => [o.path, join(e.outDir, o.path)]));
@@ -311,12 +316,12 @@ export class Engine {
       model: step.model || this.#opts.playbook.defaultModel,
       inputs,
       outputs,
-      prompt: this.#render(step, e, inputs, outputs),
+      prompt: this.#render(step, e, inputs, outputs, (await this.#opts.requirements?.()) ?? ''),
       requestCompletion: () => this.requestCompletion(e.id),
     };
   }
 
-  #render(step: Step, e: Execution, inputs: Record<string, string[]>, outputs: Record<string, string>): string {
+  #render(step: Step, e: Execution, inputs: Record<string, string[]>, outputs: Record<string, string>, requirements: string): string {
     const exact = step.outputs.find((output) => !output.path.includes('*'));
     const launchTokens = this.#opts.stepTokens?.(step.key);
     const extra = launchTokens ? (launchTokens.PROMPT_EXTRA ?? '') : (this.#opts.tokens?.PROMPT_EXTRA ?? '');
@@ -335,7 +340,8 @@ export class Engine {
       TICKET_FILE: this.#opts.tokens?.TICKET_FILE ?? '',
       PROMPT_EXTRA: extra,
     };
-    const lines = [step.prompt.replace(/(?<!\\)\{\{(\w+)\}\}/g, (_, k: string) => tokens[k] ?? ''), '', '## Engine assignment', `Execution ${e.id} of step "${step.key}".`, '', 'Read exactly these inputs:'];
+    // Appended after the token pass, so braces in a requirement file are never read as tokens.
+    const lines = [step.prompt.replace(/(?<!\\)\{\{(\w+)\}\}/g, (_, k: string) => tokens[k] ?? ''), ...(requirements ? ['', '## Repository requirements', '', requirements] : []), '', '## Engine assignment', `Execution ${e.id} of step "${step.key}".`, '', 'Read exactly these inputs:'];
     const bound = Object.entries(inputs).flatMap(([slot, paths]) => paths.map((p) => `  ${slot} -> ${p}`));
     lines.push(...(bound.length ? bound : ['  (none)']));
     lines.push('', 'Write only these outputs. At least one must be a nonempty file. A required output must be present:');

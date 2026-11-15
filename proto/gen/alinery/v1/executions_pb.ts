@@ -72,7 +72,7 @@ export const AllowCompletionResponseSchema: GenMessage<AllowCompletionResponse> 
   messageDesc(file_alinery_v1_executions, 1);
 
 /**
- * Execution approvals (S4.2). The read side is the `execution/<slug>/<slug>` entity (entities.proto).
+ * Execution approvals. The read side is the `execution/<slug>/<slug>` entity (entities.proto).
  * The engine decides everything else about an execution; the daemon only passes the person's permission on.
  *
  * @generated from service alinery.v1.ExecutionService

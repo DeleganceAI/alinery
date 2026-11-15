@@ -1,6 +1,6 @@
 //! backup: the shell's half. The daemon creates, lists, verifies and prunes backups and runs the automatic triggers
 //! (`BackupService`, `JobService.StartBackup`); what stays here is the folder picker and the one step that must happen
-//! while no daemon runs: restore (plan 2.3.5, S4.9).
+//! while no daemon runs: restore.
 use crate::*;
 
 /// Finder folder picker for the backup destination. Validated here so an unusable folder
@@ -26,7 +26,7 @@ pub(crate) fn require_restore_authority(state: &AppState, repo: &Path, known: &[
 
 /// Restore a remote repo from an archive on its host: the host extracts it while its daemon is stopped, then the daemon
 /// is started again. The page has already asked the daemon to verify the archive (`BackupService.VerifyBackup`); the host
-/// checks it once more here so that a refused archive costs no live session. Both stay repo-service ops until S5.2.
+/// checks it once more here so that a refused archive costs no live session.
 pub(crate) fn restore_remote_backup<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, path: &str, backup_path: &str) -> Result<(), String> {
     let state = app.state::<AppState>();
     if state.is_quitting() {
@@ -64,7 +64,7 @@ pub(crate) fn restore_outcome(success: bool, stdout: &str, stderr: &str) -> Resu
 }
 
 /// The restore itself, run by the daemon program (`--restore-backup <repo> <archive>`) while no daemon runs: it unpacks into
-/// a new directory under `.alinery/tmp` and renames it into place (plan 2.3.5, O11).
+/// a new directory under `.alinery/tmp` and renames it into place.
 fn restore_with_daemon_program(repo: &Path, zip: &Path) -> Result<(), String> {
     let program = resolve_alineryd_path().ok_or("the daemon program was not found; restore cancelled")?;
     let out = Command::new(program)

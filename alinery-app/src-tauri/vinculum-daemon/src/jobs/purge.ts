@@ -1,4 +1,4 @@
-// The purge job (S4.9), ported from alinery-core `storage.rs` `purge_archived_storage`: delete every archived task, every
+// The purge job, ported from alinery-core `storage.rs` `purge_archived_storage`: delete every archived task, every
 // archived session's files under a live task, and the worktrees of archived tasks. The classification is the storage scan's
 // (jobs/storage.ts), so the megabytes the confirmation shows are the ones this frees.
 //

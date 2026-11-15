@@ -114,7 +114,7 @@ export function serveLines(input: NodeJS.ReadableStream, write: (line: string) =
 }
 
 /**
- * The stdio bridge (plan 4.5): a client's `--mcp` becomes a pipe to the machine MCP's socket. It holds no daemon tokens, presents
+ * The stdio bridge: a client's `--mcp` becomes a pipe to the machine MCP's socket. It holds no daemon tokens, presents
  * the optional token, starts the MCP when nothing answers, and refuses an MCP of another protocol (M7).
  */
 async function bridge(appConfig: string, namespace: string | undefined, protocol: number): Promise<number> {

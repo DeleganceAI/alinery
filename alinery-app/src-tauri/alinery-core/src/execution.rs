@@ -162,7 +162,7 @@ pub struct TaskExecutionState {
     pub executions: BTreeMap<String, ExecutionRecord>,
     pub occurrences: BTreeMap<String, ArtifactOccurrence>,
     pub collections: BTreeMap<String, ArtifactCollection>,
-    /// The playbook engine's own state (S4.2), written by the daemon. Rust never reads it; it is carried
+    /// The playbook engine's own state, written by the daemon. Rust never reads it; it is carried
     /// through unchanged so a Rust writer's read-modify-write cannot erase it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<serde_json::Value>,
@@ -197,7 +197,7 @@ fn parse_execution_state(bytes: &[u8]) -> Result<TaskExecutionState, String> {
 /// - records from before `permission` was required lack it. `locked` grants nothing, so it cannot approve anything.
 /// - the `version: 2` format of another branch (main), whose records carry a continuation mode instead. It is read
 ///   as version 1: the extra fields are carried along unread, and with no engine state the daemon shows the task's
-///   runs as history only (O21), so nothing is launched from records it does not understand.
+///   runs as history only, so nothing is launched from records it does not understand.
 ///
 /// Returns the fixed bytes and how many changes were made, or `None` when nothing applies or the result would still
 /// not read.
@@ -389,7 +389,7 @@ pub fn mutate_execution_state<T>(
     })
 }
 
-/// Archiving a task drops the byte copies its executions kept (O27). Each execution's manifest stays in
+/// Archiving a task drops the byte copies its executions kept. Each execution's manifest stays in
 /// `execution.json`, so what a step saw is still named; only the bytes go. The task's artifacts are untouched.
 pub fn prune_execution_objects(repo: &Path, slug: &str) -> Result<(), String> {
     let root = crate::task_dir(repo, slug).join("executions");

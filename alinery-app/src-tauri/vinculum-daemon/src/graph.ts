@@ -12,6 +12,7 @@ import { historyDir, loadEngineState, saveEngineState, stateHasStart } from "./d
 import { DomainError } from "./platform/lock.ts";
 import { readLaunchModel } from "./sessionControls.ts";
 import { recordWorktreeTree } from "./domain/gitActions.ts";
+import { requirementsFor } from "./domain/repoSpecs.ts";
 
 export type SessionHooks = {
   open(id: string, taskSlug: string, model: string, prompt: string): Promise<void>;
@@ -20,7 +21,7 @@ export type SessionHooks = {
   stop(id: string): Promise<void>;
   /** A session the engine launched: it stands for this execution of this step. */
   bind(id: string, executionId: string, step: string): void;
-  /** A task's playbook engine saved its state to `execution.json`, so its execution entity may have changed (S2.4, S4.2). */
+  /** A task's playbook engine saved its state to `execution.json`, so its execution entity may have changed. */
   executionChanged?(taskSlug: string): void;
 };
 
@@ -260,7 +261,7 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
   // One daemon owns a task. The same check guards a session open (main.ts taskOpenAllowed).
   if (owner && ((typeof execution.owning_lane === "string" && execution.owning_lane !== owner.lane) || (typeof execution.owning_app_config_identity === "string" && execution.owning_app_config_identity !== owner.identity))) return;
   const stored = loadEngineState(repo, slug);
-  // O21: records the old Rust runner wrote. They stay as history; nothing is seeded, reserved or launched.
+  // Records the old Rust runner wrote. They stay as history; nothing is seeded, reserved or launched.
   if (stored.kind === "history_only") return;
   const parsed = parsePlaybookMd(readFileSync(sourcePath, "utf8"));
   if (!parsed.playbook) {
@@ -302,6 +303,8 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
       SESSION_HISTORY_DIR: join(taskDir, "sessions"),
     },
     stepTokens: (step) => handoffForStep(join(taskDir, "sessions"), join(taskDir, "artifacts"), step),
+    // The repository's committed specs/ at the commit this task is pinned to, read at each launch.
+    requirements: () => requirementsFor(repo, taskDir),
   });
   // A task folded from an old log is saved once, so the log is not read again.
   if (stored.kind === "converted") engine.persist();

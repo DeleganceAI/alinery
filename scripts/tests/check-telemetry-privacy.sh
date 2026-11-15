@@ -6,7 +6,7 @@
 #   the wrapper may construct OpenObserve requests or shell out to curl. Hosted
 #   inference may use ureq against accounts.alinery.ai; that is not ingest.
 #
-# The daemon sends its own events for what it does (plan O17 c, S4.1), so the same holds for its
+# The daemon sends its own events for what it does, so the same holds for its
 # TypeScript: only vinculum-daemon/src/platform/telemetry.ts builds an ingest request, and the
 # banned fields apply to it too.
 #

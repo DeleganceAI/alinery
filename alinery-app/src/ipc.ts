@@ -117,7 +117,7 @@ export const restoreBackup = (repoPath: string | null, backupPath: string) => in
 // ── daemon.rs ─────────────────────────────────────────────────────────
 export const cancelQuit = () => invoke<void>("cancel_quit");
 export const closeAllRepos = () => invoke<number>("close_all_repos");
-// daemon_rpc.rs: the webview bridge (plan 2.1.9). The body goes raw; the call and the Channel ride in headers.
+// daemon_rpc.rs: the webview bridge. The body goes raw; the call and the Channel ride in headers.
 // Non-ASCII is escaped so the JSON is a legal header value.
 const asciiJson = (v: unknown) => JSON.stringify(v).replace(/[\u0080-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 export const daemonRpc =

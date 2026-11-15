@@ -1,4 +1,4 @@
-// The conformance cases of the session domains (plan S4.4) and the artifact domains (S4.5): the Rust reference wrote
+// The conformance cases of the session domains and the artifact domains: the Rust reference wrote
 // `expected.json` for each case under `conformance/{session_name,history,chat,artifact_list,artifact_tree,artifact_comments}/<case>/`
 // (alinery-core/tests/conformance.rs), and the daemon's code must give the same answers over a copy of the same `input/`.
 import { afterEach, expect, test } from "bun:test";
@@ -121,7 +121,7 @@ for (const name of cases("chat")) {
   });
 }
 
-// ---- artifacts (S4.5) ---------------------------------------------------------------------------------------------
+// ---- artifacts ---------------------------------------------------------------------------------------------
 
 /** `scrub` of alinery-core/tests/conformance.rs: the scratch path, comment ids, clocks and the hash of a markdown that carries ids. */
 function scrubber(scratch: string) {

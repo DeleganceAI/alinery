@@ -760,7 +760,7 @@ impl Default for BackupDefaults {
     }
 }
 
-/// The bundled playbook keys a legacy default could name (the library that held them moved to the daemon, S5.1).
+/// The bundled playbook keys a legacy default could name (the library that held them moved to the daemon).
 const LEGACY_BUNDLED_PLAYBOOK_KEYS: &[&str] = &[
     "superdevelop",
     "one-shot",

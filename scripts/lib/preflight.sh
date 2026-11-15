@@ -27,7 +27,7 @@
 #      up to the prompt. A declined install touches nothing: no daemon, no session, no
 #      bundle, no mv of `.alinery` or app-support dirs.
 #
-# WHAT THE INSTALLER CAN ASK A DAEMON (plan S5.3). A daemon serves the typed alinery.v1 wire
+# WHAT THE INSTALLER CAN ASK A DAEMON. A daemon serves the typed alinery.v1 wire
 # on `<repo>/.alinery/rpc.sock` and nothing else; every call on it needs a bearer token the
 # installer does not hold (it is neither the app nor a minted agent). So against a current
 # daemon the installer does three things without speaking the wire: it CONNECTS to the socket

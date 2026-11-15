@@ -263,7 +263,7 @@ fn control_sock(label: &str, n: u128) -> PathBuf {
     PathBuf::from(format!("/tmp/alinery-{label}-{n}.sock"))
 }
 
-// T2.2: the branch — `Closed` vs. `TimedOut` must no longer collapse into the same `None`.
+// The branch — `Closed` vs. `TimedOut` must no longer collapse into the same `None`.
 #[test]
 fn read_socket_line_distinguishes_timeout_from_closed() {
     use std::os::unix::net::UnixListener;
@@ -550,7 +550,7 @@ fn ensure_daemon_reuses_an_answering_daemon_of_our_protocol_and_config() {
     }
 }
 
-// The relaunch case (S5.3): a daemon started by one app process is found by the next one with the token the first kept on disk.
+// The relaunch case: a daemon started by one app process is found by the next one with the token the first kept on disk.
 // Nothing but that file carries over, so the second attach has no in-memory state to lean on. It must be the same process
 // (PID and epoch unchanged), and it must not have been started again. Runs the real sidecar, which `copy-sidecar.sh debug` puts
 // beside the test binary; without it there is nothing to launch and the test says so, unless ALINERY_REQUIRE_SIDECAR is set
@@ -899,7 +899,7 @@ impl TakeoverPeer {
             .spawn()
             .unwrap();
         let mut peer = Self { child, root, lane: lane.into() };
-        // Up to 30 s: a re-executed test binary starts slowly under full-workspace load (R-FLAKE-3).
+        // Up to 30 s: a re-executed test binary starts slowly under full-workspace load.
         let until = Instant::now() + Duration::from_secs(30);
         let socket = alinery_core::alineryd_socket_path(repo, Some(lane));
         while BoundDaemonConnection::connect(&socket, None, crate::DAEMON_CONTROL_TIMEOUT)
@@ -937,7 +937,7 @@ impl Drop for TakeoverPeer {
     fn drop(&mut self) {
         drop(self.child.stdin.take());
         // A peer that never reached its listen loop ignores the closed stdin; kill it rather
-        // than hang or leak it when the start-up wait panicked (R-FLAKE-3).
+        // than hang or leak it when the start-up wait panicked.
         let until = Instant::now() + Duration::from_secs(10);
         while matches!(self.child.try_wait(), Ok(None)) {
             if Instant::now() >= until {

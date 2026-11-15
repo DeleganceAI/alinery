@@ -1,4 +1,4 @@
-// ProviderService (plan S4.12): provider sign-in, custom providers and the model list. The credential files are the ones beside
+// ProviderService: provider sign-in, custom providers and the model list. The credential files are the ones beside
 // the app config this daemon was started with, so a remote repository's host signs in and lists its own models. The sign-in
 // itself (device-code poll, prompts) is `login.ts`; the browser is the shell's. Everything that touches a credential is ADMIN.
 import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect";

@@ -1,4 +1,4 @@
-// The sync store (plan 2.2.2 to 2.2.5, 2.2.9): the daemon's rows, a ring of recent changes, and the
+// The sync store: the daemon's rows, a ring of recent changes, and the
 // subscribers that stream them. Rules the tests pin down:
 //  - commit() is synchronous: seq assignment, ring append and fan-out happen with no await.
 //  - A put equal to the stored row (ignoring revision) is not a change and takes no seq.
@@ -28,7 +28,7 @@ export type Options = {
 };
 type Settings = Required<Options>;
 
-// Keys are `<kind>/<task slug or _>/<id>` (2.2.6).
+// Keys are `<kind>/<task slug or _>/<id>`.
 const REPO_KINDS = new Set(["task", "draft", "execution", "daemon", "job", "settings", "playbook"]);
 
 /** The filter for a scope: true for the keys it includes. */

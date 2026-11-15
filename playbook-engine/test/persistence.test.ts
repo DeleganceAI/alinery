@@ -1,5 +1,5 @@
 /**
- * The stored State is the only truth (O14 b), and each step keeps the bytes it saw (O27).
+ * The stored State is the only truth, and each step keeps the bytes it saw.
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';

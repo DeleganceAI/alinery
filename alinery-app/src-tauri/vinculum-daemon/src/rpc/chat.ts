@@ -1,4 +1,4 @@
-// ChatService (plan S4.4): the writes of a chat thread. The thread itself is the `chat/_/<id>` and `session/_/<id>`
+// ChatService: the writes of a chat thread. The thread itself is the `chat/_/<id>` and `session/_/<id>`
 // entities; its attachments go through BlobService. The file and git half is `domain/chat.ts`.
 import type { ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";

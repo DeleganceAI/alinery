@@ -5,20 +5,20 @@ package alinery.v1;
 import "alinery/v1/common.proto";
 import "alinery/v1/entities.proto";
 
-// The playbook library (S4.6): bundled playbooks (compiled in), the machine's global ones, and the repository's own. The catalog
+// The playbook library: bundled playbooks (compiled in), the machine's global ones, and the repository's own. The catalog
 // is the repo scope's `playbook/<scope>/<key>` rows plus `playbook/_/picker`, `playbook/_/picker-global` and `playbook/_/library`;
 // these are the reads of one whole definition, the two computed answers, and the writes. A refusal carries a tagged
-// `PlaybookLoadError` or `PlaybookSaveError` as JSON in `ErrorDetail.fields["error"]` (the plan's 2.3.2 table), and a message.
+// `PlaybookLoadError` or `PlaybookSaveError` as JSON in `ErrorDetail.fields["error"]`, and a message.
 service PlaybookService {
   rpc ReadPlaybook(ReadPlaybookRequest) returns (ReadPlaybookResponse);              // VIEW
-  rpc ValidatePlaybook(ValidatePlaybookRequest) returns (ValidatePlaybookResponse);  // VIEW; unary, a computed answer (2.1.6)
+  rpc ValidatePlaybook(ValidatePlaybookRequest) returns (ValidatePlaybookResponse);  // VIEW; unary, a computed answer
   rpc RenderPlaybook(RenderPlaybookRequest) returns (RenderPlaybookResponse);        // VIEW; unary
   // `expected_revision` is the definition row's revision as the client last saw it (0: no check, 0 also for a new key). A row
   // that moved on is ABORTED and nothing is written. `overwrite` is the earlier rule that a save may not replace a file by chance.
   rpc SavePlaybook(SavePlaybookRequest) returns (SavePlaybookResponse);              // ACT
   rpc DeletePlaybook(DeletePlaybookRequest) returns (DeletePlaybookResponse);        // ACT
   rpc SavePicker(SavePickerRequest) returns (SavePickerResponse);            // ACT
-  // The community import registry (S4.10; the rows are `playbook/_/community`). The shell downloads a package with this machine's
+  // The community import registry (the rows are `playbook/_/community`). The shell downloads a package with this machine's
   // account and stages it through BlobService (a `staged` upload); these two write it into the repository, on the host that owns it.
   rpc ImportCommunityPlaybook(ImportCommunityPlaybookRequest) returns (ImportCommunityPlaybookResponse);  // ACT
   rpc UpdateCommunityImport(UpdateCommunityImportRequest) returns (UpdateCommunityImportResponse);      // ACT

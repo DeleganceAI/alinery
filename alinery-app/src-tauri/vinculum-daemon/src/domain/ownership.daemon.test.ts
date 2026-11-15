@@ -1,4 +1,4 @@
-// Two real daemons on one scratch repository (plan S4.11 Accept): the second is refused with `repo_busy` and exits, and the
+// Two real daemons on one scratch repository: the second is refused with `repo_busy` and exits, and the
 // first keeps its sockets, its lease, its process and a Terminal session it was running. The loser exits before it reads a
 // task or resumes a session, so the session is untouched by construction; the test starts one and asks the first for it after.
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -61,7 +61,7 @@ test("the second daemon exits with repo_busy and the first is untouched", async 
     if (Date.now() > end) throw new Error("the first daemon did not start");
     await Bun.sleep(100);
   }
-  // The daemon has the one listener; the JSON-lines socket is gone for good (S5.3).
+  // The daemon has the one listener; the JSON-lines socket is gone for good.
   expect(existsSync(join(root, "repo", ".alinery", "alineryd-a.sock"))).toBe(false);
 
   // A drawer Terminal (no task) is a real shell the first daemon owns.

@@ -10,8 +10,8 @@ import type { Store } from "../sync/store.ts";
 import { requireCapability } from "./auth.ts";
 import { domain, fail, metaOf } from "./errors.ts";
 
-// Each kind is its own RPC (O24 b), so a capability is per RPC. Scan, backup and cancel need ACT; the purge deletes
-// archived work for good and needs ADMIN (from S5.1 AGENT reaches both, O18 b).
+// Each kind is its own RPC, so a capability is per RPC. Scan, backup and cancel need ACT; the purge deletes
+// archived work for good and needs ADMIN (AGENT reaches both too).
 export function jobService(runner: JobRunner, dedupe: Dedupe, store: Store, storageScan: StorageParams, backups?: BackupHost): ServiceImpl<typeof JobService> {
   const applied = () => ({ cursor: store.cursor() });
   const host = () => {

@@ -28,9 +28,9 @@ CONST_FILE="alinery-app/src-tauri/alinery-core/src/protocol.rs"
 SURFACE=(
   "alinery-app/src-tauri/vinculum-daemon/src/main.ts"
   "$CONST_FILE"
-  # The wire itself since S5.3: every RPC and message the daemon serves on rpc[-ns].sock.
+  # The wire itself: every RPC and message the daemon serves on rpc[-ns].sock.
   "proto/alinery/v1"
-  # What is left of the JSON-lines wire: observing and stopping a daemon of protocol 38 or older (plan O23).
+  # What is left of the JSON-lines wire: observing and stopping a daemon of protocol 38 or older.
   "alinery-app/src-tauri/alinery-core/src/legacy_daemon.rs"
 )
 

@@ -1,4 +1,4 @@
-// Session status from the daemon's Session entities (plan S3.2): what the `session_status` family of
+// Session status from the daemon's Session entities: what the `session_status` family of
 // commands answered, read from a subscription instead of a poll. The mapping below is the same one
 // `classify` and `observation_of` made in Rust, over the fields the entity carries.
 import { create } from "@bufbuild/protobuf";

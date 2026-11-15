@@ -1,4 +1,4 @@
-//! The webview bridge (plan 2.1.9): `daemon_rpc` forwards one gRPC-web call from the webview to the
+//! The webview bridge: `daemon_rpc` forwards one gRPC-web call from the webview to the
 //! repo's daemon as one HTTP/2 stream, and streams the answer back on a `Channel`.
 //!
 //! The shell knows neither gRPC nor protobuf here. It moves headers, data and trailers, adds the
@@ -574,7 +574,7 @@ pub(crate) struct EnsureReadyRequest {
 #[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct EnsureReadyResponse {}
 
-/// proto/alinery/v1/settings.proto `WriteHostedInference` (ADMIN, S4.11 / R-S4.11-5). The reply is empty.
+/// proto/alinery/v1/settings.proto `WriteHostedInference` (ADMIN). The reply is empty.
 #[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct WriteHostedInferenceRequest {
     #[prost(message, optional, tag = "1")]
@@ -593,7 +593,7 @@ pub(crate) async fn unary<Req: prost::Message, Res: prost::Message + Default>(so
 }
 
 /// Hello through the bridge path: the RPC liveness probe (over a forward a connect alone proves
-/// nothing, plan 2.1.3).
+/// nothing).
 pub(crate) async fn hello(socket: &Path, token: &str) -> Result<HelloResponse, String> {
     hello_within(socket, token, Duration::from_secs(10)).await
 }
@@ -610,7 +610,7 @@ pub(crate) async fn hello_within(socket: &Path, token: &str, within: Duration) -
 }
 
 /// What the daemon at `socket` answers `Hello` with, using the token this app kept for it. Blocking: the callers are off the
-/// main thread. This is the one liveness and version probe the lifecycle uses (S5.3: it replaced the JSON `version` op).
+/// main thread. This is the one liveness and version probe the lifecycle uses (it replaced the JSON `version` op).
 pub(crate) fn hello_at(socket: &Path, committed_token: &Path, within: Duration) -> Result<HelloResponse, String> {
     tauri::async_runtime::block_on(async {
         let token = rpc_token(socket, committed_token).await?;
@@ -668,7 +668,7 @@ pub(crate) fn live_sessions_at(socket: &Path, committed_token: &Path) -> Result<
     })
 }
 
-/// `RepoService.EnsureReady` (plan S4.1): the daemon readies the repository (`.alinery/`, the ignore entry,
+/// `RepoService.EnsureReady`: the daemon readies the repository (`.alinery/`, the ignore entry,
 /// `harnesses.toml`, `config.toml`), each only when missing. Blocking; the callers are off the main thread.
 pub(crate) fn ensure_repo_ready_at(socket: &Path, committed_token: &Path) -> Result<(), String> {
     tauri::async_runtime::block_on(async {
@@ -689,7 +689,7 @@ pub(crate) fn ensure_repo_ready_at(socket: &Path, committed_token: &Path) -> Res
     })
 }
 
-/// `SettingsService.WriteHostedInference` (plan S4.11, R-S4.11-5): hand the daemon on `socket` the hosted-inference
+/// `SettingsService.WriteHostedInference`: hand the daemon on `socket` the hosted-inference
 /// file this app just refreshed, so the daemon writes it on its own host. Blocking; the callers are off the main thread.
 pub(crate) fn write_hosted_inference_at(socket: &Path, committed_token: &Path, inference_json: &str) -> Result<(), String> {
     tauri::async_runtime::block_on(async {
@@ -775,7 +775,7 @@ async fn shutdown_over_rpc(socket: &Path, token: &str, origin: ShutdownOrigin, c
 /// Where a teardown reaches a daemon: `repo_key`'s RPC socket and the token this app kept for it.
 /// A daemon that cannot be reached there (one of an older protocol has no `rpc.sock`, one started by
 /// another app has a token this one lacks, or the socket is a stale file) is stopped through
-/// `legacy`, the JSON `shutdown` op of `alinery_core::legacy_daemon` that `AdminService.Shutdown` replaced (plan O23: the new app
+/// `legacy`, the JSON `shutdown` op of `alinery_core::legacy_daemon` that `AdminService.Shutdown` replaced (the new app
 /// must still be able to stop an older daemon, and nothing else uses that wire). A daemon that does answer and refuses
 /// (a wrong token, a missing capability, a bad origin) is an error, never a retry on the old wire.
 /// The five teardown origins call this, and only they.

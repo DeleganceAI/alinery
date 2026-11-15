@@ -1,4 +1,4 @@
-// PlaybookService (plan S4.6): the rows, the reads, the writes with `expected_revision` (a stale one is ABORTED and changes nothing), two
+// PlaybookService: the rows, the reads, the writes with `expected_revision` (a stale one is ABORTED and changes nothing), two
 // saves racing for one revision, the tagged errors the frontend reads back, and the watcher making an outside edit visible.
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

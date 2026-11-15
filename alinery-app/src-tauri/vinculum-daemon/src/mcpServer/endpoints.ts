@@ -11,7 +11,7 @@ export class Endpoints {
     private readonly registered?: () => Record<string, Endpoint>,
   ) {}
 
-  /** True for the machine MCP, which reaches every registered daemon and so may run `alinery_send_review_handoff` (O22 a). */
+  /** True for the machine MCP, which reaches every registered daemon and so may run `alinery_send_review_handoff`. */
   get spansRepos(): boolean {
     return this.registered !== undefined;
   }

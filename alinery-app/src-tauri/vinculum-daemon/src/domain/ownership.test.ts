@@ -1,4 +1,4 @@
-// The ownership conformance cases of alinery-core `repo_ownership.rs` and `execution_tests.rs` (plan S4.11), run against the
+// The ownership conformance cases of alinery-core `repo_ownership.rs` and `execution_tests.rs`, run against the
 // TypeScript port. Each Rust case that read "acquire" reads `acquireRepoOwnership` here; the checks on bytes are the same.
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";

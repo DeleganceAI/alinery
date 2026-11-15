@@ -35,7 +35,7 @@ type Endpoint = {
 
 type Live = { key: string; extension: InstalledExtension; endpoint: Endpoint; report: McpServerReport };
 
-/** The built-in `alinery` server is this binary run with `--mcp` (plan S5.1, O10 b). Under `bun run` the script comes first; in a
+/** The built-in `alinery` server is this binary run with `--mcp`. Under `bun run` the script comes first; in a
  * `bun build --compile` binary the entry is the binary itself, as for a job child. */
 export function selfMcpCommand(): { command: string; args: string[] } {
   const [command, ...args] = selfCommand("--mcp");

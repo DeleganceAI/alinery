@@ -1,5 +1,5 @@
 //! The GitHub pull-request link and issue-number parsing the app shell still uses. The git work itself (commit, push, remove a
-//! worktree, the PR link, the source branches, the compare URL) moved to the daemon in S4.7: `vinculum-daemon/src/domain/gitActions.ts`.
+//! worktree, the PR link, the source branches, the compare URL) moved to the daemon: `vinculum-daemon/src/domain/gitActions.ts`.
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GitHubIssueRef {

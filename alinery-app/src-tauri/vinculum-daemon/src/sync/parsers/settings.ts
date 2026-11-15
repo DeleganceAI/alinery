@@ -1,4 +1,4 @@
-// The settings row (plan S4.1) has no file of its own: it is built from the repository's `config.toml` and
+// The settings row has no file of its own: it is built from the repository's `config.toml` and
 // `harnesses.toml` and the daemon's `app.toml`, and any of the three moves it. All three paths route here;
 // they are `present`, so a missing file still leaves a row (the defaults) rather than deleting it.
 import { readSettingsFiles, settingsEntity, settingsKey } from "../../domain/settings.ts";

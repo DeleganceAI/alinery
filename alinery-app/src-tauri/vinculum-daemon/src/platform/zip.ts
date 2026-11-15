@@ -1,11 +1,11 @@
-// The one place the daemon runs the host's Info-ZIP `zip` and `unzip` (plan O11 b): no zip library in TypeScript, because
+// The one place the daemon runs the host's Info-ZIP `zip` and `unzip`: no zip library in TypeScript, because
 // a library that writes no zip64 caps an archive at 4 GiB or 65,535 entries, and the host's tool does not. Every spawn
 // here has an argument vector, never a shell, so a file name is never parsed by one.
 import { rmSync } from "node:fs";
 
 export type ToolResult = { code: number; stdout: string; stderr: string };
 
-/** What a missing tool says, with the hint the setup probe gives for git (D6): the person installs it where the daemon runs. */
+/** What a missing tool says, with the hint the setup probe gives for git: the person installs it where the daemon runs. */
 function missing(tool: string): Error {
   return new Error(`${tool} is not installed on the machine this repository lives on; install it there (for example \`apt install ${tool}\` or \`brew install ${tool}\`) and try again`);
 }

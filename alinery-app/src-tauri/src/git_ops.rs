@@ -8,7 +8,7 @@ use crate::*;
 pub(crate) use alinery_core::git_actions::github_pull_request_ref;
 
 // The git work itself (commit, push, remove a worktree, the PR link, the source branches) is the daemon's GitService
-// (S4.7); the frontend calls it through `src/sync/git.ts`. What stays here is what needs this machine: the GitHub API call
+//; the frontend calls it through `src/sync/git.ts`. What stays here is what needs this machine: the GitHub API call
 // with this machine's token.
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]

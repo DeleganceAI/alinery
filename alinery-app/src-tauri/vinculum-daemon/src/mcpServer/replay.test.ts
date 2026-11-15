@@ -1,6 +1,6 @@
-// The fixture replay (plan S5.1 Tests): the calls `alinery-mcp` (Rust) answered on a fixture repository, made again against a real daemon
+// The fixture replay: the calls `alinery-mcp` (Rust) answered on a fixture repository, made again against a real daemon
 // through this module. Each reply must equal the recorded one once the values that differ by construction (ids, times, the temp
-// directory) are normalised, except the calls in EXCEPTIONS, which are the changes the plan names, each with what it checks instead.
+// directory) are normalised, except the calls in EXCEPTIONS, which are the deliberate changes, each with what it checks instead.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -45,7 +45,7 @@ function paths(want: unknown, got: unknown, at = "$", out: string[] = []): strin
 const EXCEPTIONS: { when: (call: Recorded) => boolean; why: string; check: (actual: string, want: string, root: string) => void }[] = [
   {
     when: (c) => c.name === "alinery_get_task",
-    why: "get_task answers Bun.TOML.stringify of the task entity, not the file's text (plan S5.1): the same fields, normalised",
+    why: "get_task answers Bun.TOML.stringify of the task entity, not the file's text: the same fields, normalised",
     check: (actual, want, root) => expect(normalise(Bun.TOML.parse(actual) ? JSON.stringify(Bun.TOML.parse(actual)) : "", root)).toEqual(normalise(JSON.stringify(Bun.TOML.parse(want)), root)),
   },
   {
@@ -91,9 +91,9 @@ afterAll(async () => {
 
 const registered = () => new Endpoints(undefined, () => ({ [daemon.fixture.repo]: { socket: daemon.socket, token: daemon.token } }));
 
-test("every recorded call gets its recorded reply, except the changes the plan names", async () => {
+test("every recorded call gets its recorded reply, except the deliberate changes", async () => {
   const { root, repo } = daemon.fixture;
-  // The machine MCP, the only one `alinery_send_review_handoff` is offered to (O22 a): the daemons that registered with it.
+  // The machine MCP, the only one `alinery_send_review_handoff` is offered to: the daemons that registered with it.
   const ctx = daemon.context({ endpoints: registered() });
   let sid = "";
   const differences: string[] = [];

@@ -1,5 +1,5 @@
 // Who is on the other end of a unix-socket connection: the peer's executable, read with
-// getpeereid + LOCAL_PEERPID on macOS and SO_PEERCRED on Linux (moved from main.ts, S1.1).
+// getpeereid + LOCAL_PEERPID on macOS and SO_PEERCRED on Linux.
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { readlinkSync, realpathSync } from "node:fs";
 import type { Socket } from "node:net";

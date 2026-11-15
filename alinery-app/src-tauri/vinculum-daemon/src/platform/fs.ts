@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 
 let tmpSeq = 0;
 
-// The syncs of writeDurable run on one long-lived Worker (O26 a); see fsync-worker.ts.
+// The syncs of writeDurable run on one long-lived Worker; see fsync-worker.ts.
 let worker: Worker | undefined;
 let syncSeq = 0;
 let syncsIssued = 0;

@@ -1,4 +1,4 @@
-// Where the playbook engine's State lives: the `engine` block of a task's `execution.json` (O14 b).
+// Where the playbook engine's State lives: the `engine` block of a task's `execution.json`.
 // The file is the only truth. `engine.jsonl`, the log of earlier builds, is read once to convert a task
 // that has no engine block yet, and is never written or read again after that.
 import { existsSync, readFileSync } from "node:fs";
@@ -25,7 +25,7 @@ export type EngineLoad =
   | { kind: "stored"; state: State }
   /** Folded from `engine.jsonl`; the caller saves it once so the log is not read again. */
   | { kind: "converted"; state: State }
-  /** O21: records the old Rust runner wrote and no engine state. Shown as history; never opened, seeded or launched. */
+  /** Records the old Rust runner wrote and no engine state. Shown as history; never opened, seeded or launched. */
   | { kind: "history_only" }
   /** A task the engine has not touched. */
   | { kind: "fresh" };
@@ -83,7 +83,7 @@ export function mergedRecords(file: Json, state: State, repo: string, slug: stri
 
 /**
  * Store the whole engine State in `execution.json`, under the task-mutation lock and with a durable write
- * (2.3.2). The Rust-shaped `executions` and `occurrences` maps are rewritten from it, so a Rust reader sees
+ *. The Rust-shaped `executions` and `occurrences` maps are rewritten from it, so a Rust reader sees
  * the engine's executions under their own ids. Both halves of the write come from one deep copy of `state`
  * taken before the first wait, so a state that moves on while the lock is awaited cannot split them.
  */

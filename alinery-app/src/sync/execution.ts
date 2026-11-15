@@ -1,4 +1,4 @@
-// A task's execution state from the daemon's `execution/<slug>/<slug>` entity (plan S4.2): what the shell's observation
+// A task's execution state from the daemon's `execution/<slug>/<slug>` entity: what the shell's observation
 // commands answered, and the approval that replaced the shell's allow command. The row is the Rust-shaped state plus the playbook
 // definition; the engine behind it is the daemon's.
 

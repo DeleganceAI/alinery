@@ -1,4 +1,4 @@
-// A draft's saved attachments (S4.3): `tasks/<slug>/draft-attachments.json`, which `task_drafts.rs` wrote as
+// A draft's saved attachments: `tasks/<slug>/draft-attachments.json`, which `task_drafts.rs` wrote as
 // `{entries: string[], images: [{name, bytes (base64), mime_type}]}`. The row carries the entries and the images'
 // names and sizes only; a draft's pasted images can be megabytes, so their bytes are read through BlobService.
 import { create } from "@bufbuild/protobuf";

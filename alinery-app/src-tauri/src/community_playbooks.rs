@@ -1,6 +1,6 @@
 //! The community playbook library's HTTP half: the catalog, a publication's preview and source, the downloaded list's remote status,
 //! the signed-in author's own list, and publish. These need this machine's account, or the accounts URL it holds, so they stay in the
-//! shell (S4.10). What lands in a repository, and the registry of what did, is the repository's daemon's (`PlaybookService`).
+//! shell. What lands in a repository, and the registry of what did, is the repository's daemon's (`PlaybookService`).
 //!
 //! Accounts HTTP is injected. Production uses `curl_http_method`. Tests must not
 //! open a socket to the accounts host.

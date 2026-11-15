@@ -1,4 +1,4 @@
-// Repository settings (plan S4.1), ported from alinery-core `shared.rs` (`resolve_effective_config`,
+// Repository settings, ported from alinery-core `shared.rs` (`resolve_effective_config`,
 // the harness overlay, `clear_repo_override`) and `settings.rs` (the TOML reads, writes and log lines).
 // `effectiveSettings` is the one place the precedence lives: an absent repo field inherits the global
 // value, and a present blank string is a value (settings.rs `:97-99`). `sessionControls.ts` calls it too.

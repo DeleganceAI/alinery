@@ -1,4 +1,4 @@
-// A real connect router in memory for tests that read through src/sync (plan 2.5): the test serves
+// A real connect router in memory for tests that read through src/sync: the test serves
 // the daemon's services, a Replica or hook talks to them over `transport`, and nothing is canned
 // on the client side.
 import { create } from "@bufbuild/protobuf";

@@ -1,4 +1,4 @@
-// Settings > General > Misc > "Keep this computer awake" (O9, decided (b)): block idle system sleep while a session is live.
+// Settings > System > Misc > "Keep this computer awake": block idle system sleep while a session is live.
 // The daemon owns the hold, because quit-leave-running destroys the app and keeps the daemon. Idle-only by construction: the
 // display can still sleep, closing the lid still sleeps, and an explicit sleep still works.
 //

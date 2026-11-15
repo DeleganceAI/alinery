@@ -82,7 +82,7 @@ test("no token is UNAUTHENTICATED, and a minted token is AGENT only: Hello works
   expect(events).toEqual([]);
 });
 
-test("MintToken (O20 c) gives the shell an AGENT token, refuses any other capability and needs ADMIN", async () => {
+test("MintToken gives the shell an AGENT token, refuses any other capability and needs ADMIN", async () => {
   const { socketPath, tokens } = await start(process.execPath);
   const shell = client(socketPath, `Bearer ${SECRET}`);
   const { token } = await shell.mintToken({ capability: Capability.AGENT, label: "managed-mcp" });

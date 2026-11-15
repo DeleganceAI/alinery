@@ -1,5 +1,5 @@
-// Task create, duplicate, rename, archive, restore, auto-approve and related tasks (plan S4.3), ported from alinery-core
-// `task_creation.rs` and `task.rs`. Rust still provisions sub-tasks (S4.8) and reads these files, so every file written
+// Task create, duplicate, rename, archive, restore, auto-approve and related tasks, ported from alinery-core
+// `task_creation.rs` and `task.rs`. Rust still provisions sub-tasks and reads these files, so every file written
 // here keeps the shape Rust's serde reads. A task is reserved under the task-mutation lock, its worktree is added outside
 // it (git can be slow, and an uncertain outcome is never retried), and the result is committed under it again.
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
@@ -38,6 +38,7 @@ import {
   writeTaskUnlocked,
 } from "./taskFiles.ts";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES, uniqueAttachmentName } from "./blobs.ts";
+import { pinSpecs } from "./repoSpecs.ts";
 import { ensureIgnored } from "./settings.ts";
 
 type Json = Record<string, unknown>;
@@ -275,6 +276,8 @@ export async function provisionTask(d: CreateDeps, p: CreateTaskParams, hooks: P
       throw new Error(reservationError);
     }
     await worktreeAdd(repo, String(task.worktree), String(task.branch), p.baseRef?.trim() || undefined);
+    // The new worktree's HEAD is the commit the task branched from: the one its requirements are pinned to. A failure here only means the first launch pins instead.
+    await pinSpecs(taskDir(repo, task.slug), String(task.worktree)).catch(() => undefined);
     stage = "install_inputs";
     const copied: string[] = [];
     const dir = attachmentsDir(repo, task.slug);
@@ -432,7 +435,7 @@ export function ensureTaskCanArchive(repo: string, slug: string): void {
   }
 }
 
-/** execution.rs `prune_execution_objects` (O27): the byte copies an execution kept go; manifests and artifacts stay. */
+/** execution.rs `prune_execution_objects`: the byte copies an execution kept go; manifests and artifacts stay. */
 export function pruneExecutionObjects(repo: string, slug: string): void {
   const root = join(taskDir(repo, slug), "executions");
   let entries: string[];

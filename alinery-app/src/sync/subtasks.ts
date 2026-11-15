@@ -1,4 +1,4 @@
-// The sub-task controls of a task page (plan S4.8): what it offers, the manager session, and killing a child or discarding
+// The sub-task controls of a task page: what it offers, the manager session, and killing a child or discarding
 // a setup. The daemon owns the files and stops the sessions, so a repository on another machine answers the same calls.
 import { createClient } from "@connectrpc/connect";
 import type { Session } from "alinery-proto/alinery/v1/entities_pb";

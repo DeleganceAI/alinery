@@ -1,4 +1,4 @@
-// SubtaskService over the real socket (plan S4.8): the state a task page reads, starting a manager, and a discard that
+// SubtaskService over the real socket: the state a task page reads, starting a manager, and a discard that
 // stops its sessions first and answers with a cursor covering what it changed.
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
@@ -163,7 +163,7 @@ async function withChild(c: Ctx) {
   return id;
 }
 
-test("inspecting a finish names the bound child, the modes it allows and what blocks the rest (S5.1)", async () => {
+test("inspecting a finish names the bound child, the modes it allows and what blocks the rest", async () => {
   const c = await start();
   const id = await withChild(c);
   const { inspection } = await c.subtasks.inspectSubtaskFinish({ managerSessionId: id });

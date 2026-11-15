@@ -101,6 +101,7 @@ import { useSessionSort } from "../useSessionSort";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 import { isVinculumHarness, sessionTerminalLabel } from "../vinculumHarness";
 import { FileView, richPreview } from "./CanvasFiles";
+import { TaskSpecsPin } from "./TaskSpecsPin";
 
 function taskActivityLabel(activity: TaskActivitySummary): string {
   switch (activity.status) {
@@ -1040,6 +1041,7 @@ export function TaskDetail({
                 <span className="v mono">{worktreeValue(task?.worktree ?? "")}</span>
                 {task?.worktree && <CopyTextButton text={task.worktree} label="worktree path" />}
               </div>
+              <TaskSpecsPin repo={repoPath} slug={slug} />
               <div className="kv">
                 <span className="k">PR URL</span>
                 <span className="v mono">

@@ -17,7 +17,7 @@ export function kindName(kind: JobKind): string {
   return name;
 }
 
-/** The entity's `result` for a result line. A kind without a result message yet (S4.10 adds import) leaves it unset. */
+/** The entity's `result` for a result line. A kind without a result message leaves it unset. */
 export function resultOf(kind: JobKind, json: unknown): Job["result"] {
   if (kind === JobKind.STORAGE_SCAN) return { case: "storage", value: fromJson(StorageInfoSchema, json as JsonObject) };
   if (kind === JobKind.BACKUP) return { case: "backup", value: fromJson(BackupResultSchema, json as JsonObject) };
@@ -25,7 +25,7 @@ export function resultOf(kind: JobKind, json: unknown): Job["result"] {
   return { case: undefined };
 }
 
-/** The command that runs a kind: this binary with `--job <kind>` (O7 a). Under `bun run` the script
+/** The command that runs a kind: this binary with `--job <kind>`. Under `bun run` the script
  * comes first; in a `bun build --compile` binary the entry is the binary itself. */
 export function jobCommand(kind: JobKind): string[] {
   return selfCommand("--job", kindName(kind));

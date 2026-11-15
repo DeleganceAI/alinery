@@ -5,7 +5,7 @@
 //! keys travel from the Mac, and only the ones the user picked. A browser sign-in (`oauth`) is
 //! never copied: its refresh token rotates, so two copies of one sign-in would log each other out.
 //! The host signs in for itself, and a sign-in made there is left alone. The merge into the host's
-//! store is the host service's (`vinculum-daemon/src/hostService`, plan S5.2).
+//! store is the host service's (`vinculum-daemon/src/hostService`).
 
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;

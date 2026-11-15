@@ -3,7 +3,7 @@
 ## Source of truth
 
 - Status: Active
-- Last refreshed: 2026-08-14
+- Last refreshed: 2026-11-15
 - Scope: the Alinery macOS desktop application in `alinery-app/`.
 - Authority: this file is the canonical design contract for app UI, UX, frontend implementation, and visual review.
 - Brand palette and identity follow `../alinery-website/DESIGN.md` and its implemented artwork. Product UI behavior and component decisions remain governed by this file.
@@ -72,7 +72,7 @@ The intended quality bar is the restraint of Apple, the tool clarity of Codex, t
 - Make the state of every task and agent session legible at a glance.
 - Help users decide what needs attention and act without losing context.
 - Make multi-session AI work feel controlled rather than chaotic.
-- Keep repository, task, session, artifact, and Playbooks relationships understandable.
+- Keep repository, task, session, artifact, and playbook relationships understandable.
 - Make high-risk actions deliberate while keeping routine actions fast.
 - Support long, high-frequency work sessions without visual fatigue.
 - Establish a coherent component and token language that coding agents can extend reliably.
@@ -93,7 +93,7 @@ The intended quality bar is the restraint of Apple, the tool clarity of Codex, t
 ### Success signals
 
 - A user can identify running, waiting, failed, completed, and inactive work without opening each task.
-- Primary Playbooks remain usable with keyboard only.
+- Primary workflows remain usable with keyboard only.
 - A first-time user can distinguish tasks, sessions, artifacts, and repositories, and reach value from the default view without configuring the product.
 - A user can comment on a markdown plan or doc in place, without dropping into chat.
 - Child work does not start until the parent plan is accepted, and a focused child keeps parent context.
@@ -106,7 +106,7 @@ The intended quality bar is the restraint of Apple, the tool clarity of Codex, t
 ### Primary personas
 
 - A technical founder coordinating several AI coding tasks across repositories.
-- A software engineer running multiple harnesses and reviewing their output.
+- A software engineer running several agent sessions at once and reviewing their output.
 - A reviewer who needs to understand changes, provenance, and requested decisions quickly.
 
 ### User jobs
@@ -133,23 +133,27 @@ The intended quality bar is the restraint of Apple, the tool clarity of Codex, t
 
 ### Primary navigation
 
-- Tasks: the default list projection of durable work. Canvas offers configurable board and grid layouts of the same tasks, preserving task, session, and Playbooks behavior.
+- Tasks: the default list projection of durable work. Grid views are user-configurable layouts of the same tasks, one tab each, preserving task, session, and playbook behavior.
 - Sessions: live and historical agent activity.
-- Wiki: durable project knowledge.
-- Settings: repositories, connections, harnesses, appearance, notifications, storage, sessions, MCP, backup, and related system controls.
+- Chat: a supporting conversation with the repository's agent, with a canvas of up to four panels beside the thread. It does not replace the task loop.
+- Notifications: what needs attention across tasks and sessions.
+- Playbooks: the library of reusable playbooks, local and community.
+- Settings: one scrolling page of groups (Appearance, Views, Agents, Connections, Notifications, Data, MCP server, System) with a rail that follows the scroll and a search.
 
 ### Core screens
 
+- Repository setup screen: add, open, or create a repository on this computer or an SSH host.
 - Task list (default startup view).
-- Canvas with configurable board and grid layouts.
-- Task detail and task session management.
+- Grid views.
+- Task detail: compact header, artifacts and sessions as tabs, a Files panel over the worktree, and a read-only Git tab.
 - Plan and document review with inline comments.
-- First-run onboarding.
-- Session terminal and session action state.
+- First-run onboarding (Models, then Playbooks).
+- Session conversation, terminal, and session action state.
 - Artifact viewer, diff review, comments, and review handoff.
 - Create task and create session flows.
 - Sessions list.
-- Wiki.
+- Chat with its canvas.
+- Playbooks library and playbook detail (ring, graph, source).
 - Settings.
 - Command palette.
 - Confirmation, archive, resume-token, repository, and other modal flows.
@@ -197,7 +201,7 @@ Repository, task, session, phase, and artifact context should remain visible acr
 
 ### 8. Plan before descent
 
-Do not start nested or child work until the human has accepted the high-level plan. When focused child Playbooks are created, they keep parent design, scope, and preference context.
+Do not start nested or child work until the human has accepted the high-level plan. When focused child tasks are created, they keep parent design, scope, and preference context.
 
 ### 9. Documents over chat
 
@@ -345,9 +349,8 @@ Shared Alinery components should own the final class names, tokens, semantics, a
 - App shell and native window chrome.
 - Primary navigation and current-location treatment.
 - Repository switcher and repository context.
-- Task row/card, task metadata, Playbooks phase, and task actions.
-- Kanban column and task placement.
-- Experimental task representations (grid, canvas, graph) behind a flag.
+- Task row/card, task metadata, playbook step, and task actions.
+- Grid view columns and task placement.
 - Markdown plan/document reader with inline comments.
 - Parent-to-child task context and the human gate before descending into subtasks.
 - First-run onboarding.
@@ -410,7 +413,7 @@ AI components are not chat bubbles by default. Choose the structure that best ex
 ## Accessibility
 
 - Target WCAG 2.2 AA and usable macOS VoiceOver behavior.
-- All Playbooks must be possible with keyboard only.
+- All workflows must be possible with keyboard only.
 - Use native HTML semantics before ARIA.
 - Visible focus is required on every interactive element and must remain clear in light and dark modes.
 - Default focus treatment is a `2px` accent ring with enough offset to remain distinct from the component border.
@@ -596,7 +599,7 @@ Rules:
 ### Verification expectations
 
 - Run the repository's required automated checks after implementation.
-- Verify the native app through the checkout-built `npm run tauri dev` Playbooks, not only a browser preview.
+- When the user asks for a live check, verify the native app built from the checkout (`npm run tauri dev`), not only a browser preview. AGENTS.md forbids launching it otherwise.
 - Review at the minimum `900 x 600` window and a larger desktop size.
 - Verify light mode, dark mode, keyboard-only operation, focus restoration, VoiceOver spot checks, reduced motion, loading, empty, error, disabled, and destructive states.
 - Compare screenshots across related screens to catch local styling drift.
@@ -606,7 +609,7 @@ Rules:
 
 Reference this file directly in every app design or frontend prompt. A useful starting prompt is:
 
-> Read `DESIGN.md` completely before making UI decisions. Treat it as the canonical design contract for the Alinery desktop app. Use `../alinery-website/DESIGN.md` and its implemented artwork only for shared brand palette and identity. Use shadcn/ui for general component anatomy and state coverage, AI Elements for AI-native task/tool/approval/artifact patterns, Thinking Orbs for indeterminate loading and AI activity, Lucide React for interface icons, and Base UI only when an accessible behavioral primitive is needed. Do not introduce another spinner or icon family. Apply Alinery's own tokens and visual language rather than stock shadcn styling. Preserve existing product behavior, Tauri boundaries, keyboard access, safe confirmations, session continuity, and repository context. Do not turn the product into a chat app. Keep Tasks as the day-one default and preserve the configurable Canvas views. Do not auto-start child work before the human accepts the plan. Before editing, name the DESIGN.md sections and existing shared components that govern the change. After editing, run the required checks and verify the result in the native app in light and dark modes.
+> Read `DESIGN.md` completely before making UI decisions. Treat it as the canonical design contract for the Alinery desktop app. Use `../alinery-website/DESIGN.md` and its implemented artwork only for shared brand palette and identity. Use shadcn/ui for general component anatomy and state coverage, AI Elements for AI-native task/tool/approval/artifact patterns, Thinking Orbs for indeterminate loading and AI activity, Lucide React for interface icons, and Base UI only when an accessible behavioral primitive is needed. Do not introduce another spinner or icon family. Apply Alinery's own tokens and visual language rather than stock shadcn styling. Preserve existing product behavior, Tauri boundaries, keyboard access, safe confirmations, session continuity, and repository context. Do not turn the product into a chat app. Keep Tasks as the day-one default and preserve the configurable Grid views. Do not auto-start child work before the human accepts the plan. Before editing, name the DESIGN.md sections and existing shared components that govern the change. After editing, run the required checks and verify the result in the native app in light and dark modes.
 
 For a bounded component task, append:
 
@@ -622,7 +625,7 @@ Before approving app UI work, confirm:
 - [ ] The component uses shared Alinery tokens and shared component patterns.
 - [ ] The result is not stock shadcn and does not revive the TRON/cyberpunk treatment.
 - [ ] Chat was not treated as the primary loop; plan/doc comments remain the default collaboration surface.
-- [ ] Tasks remains the default startup view, and Canvas layouts preserve existing task behavior.
+- [ ] Tasks remains the default startup view, and Grid views preserve existing task behavior.
 - [ ] Child or nested work still requires an explicit human accept of the parent plan.
 - [ ] Interface icons use Lucide or a product-specific SVG that follows Lucide's geometry; no competing icon family was introduced.
 - [ ] State is understandable without color or motion.
@@ -639,14 +642,12 @@ Before approving app UI work, confirm:
 - [ ] Decide whether Alinery should maintain a lightweight in-app component gallery for visual regression and design review after the shared components stabilize.
 
 
-## Playbooks Explore library (2026-10-28)
+## Playbooks library
 
-The app Playbooks tab and public Playbook Library share a compact Explore layout inspired by GitHub Explore: underlined collection navigation, a left library summary, a central feed of bordered cards, and a small bundled collection at the right. This user-requested shared anatomy is an exception to the general website-layout non-goal above; all Alinery behavior and identity remain authoritative.
+The Playbooks view is one list with a rail of views, a manifest of rows, and an inspector (`views/Playbooks.tsx`).
 
-- Keep the heading “Explore Playbooks”, quiet descriptive copy, readable accent-colored titles, neutral surfaces, and Lucide book icons. Cards are semantic lists, not tables or a marketing grid.
-- The left “Your library” rail uses observed installed, starred, and imported counts and shortcuts. The right “Featured Playbooks” rail shows the requested bundled collection in this order: SuperDevelop, Academic Survey, Bug Hunting, Systematic Evidence Review, and One-shot. Titles and descriptions come from the actual bundled catalog; omit missing entries and exclude same-key repository or global definitions. Never fabricate popularity or trending metrics.
-- Local cards show source, optional modification date, description, and star action. Community cards show the actual publisher, steps, version, description, and existing preview/download actions. Do not fetch every local definition just to invent missing list metadata.
-- Keep Local/Community navigation, all community filters, search, every sort direction, and import/edit/copy/export/publish/download behavior and confirmations intact. The graph/editor workspace remains unchanged.
-- Collapse the right rail below 1120px of available Playbooks width and the left rail below 760px. All hidden rail actions remain reachable through the central library navigation. The 900px desktop window must fit without horizontal scrolling.
-- Use existing appearance tokens, focus rings, and shared controls. The hierarchy is shared with the website, while app density and local data semantics stay native to Alinery.
-- Follow AGENTS.md's explicit prohibition on native app launch unless requested. Browser fixtures can verify layout with mocked IPC; they do not prove native integration.
+- The rail has three groups. Library slices by origin: All, Starred, Mine, Downloaded, Team, and Alinery. Signals (Updates, Not published, Edited with an update waiting, Withdrawn) appear only while a row is in that state. Community has Explore and Your listings.
+- Each row names its origin, range, and status. Status comes from observed state (what is installed, what is published, what the community copy says); never fabricate popularity or trending metrics.
+- The inspector shows the playbook's ring, lineage, and steps, and offers the one action its status calls for. Keep import, edit, copy, export, publish, unpublish, and download behind their existing confirmations.
+- A playbook's detail view opens on the radial ring, with Graph and Source beside it. The graph's controls float on the canvas.
+- The 900px desktop window must fit without horizontal scrolling.

@@ -1,4 +1,4 @@
-// BlobService (plan 2.1.5, S4.3): chunked uploads and reads of attachments, staged uploads and a draft's pasted
+// BlobService: chunked uploads and reads of attachments, staged uploads and a draft's pasted
 // images. A client names a blob; it never names a path. The bookkeeping and the path checks are `domain/blobs.ts`.
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";

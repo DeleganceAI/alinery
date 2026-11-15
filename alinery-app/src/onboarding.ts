@@ -12,7 +12,7 @@ export const ONBOARDING_STEPS: { id: OnboardingStepId; number: string; label: st
   { id: "playbooks", number: "02", label: "Playbooks", title: "How playbooks coordinate agents" },
 ];
 
-/** Where the pre-S6.1 install kept its single "onboarded" flag. Read once, by `migrateLegacyOnboarding`. */
+/** Where an older install kept its single "onboarded" flag. Read once, by `migrateLegacyOnboarding`. */
 const LEGACY_COMPLETED_KEY = "alinery.onboardingCompleted.v1";
 
 /** The onboarded mark lives in the app config, per host: the key `local` or a remote host id. */

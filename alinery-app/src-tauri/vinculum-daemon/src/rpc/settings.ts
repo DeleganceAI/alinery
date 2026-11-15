@@ -1,13 +1,15 @@
-// SettingsService and RepoService (plan S4.1): the repository's `config.toml` writes and the repository's
+// SettingsService and RepoService: the repository's `config.toml` writes and the repository's
 // first-use setup. The read side is the `settings/_/repo` entity, so these return only `Applied`.
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { join } from "node:path";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { RepoOverrides } from "alinery-proto/alinery/v1/entities_pb";
 import type { RepoService, SettingsService } from "alinery-proto/alinery/v1/settings_pb";
+import { committedSpecNames, pinSpecs, readSpecs, SPEC_MAX_CHARS, taskSpecs, writeSpec } from "../domain/repoSpecs.ts";
+import { readTaskChecked, taskDir } from "../domain/taskFiles.ts";
 import { clearOverride, emptyOverrides, ensureRepoReady, overridesOf, settingsKey, writeOverridesFile } from "../domain/settings.ts";
 import { writeOwnerOnly } from "../platform/fs.ts";
-import { withTaskMutation } from "../platform/lock.ts";
+import { DomainError, withTaskMutation } from "../platform/lock.ts";
 import { pairingConfigDir } from "../provider.ts";
 import type { Sender } from "../platform/telemetry.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
@@ -71,6 +73,42 @@ export function settingsService(d: SettingsDeps, dedupe: Dedupe, store: Store): 
         domain(() => {
           writeOwnerOnly(join(pairingConfigDir(d.appConfig), "inference.json"), hostedInferenceBody(req.inferenceJson));
           return {};
+        }),
+      );
+    },
+    // The requirement files are plain files in the repository's working tree, not `.alinery/` state: no repository lock and no store refresh.
+    readSpecs: (_req, ctx) => {
+      requireCapability(ctx, Capability.VIEW);
+      return domain(async () => ({ files: await readSpecs(d.repo), maxChars: SPEC_MAX_CHARS }));
+    },
+    writeSpec: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return dedupe.once(metaOf(req.meta), () =>
+        domain(async () => {
+          await writeSpec(d.repo, req.name, req.text);
+          return {};
+        }),
+      );
+    },
+    readTaskSpecs: (req, ctx) => {
+      requireCapability(ctx, Capability.VIEW);
+      return domain(async () => {
+        readTaskChecked(d.repo, req.slug); // refuses an unknown or malformed slug before it is used as a path
+        return taskSpecs(d.repo, taskDir(d.repo, req.slug));
+      });
+    },
+    repinTaskSpecs: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return dedupe.once(metaOf(req.meta), () =>
+        domain(async () => {
+          readTaskChecked(d.repo, req.slug);
+          let commit: string;
+          try {
+            commit = await pinSpecs(taskDir(d.repo, req.slug), d.repo);
+          } catch (e) {
+            throw new DomainError("failed_precondition", `cannot pin: ${e instanceof Error ? e.message : String(e)}`);
+          }
+          return { commit, files: await committedSpecNames(d.repo, commit) };
         }),
       );
     },

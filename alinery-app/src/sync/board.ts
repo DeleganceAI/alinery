@@ -1,4 +1,4 @@
-// The board, task lists and session lists from the daemon's entities (plan S3.5): what
+// The board, task lists and session lists from the daemon's entities: what
 // `list_board_tasks`, `list_tasks`, `get_task`, `list_task_activity`, `list_sessions`,
 // `list_session_items` and `get_session_display` answered, read from subscriptions. Task rows come from
 // each repo's repo scope; session rows from a task scope, opened only for tasks that have sessions.

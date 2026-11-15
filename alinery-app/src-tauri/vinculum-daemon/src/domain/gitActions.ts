@@ -1,6 +1,6 @@
-// Git work on a task's repository and worktree (plan S4.7), ported from alinery-core `git_actions.rs` and the execution-ref
+// Git work on a task's repository and worktree, ported from alinery-core `git_actions.rs` and the execution-ref
 // half of `git.rs`: commit, push and the forge compare URL, removing the worktree, the PR link, the task-source branches, and
-// the refs that keep an execution's files alive (O27). Every git call goes through `platform/git.ts`; every write to task.md
+// the refs that keep an execution's files alive. Every git call goes through `platform/git.ts`; every write to task.md
 // goes through the task-mutation lock. Errors keep the words the Rust gave them, because the views show them as they are.
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -275,7 +275,7 @@ export async function taskSourceBranches(repo: string, selectedBaseRef?: string)
   return { branches, head, selected };
 }
 
-// ---- the refs that keep an execution's files (O27) -----------------------------------------------------------
+// ---- the refs that keep an execution's files -----------------------------------------------------------
 
 const nameFits = (name: string) => name !== "" && /^[A-Za-z0-9_-]+$/.test(name);
 

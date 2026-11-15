@@ -1,5 +1,5 @@
-// The agent directory (S4.10). The cases are the ones the app's Rust tests held for `vinculum_customizations.rs` and `vinculum_update.rs`
-// (the Rust side of the model-role helpers stays for the hosted default role until S4.11, so these two sets must keep agreeing).
+// The agent directory. The cases are the ones the app's Rust tests held for `vinculum_customizations.rs` and `vinculum_update.rs`
+// (the Rust side of the model-role helpers stays for the hosted default role, so these two sets must keep agreeing).
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

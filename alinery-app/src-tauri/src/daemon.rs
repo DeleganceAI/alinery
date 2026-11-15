@@ -147,7 +147,7 @@ fn takeover_impact(repo: &Path, lane: &str, live: Result<Vec<String>, String>) -
     }
 }
 
-/// An owner that only speaks the JSON-lines wire (protocol 38 and below, plan O23): its version and its live sessions are read
+/// An owner that only speaks the JSON-lines wire (protocol 38 and below): its version and its live sessions are read
 /// over bound connections, and a takeover stops it over the same wire.
 fn observe_legacy_owner(repo: &Path, lane: &str, connection: BoundDaemonConnection, app_config_identity: &str) -> Result<(PeerProcessIdentity, DaemonOwnerConflict), String> {
     let socket = alinery_core::alineryd_socket_path(repo, Some(lane));
@@ -685,7 +685,7 @@ pub(crate) fn fnv1a64_hex(input: &str) -> String {
     format!("{hash:016x}")
 }
 
-/// A fresh bearer token for a daemon's RPC socket: 32 random bytes, hex (plan 2.1.10).
+/// A fresh bearer token for a daemon's RPC socket: 32 random bytes, hex.
 pub(crate) fn new_rpc_secret() -> Result<String, String> {
     use std::io::Read;
     let mut bytes = [0u8; 32];
@@ -733,7 +733,7 @@ pub(crate) fn current_alineryd_socket_path(repo: &Path) -> PathBuf {
 }
 
 /// Whether anything accepts a connection on one of this build's sockets for `repo`: the RPC socket of a daemon that serves
-/// `alinery.v1`, or the legacy one of an older daemon (plan O23). Connect-don't-stat: dead sockets stay on disk. A connect says
+/// `alinery.v1`, or the legacy one of an older daemon. Connect-don't-stat: dead sockets stay on disk. A connect says
 /// something listens, not that it is usable; `Hello` says that.
 pub(crate) fn daemon_answers(repo: &Path) -> bool {
     let ns = alineryd_socket_namespace();
@@ -742,7 +742,7 @@ pub(crate) fn daemon_answers(repo: &Path) -> bool {
         .any(|socket| UnixStream::connect(socket).is_ok())
 }
 
-/// The way to stop an older daemon of `lane` (it speaks the JSON-lines wire only, plan O23), for `shutdown_daemon` to fall back
+/// The way to stop an older daemon of `lane` (it speaks the JSON-lines wire only), for `shutdown_daemon` to fall back
 /// to when the daemon does not answer `AdminService.Shutdown`. `bound` is the incarnation a takeover's consent was given for.
 pub(crate) fn legacy_shutdown(repo: &Path, lane: &str, bound: Option<PeerProcessIdentity>) -> impl FnOnce() -> Result<(), String> {
     let socket = alinery_core::alineryd_socket_path(repo, Some(lane));

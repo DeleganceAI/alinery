@@ -1,4 +1,4 @@
-// The RPC socket (T1, plan 2.1.8): grpc-js over HTTP/2 with prior knowledge on `<repo>/.alinery/rpc[-ns].sock`.
+// The RPC socket: grpc-js over HTTP/2 with prior knowledge on `<repo>/.alinery/rpc[-ns].sock`.
 // A grpc-js handler can't see its connection's socket, so the peer check runs once per connection,
 // at accept, on our own node:net listener, and picks the server built for that peer class.
 import { rmSync } from "node:fs";

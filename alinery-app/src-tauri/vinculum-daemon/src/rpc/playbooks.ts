@@ -1,4 +1,4 @@
-// PlaybookService (plan S4.6): the playbook library's reads of one whole definition, the two computed answers (validate, render) and the
+// PlaybookService: the playbook library's reads of one whole definition, the two computed answers (validate, render) and the
 // writes. The catalog is the `playbook/*` rows (`PlaybookProjector`). A write is serialized with every other writer of the repository,
 // checks `expected_revision` against the row as the files are now, and answers after the rows it changed are in the store. A refusal
 // carries the library's tagged error as JSON in `ErrorDetail.fields["error"]`, which the frontend turns back into the shape its views read.

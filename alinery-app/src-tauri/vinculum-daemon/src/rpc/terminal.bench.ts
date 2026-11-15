@@ -1,4 +1,4 @@
-// S3.4 measurement (plan O8, O5): keystroke-to-echo latency of a PTY, first through the JSON-line op path
+// Measures keystroke-to-echo latency of a PTY, first through the JSON-line op path
 // the app used before (re-created here: one connection per Write, one long Attach socket), then through
 // TerminalService on rpc.sock. The `load` conditions run inside the same process as the PTY, as in the
 // daemon. Run: bun src/rpc/terminal.bench.ts [samples] [condition...]   (conditions: idle create fsync atomic reconcile git tar all; fsync is a flood of 4 parallel writeDurable every 20 ms)
@@ -161,7 +161,7 @@ const conditions: Record<string, () => { stop: () => void }> = {
     void (async () => { while (!stop) await Bun.spawn(["git", "status", "--porcelain"], { cwd: process.cwd(), stdout: "ignore" }).exited; })();
     return { stop: () => void (stop = true) };
   },
-  // The backup job is a child process (O7 a): spawn and pipe a compression of a tree.
+  // The backup job is a child process: spawn and pipe a compression of a tree.
   tar: () => {
     const tree = join(root, "tree");
     mkdirSync(tree, { recursive: true });

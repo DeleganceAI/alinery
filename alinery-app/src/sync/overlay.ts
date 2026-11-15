@@ -1,4 +1,4 @@
-// The optimistic layer (plan 2.2.7). A view that writes shows the value it wrote at once, keeps showing it until
+// The optimistic layer. A view that writes shows the value it wrote at once, keeps showing it until
 // the replica has passed the write's `Applied.cursor` (so it never flickers back to the old row while the delta is
 // in flight), and drops it on an error so the view returns to the daemon's row.
 import type { Cursor } from "alinery-proto/alinery/v1/common_pb";

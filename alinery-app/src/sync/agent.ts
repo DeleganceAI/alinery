@@ -1,4 +1,4 @@
-// The host's agent directory (plan S4.10, O12 a): model roles, the customization inventory, skill install and delete, and the prompt
+// The host's agent directory: model roles, the customization inventory, skill install and delete, and the prompt
 // for an outside AI. The directory is the daemon's on every host, so a repository on another machine shows and edits that machine's.
 // Which daemon: the repository a call names; with none, the active repository, else the first local one the app knows. What stays on
 // this machine is the Finder window and the file picker (`ipc`); a picked skill reaches the daemon as a staged upload.

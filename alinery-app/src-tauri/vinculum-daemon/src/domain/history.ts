@@ -1,4 +1,4 @@
-// What a session wrote, read back (plan S4.4): the scrollback beside its meta, and the Vinculum journal. Ports history.rs.
+// What a session wrote, read back: the scrollback beside its meta, and the Vinculum journal. Ports history.rs.
 // The path checks are the point: `.alinery/` lives inside the repository, so a clone can carry
 // a scrollback, a chunk or a journal as a git symlink aimed anywhere this process can read.
 import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
@@ -104,7 +104,7 @@ export type History = { data: Buffer; length: number; nextOffset: number; eof: b
 
 /**
  * With `offset` and `limit`: that window of raw bytes (at most 1 MiB). With neither: the tail of the scrollback, 8 MiB at
- * most, with terminal queries left out as an attach replay leaves them (S3.4). Rust drew the tail's final screen with a
+ * most, with terminal queries left out as an attach replay leaves them. Rust drew the tail's final screen with a
  * vt100 emulator first; xterm draws these bytes the same way, so the screen is the same, and its scrollback is kept.
  */
 export function readHistory(repo: string, slug: string, id: string, offset?: number, limit?: number): History {

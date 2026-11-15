@@ -1,4 +1,4 @@
-// The storage scan (S2.6), ported from alinery-core `storage.rs` `storage_info_in`. One walk of
+// The storage scan, ported from alinery-core `storage.rs` `storage_info_in`. One walk of
 // `<repo>/.alinery` splits every byte into archived (what a purge frees) and active, and nothing
 // outside `.alinery` is measured: a symlink is neither file nor directory here, so the walk never
 // follows one out. It only reads; the purge (jobs/purge.ts) deletes exactly what its classification calls archived.

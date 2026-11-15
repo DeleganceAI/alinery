@@ -87,7 +87,7 @@ export function parseSessionMeta(text: string, taskSlug: string, id: string): En
   }
 }
 
-/** Taskless chat sessions have no task directory and key under `_` (2.2.6). */
+/** Taskless chat sessions have no task directory and key under `_`. */
 export const sessionKey = (taskSlug: string, id: string) => `session/${taskSlug || "_"}/${id}`;
 
 // `tasks/<slug>/sessions/<id>.meta.json`, or `sessions/<id>.meta.json` for a taskless session.

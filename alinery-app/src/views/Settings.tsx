@@ -88,6 +88,7 @@ import { ProviderSetupDialog } from "./ProviderSetupDialog";
 import { RemoteHostsSettings } from "./RemoteHostsSettings";
 import { RuntimePanel } from "./RuntimePanel";
 import "./Settings.css";
+import { SettingsSpecs } from "./SettingsSpecs";
 import { groupOf, matchSettings, SETTINGS_GROUPS, visibleGroups } from "./settingsIndex";
 import { VinculumCustomizations } from "./VinculumCustomizations";
 
@@ -316,7 +317,7 @@ export function Settings({
   const globalSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const [overrides, setOverrides] = useState<RepoOverrides>(EMPTY_OVERRIDES);
   // A repository's values come from the daemon's settings row. A write shows at once through the overlay and is
-  // dropped once the row has passed the write's cursor (plan 2.2.7).
+  // dropped once the row has passed the write's cursor.
   const repoRead = useRepoSettings(scope.kind === "repo" ? scope.repoPath : "");
   const written = useOverlay<{ cfg: Config; overrides: RepoOverrides }>();
   const repoBase = useMemo(() => (repoRead.settings ? { cfg: repoRead.settings.effective, overrides: repoRead.settings.overrides } : undefined), [repoRead.settings]);
@@ -1234,6 +1235,15 @@ export function Settings({
     </section>
   );
 
+  const renderSpecs = () => (
+    <>
+      <p className="hint">
+        Standing rules every playbook step is held to, read from <code>specs/</code> at the repository root as committed.
+      </p>
+      {isGlobal || !selectedRepo ? <p className="hint">Pick a repository in the scope bar to edit its requirements.</p> : <SettingsSpecs repo={selectedRepo} />}
+    </>
+  );
+
   const renderPlaybooks = () => {
     const configured = (isGlobal ? global : effective).defaults.playbook;
     const candidates = playbookCatalog?.candidates ?? [];
@@ -1839,8 +1849,8 @@ export function Settings({
 
   const renderHarness = () => {
     return (
-      <div className="harness-settings-layout">
-        <section className="harness-settings-section" data-anchor="agents.defaults" hidden={hide("agents.defaults")} aria-labelledby="session-defaults-title">
+      <>
+        <section className="settings-part harness-settings-section" data-anchor="agents.defaults" hidden={hide("agents.defaults")} aria-labelledby="session-defaults-title">
           <h3 id="session-defaults-title">Session defaults</h3>
           <p className="hint">
             Choose the model for new sessions{isGlobal ? " across your repositories" : ` in ${repoName(selectedRepo)}`}. A step’s model wins, then the playbook’s default, then this
@@ -1848,7 +1858,7 @@ export function Settings({
           </p>
           {choiceSection("defaults", "Default")}
         </section>
-        <section className="vinculum-settings" data-anchor="agents.providers" hidden={hide("agents.providers")} aria-labelledby="providers-settings-title">
+        <section className="settings-part vinculum-settings" data-anchor="agents.providers" hidden={hide("agents.providers")} aria-labelledby="providers-settings-title">
           <div className="vinculum-settings-heading">
             <h3 id="providers-settings-title">Providers</h3>
             <p className="hint">Sign in to model providers for this installation.</p>
@@ -1862,7 +1872,7 @@ export function Settings({
             <VinculumCustomizations />
           </div>
         </section>
-      </div>
+      </>
     );
   };
 
@@ -2685,6 +2695,7 @@ export function Settings({
           <>
             {renderHarness()}
             {part("agents.playbooks", renderPlaybooks())}
+            {part("agents.requirements", renderSpecs())}
           </>
         );
       case "connections":
@@ -2843,7 +2854,7 @@ export function Settings({
                 )}
               </header>
               {group.globalOnly && !isGlobal && globalOnly(`${group.label} settings`)}
-              {renderGroup(group.key)}
+              {group.parts.length > 0 ? renderGroup(group.key) : <div className="settings-part">{renderGroup(group.key)}</div>}
             </section>
           ))}
         </div>

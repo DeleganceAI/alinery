@@ -238,10 +238,10 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    // T7, rehomed from alineryd/tests/reconciler.rs. It lived in a test binary that also
+    // Rehomed from the old daemon's reconciler tests. It lived in a test binary that also
     // spawns real alineryd children; `Command::spawn` forks, and a child forked while this
     // test holds `first` briefly shares that open file description, so the flock outlives
-    // `drop(first)` until the child execs. That made T7 fail ~1 run in 3 for reasons that
+    // `drop(first)` until the child execs. That made it fail ~1 run in 3 for reasons that
     // had nothing to do with locking. Same assertions, in a binary that never forks.
     #[test]
     fn reconciler_lock_is_mutually_exclusive() {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The JSON-lines alineryd wire is retired (S5.3): the daemon speaks `alinery.v1` alone, and the shell reaches it through
+# The JSON-lines alineryd wire is retired: the daemon speaks `alinery.v1` alone, and the shell reaches it through
 # the bridge in `daemon_rpc.rs`. What remains of the old wire is the way to observe and stop a daemon of protocol 38 or
-# older (plan O23), and it must live entirely in `alinery-core/src/legacy_daemon.rs`.
+# older, and it must live entirely in `alinery-core/src/legacy_daemon.rs`.
 #
 # `check-protocol-version-bump.sh` watches a SURFACE of files. That is only worth
 # something if the contract cannot quietly move back *out* of them: reply parsing sat in

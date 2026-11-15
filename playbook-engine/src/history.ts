@@ -1,5 +1,5 @@
 /**
- * Per-step file states (O27). Each execution keeps the exact bytes of what it consumed and published in
+ * Per-step file states. Each execution keeps the exact bytes of what it consumed and published in
  * `<historyDir>/<execId>/objects/<sha256>`, so a later edit of the live file cannot erase the state a
  * step saw. An object is a copy (copy-on-write where the filesystem has it), never a hard link: a file
  * rewritten in place must leave its snapshot alone. No size cap.
