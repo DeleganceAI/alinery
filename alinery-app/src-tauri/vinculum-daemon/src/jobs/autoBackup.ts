@@ -1,4 +1,4 @@
-// The automatic backup triggers (S4.9), ported from the shell's `backup_queue.rs` and `publish_auto_backup`: archive, push and
+// The automatic backup triggers, ported from the shell's `backup_queue.rs` and `publish_auto_backup`: archive, push and
 // an artifact change must stay instant, so they publish here and return; a burst costs one backup, taken from the burst's end.
 //
 // Two slots, ever: the backup in flight (the job runner's) and the latest request waiting. Every publish replaces the waiting

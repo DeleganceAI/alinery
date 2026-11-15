@@ -1,4 +1,4 @@
-// Jobs (plan 2.3.5, S2.6): slow work runs in a child process of the daemon's own binary, so a crash
+// Jobs: slow work runs in a child process of the daemon's own binary, so a crash
 // in it fails only its job. The child reads its params from stdin and writes JSON lines on stdout:
 // {progress:{done,total,label}}, {result:...} or {error:"..."}. Every state change is committed to
 // the store as a `job/_/<id>` entity, so a client sees progress through Subscribe and, after the
@@ -12,7 +12,7 @@ import { jobCommand, resultOf } from "./kinds.ts";
 export type RunnerOptions = {
   /** The argv for a kind. Defaults to this binary's `--job <kind>`; tests point it at a fake child. */
   command?: (kind: JobKind) => string[];
-  /** Spacing of progress commits per job: about 4 a second (2.2.8). */
+  /** Spacing of progress commits per job: about 4 a second. */
   progressMs?: number;
   /** How long an ended job stays in the store (24 h, WA) so a client that was closed sees its result. */
   retainMs?: number;
@@ -107,7 +107,7 @@ export class JobRunner {
     return true;
   }
 
-  /** Shutdown (plan invariant 1): ends every job that has not ended, a waiting one at once and a running one
+  /** Shutdown: ends every job that has not ended, a waiting one at once and a running one
    * by SIGTERM to its child, and starts none after. A job child is in its own process group, so it would
    * otherwise outlive the daemon and go on deleting or reading `.alinery` while a restore rewrites it. */
   stopAll(): void {

@@ -4,7 +4,7 @@
 # Review finding 5: the guard watched only `alineryd/src/main.rs` + `protocol.rs`, so a
 # rename confined to the app's client changed the wire and passed. Adding a file to
 # SURFACE is not evidence the gate works — this suite builds synthetic repos and proves
-# the verdict, one case per branch. Since S5.3 the wire is the proto package, so case 1 is a
+# the verdict, one case per branch. The wire is the proto package, so case 1 is a
 # proto change; the cases about the older JSON-lines client keep guarding what is left of it.
 # The fixtures are throwaway git repos in a temp dir;
 # nothing here touches the real working tree.

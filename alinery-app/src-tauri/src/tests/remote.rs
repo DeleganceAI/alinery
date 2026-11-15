@@ -318,7 +318,7 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         assert!(!host_toml.contains("ghp_live_mac_only"), "{host_toml}");
         assert!(
             host_toml.contains("live-install-id"),
-            "the telemetry preferences travel whole, so the host's events carry this install (S4.1)"
+            "the telemetry preferences travel whole, so the host's events carry this install"
         );
         assert!(host_toml.contains("xai-live-shared"), "the shared provider key reaches the daemon");
         assert_eq!(host_toml.trim().lines().last(), Some("600"), "owner-only");
@@ -1074,7 +1074,7 @@ fn refuses_hosts_the_runtime_cannot_run_on() {
             },
             "missing gzip",
         ),
-        // The daemon's backups run the host's `zip` and `unzip` (O11 b); a Debian image has neither by default.
+        // The daemon's backups run the host's `zip` and `unzip`; a Debian image has neither by default.
         (
             Probe {
                 tools: BTreeMap::from([("tar".into(), true), ("gzip".into(), true), ("sha256sum".into(), true), ("git".into(), true)]),

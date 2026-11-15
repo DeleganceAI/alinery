@@ -865,10 +865,10 @@ export const CommunityImportOutcomeSchema: GenEnum<CommunityImportOutcome> = /*@
   enumDesc(file_alinery_v1_playbooks, 0);
 
 /**
- * The playbook library (S4.6): bundled playbooks (compiled in), the machine's global ones, and the repository's own. The catalog
+ * The playbook library: bundled playbooks (compiled in), the machine's global ones, and the repository's own. The catalog
  * is the repo scope's `playbook/<scope>/<key>` rows plus `playbook/_/picker`, `playbook/_/picker-global` and `playbook/_/library`;
  * these are the reads of one whole definition, the two computed answers, and the writes. A refusal carries a tagged
- * `PlaybookLoadError` or `PlaybookSaveError` as JSON in `ErrorDetail.fields["error"]` (the plan's 2.3.2 table), and a message.
+ * `PlaybookLoadError` or `PlaybookSaveError` as JSON in `ErrorDetail.fields["error"]`, and a message.
  *
  * @generated from service alinery.v1.PlaybookService
  */
@@ -884,7 +884,7 @@ export const PlaybookService: GenService<{
     output: typeof ReadPlaybookResponseSchema;
   },
   /**
-   * VIEW; unary, a computed answer (2.1.6)
+   * VIEW; unary, a computed answer
    *
    * @generated from rpc alinery.v1.PlaybookService.ValidatePlaybook
    */
@@ -937,7 +937,7 @@ export const PlaybookService: GenService<{
     output: typeof SavePickerResponseSchema;
   },
   /**
-   * The community import registry (S4.10; the rows are `playbook/_/community`). The shell downloads a package with this machine's
+   * The community import registry (the rows are `playbook/_/community`). The shell downloads a package with this machine's
    * account and stages it through BlobService (a `staged` upload); these two write it into the repository, on the host that owns it.
    *
    * ACT

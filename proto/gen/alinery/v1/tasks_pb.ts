@@ -840,7 +840,7 @@ export const DeleteDraftResponseSchema: GenMessage<DeleteDraftResponse> = /*@__P
   messageDesc(file_alinery_v1_tasks, 24);
 
 /**
- * Tasks (S4.3). The read side is the `task/<slug>/<slug>` entity (entities.proto); these are the writes. A task that
+ * Tasks. The read side is the `task/<slug>/<slug>` entity (entities.proto); these are the writes. A task that
  * is created, renamed, archived or restored shows through the sync stream; the response also carries the stored
  * task, so a caller that needs it at once does not wait for the delta.
  *

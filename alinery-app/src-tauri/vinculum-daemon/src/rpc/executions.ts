@@ -1,4 +1,4 @@
-// ExecutionService (plan S4.2): the person's permission for one live execution to finish. The read side is the
+// ExecutionService: the person's permission for one live execution to finish. The read side is the
 // `execution/<slug>/<slug>` entity; what an execution may do, and when it ends, is the playbook engine's.
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";

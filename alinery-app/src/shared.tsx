@@ -270,7 +270,7 @@ export function sameTask(left: Task, right: Task): boolean {
   );
 }
 
-// #118 T0-5: board pollers rebuild fresh arrays every 3s. Gate their setState with these
+// Board pollers rebuild fresh arrays every 3s. Gate their setState with these
 // comparators so an idle board commits no new state (and running-indicator animations keep
 // identity). Same shape as sameSessionMetas / sameArtifactListItems / sameLifecycleMaps.
 export function sameBoardTasks(left: BoardTask[], right: BoardTask[]) {
@@ -359,7 +359,7 @@ export function sameTaskActivityMaps(left: TaskActivityMap, right: TaskActivityM
   );
 }
 
-// Shared age formatters (T0-6): used by TaskList's Updated/Created columns and Canvas's
+// Shared age formatters: used by TaskList's Updated/Created columns and Canvas's
 // card age slot. No seconds unit — anything under a minute reads "now".
 export function formatAge(epochSeconds: number | null | undefined, nowSeconds = Math.floor(Date.now() / 1000)) {
   if (!epochSeconds) return "—";

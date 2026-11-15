@@ -755,7 +755,7 @@ export const RecordOutboundHandoffResponseSchema: GenMessage<RecordOutboundHando
   messageDesc(file_alinery_v1_artifacts, 25);
 
 /**
- * Review comments on a task's artifacts (S4.5). The read side is the task scope: `artifact/`, `attachment/`, `comment/`,
+ * Review comments on a task's artifacts. The read side is the task scope: `artifact/`, `attachment/`, `comment/`,
  * `comment_draft/`, `review_pending/` and `artifact_tree/` rows, and BlobService for the bodies. These are the writes.
  * A write answers after the rows it changed are in the store, so the caller's next read sees it.
  *
@@ -848,7 +848,7 @@ export const ArtifactService: GenService<{
   },
   /**
    * The two halves of a review handoff. Both tasks must be on one machine, each daemon owns its own repository, so the
-   * client carries the artifact's text from the source daemon to the target and the record back (see the plan, S4.5).
+   * client carries the artifact's text from the source daemon to the target and the record back.
    *
    * ACT, on the target's daemon
    *

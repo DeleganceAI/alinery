@@ -1,4 +1,4 @@
-// One no-harness shell's bytes from `TerminalService` (plan 2.1.5, S3.4): Attach streams the output with
+// One no-harness shell's bytes from `TerminalService`: Attach streams the output with
 // each frame's offset, keystrokes go back as unary Write calls numbered by `input_seq`, and a reattach
 // asks for everything after the last byte rendered, so a dropped stream repeats and loses nothing.
 import { Code, ConnectError, createClient } from "@connectrpc/connect";

@@ -1,4 +1,4 @@
-// The playbook conformance cases (plan S4.6): the Rust reference (alinery-core/tests/conformance.rs `playbook`) wrote `expected.json`
+// The playbook conformance cases: the Rust reference (alinery-core/tests/conformance.rs `playbook`) wrote `expected.json`
 // for each case under `conformance/playbook/<case>/`, and the daemon's library and the engine's one parser must give the same answers
 // and leave the same bytes behind. `command.json` holds the steps; `input/app` is the global config dir and `input/repo` the repository.
 import { fromJson } from "@bufbuild/protobuf";

@@ -1,4 +1,4 @@
-// The host's agent directory (plan S4.10, O12 a): model roles, the customization inventory, skill install and delete, and the
+// The host's agent directory: model roles, the customization inventory, skill install and delete, and the
 // prompt that helps a person customize it. Ported from the app's `vinculum_update.rs` and `vinculum_customizations.rs`. The directory is
 // `vinculumAgentDir(appConfig)`, so each host has its own and its daemon owns it. Nothing in it is executed: the inventory reads names
 // and metadata only, and no command line, env value, header or frontmatter body is copied into a result.

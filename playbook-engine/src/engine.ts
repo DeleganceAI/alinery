@@ -49,7 +49,7 @@ export interface EngineOptions {
    */
   save: (state: State) => void | Promise<void>;
   /**
-   * Parent of every execution's `objects/` directory (O27). Omit it and no file states are kept.
+   * Parent of every execution's `objects/` directory. Omit it and no file states are kept.
    */
   historyDir?: string;
   /** Records the worktree an accepted coding step produced, as a tree kept alive under a ref. */

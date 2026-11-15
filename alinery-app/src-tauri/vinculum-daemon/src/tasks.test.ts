@@ -117,7 +117,7 @@ describe("task execution reply", () => {
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 
-  test("records with no engine state and no log are history (O21): shown unchanged and flagged", () => {
+  test("records with no engine state and no log are history: shown unchanged and flagged", () => {
     resetGraphs();
     const repo = mkdtempSync(join(tmpdir(), "vinculum-lineage-"));
     const slug = "plain";

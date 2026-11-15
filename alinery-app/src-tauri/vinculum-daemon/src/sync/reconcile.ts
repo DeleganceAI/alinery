@@ -1,4 +1,4 @@
-// The 30 s pass (plan 2.2.8): no watcher is trusted alone. The timer is re-armed when a pass ends, so
+// The 30 s pass: no watcher is trusted alone. The timer is re-armed when a pass ends, so
 // passes never overlap. Timers come in through the constructor so tests drive the clock.
 import type { Feed } from "./feed.ts";
 import type { Timers } from "./store.ts";

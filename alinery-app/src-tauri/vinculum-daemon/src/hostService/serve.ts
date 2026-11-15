@@ -1,4 +1,4 @@
-// `alinery-vinculum-daemon --host-service` (plan S5.2, O15 b): the host's work while no daemon runs, spoken over the stdin and
+// `alinery-vinculum-daemon --host-service`: the host's work while no daemon runs, spoken over the stdin and
 // stdout of one long-lived process (one ssh channel per host). Messages are proto/alinery/v1/host.proto, framed as
 // `[u32 big-endian length][message]`. The process holds each claimed repo's GUI lock for as long as the channel lives; the
 // kernel lets the locks go when the channel dies, which is exactly the lifetime the local `claim_repo` has.

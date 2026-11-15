@@ -1,4 +1,4 @@
-// The git work of a task (plan S4.7): source branches, remove a worktree, push, and the pull-request lookup. The git itself is
+// The git work of a task: source branches, remove a worktree, push, and the pull-request lookup. The git itself is
 // the daemon's GitService, so a repository on another machine answers the same calls. What stays on this machine is the GitHub
 // API call (it needs this machine's token, 2.3.4), reached through `ipc`. A commit or push queues the automatic backup in the daemon.
 import { Code, ConnectError, createClient } from "@connectrpc/connect";

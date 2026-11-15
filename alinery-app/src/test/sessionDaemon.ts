@@ -1,4 +1,4 @@
-// A fake daemon that serves Session entities over a real connect router (plan 2.5), for view tests
+// A fake daemon that serves Session entities over a real connect router, for view tests
 // that need session status. A test states what a session looks like as the old `SessionObservation`
 // and the helper writes the entity the daemon would hold; `show` after mount is a live delta.
 import { create, fromJson, type JsonValue, type MessageInitShape } from "@bufbuild/protobuf";

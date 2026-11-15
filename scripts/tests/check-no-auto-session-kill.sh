@@ -5,16 +5,16 @@
 #   deliberate, explicitly-clicked user action carrying a loss-of-work warning.
 #
 # Fails if any function in the Tauri app names a `ShutdownOrigin` (`AdminService.Shutdown`, which
-# SIGTERM/SIGKILLs every harness process group; plan invariant 1) unless that function is one of the
+# SIGTERM/SIGKILLs every harness process group) unless that function is one of the
 # deliberate teardown origins below, and each of them must name one. A daemon of protocol 38 or older
-# is stopped over its JSON-lines socket (plan O23); that goes through `legacy_shutdown`, whose callers
-# must be among the same origins. The wire is otherwise retired (S5.3), so nothing else builds a
+# is stopped over its JSON-lines socket; that goes through `legacy_shutdown`, whose callers
+# must be among the same origins. The wire is otherwise retired, so nothing else builds a
 # `shutdown` request.
 #
 # A behavioural test alone would pass against a re-introduced *conditional* kill, which
 # is exactly how the original bug shipped — hence a source-level check.
 #
-# The same holds on the daemon side: see the S2.2 block below.
+# The same holds on the daemon side: see the daemon-side block below.
 #
 # Run: ./scripts/tests/check-no-auto-session-kill.sh   (wired into scripts/release.sh)
 set -euo pipefail
@@ -91,7 +91,7 @@ for fn in $ALLOWED; do
   esac
 done
 
-# The older-daemon stop (O23): `legacy_shutdown(` is built only by a teardown origin.
+# The older-daemon stop: `legacy_shutdown(` is built only by a teardown origin.
 legacy_users="$(
   awk '
     FNR == 1 { current = "" }
@@ -174,7 +174,7 @@ for (const dir of ["src", "alinery-core/src"]) {
 }
 JS
 
-# The daemon side (plan S2.2). A child process is signalled from one file, platform/process.ts, so
+# The daemon side. A child process is signalled from one file, platform/process.ts, so
 # `.kill(` and `process.kill(` may appear nowhere else under vinculum-daemon/src (tests excepted), and
 # every `signalChild(child, signal, "reason")` call names its reason and sits in a file the pair
 # below allows. Add a pair only together with the user action that justifies it:
@@ -216,7 +216,7 @@ while IFS= read -r call; do
   esac
 done <<<"$signal_calls"
 
-# The MCP server (plan S5.1, O10 b) is a daemon client: it calls the daemon over its RPC socket with an AGENT token and never stops it, so it
+# The MCP server is a daemon client: it calls the daemon over its RPC socket with an AGENT token and never stops it, so it
 # names no Shutdown call and signals no process. The scan above already covers src/mcpServer for `.kill(` and `signalChild`; this one
 # keeps the Shutdown RPC out and fails if the directory goes missing.
 MCP_SRC="$DAEMON_SRC/mcpServer"

@@ -246,8 +246,8 @@ export const DetachResponseSchema: GenMessage<DetachResponse> = /*@__PURE__*/
   messageDesc(file_alinery_v1_terminal, 8);
 
 /**
- * A no-harness shell's bytes (plan 2.1.5). Attach streams output; input comes back as unary Write calls
- * because a fetch has no request stream (O8 a). The daemon keeps each attach's writes in input_seq order.
+ * A no-harness shell's bytes. Attach streams output; input comes back as unary Write calls
+ * because a fetch has no request stream. The daemon keeps each attach's writes in input_seq order.
  *
  * @generated from service alinery.v1.TerminalService
  */

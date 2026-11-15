@@ -1,4 +1,4 @@
-// A task's artifacts and review comments (plan S4.5). The list, the attachments, the comments, the comment drafts, the
+// A task's artifacts and review comments. The list, the attachments, the comments, the comment drafts, the
 // waiting-for-review marks and the tree are rows of the task scope, so a view that shows them subscribes instead of polling;
 // the bodies are BlobService reads; the writes are ArtifactService calls that answer once this window's replica has them.
 // What `list_artifacts_with_metadata`, `add_artifact_comment_for_repo`, `send_review_handoff` and their twenty neighbours
@@ -225,7 +225,7 @@ export async function readNodeBytes(repo: string, taskSlug: string, nodeId: stri
   return call(() => readBlob(repo, create(BlobRefSchema, { target: { case: "artifactNode", value: { taskSlug, nodeId } } })));
 }
 
-/** A file an execution kept when it started or finished (O27), as the bytes it saw. */
+/** A file an execution kept when it started or finished, as the bytes it saw. */
 export async function readStepObject(repo: string, taskSlug: string, executionId: string, sha256: string): Promise<Uint8Array> {
   return call(() => readBlob(repo, create(BlobRefSchema, { target: { case: "stepObject", value: { taskSlug, executionId, sha256 } } })));
 }
@@ -324,7 +324,7 @@ export async function finalizeMessageActions(repo: string, sessionId: string, ta
 // ---- review handoff ---------------------------------------------------------------------------------------
 
 /**
- * Two daemons, one handoff (the plan, S4.5): the source's daemon gives its artifact's text, the target's installs it with the
+ * Two daemons, one handoff: the source's daemon gives its artifact's text, the target's installs it with the
  * session, and the source's records the outbound half. A failure of that last write is listed with the others; the
  * target already has its session.
  */

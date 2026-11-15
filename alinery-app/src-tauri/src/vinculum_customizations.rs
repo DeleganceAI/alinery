@@ -1,5 +1,5 @@
 //! The two parts of the agent directory's page that need this machine: the Finder window and the file picker. The directory itself
-//! (model roles, the inventory, skill install and delete, the prompt) is the daemon's on every host, `AgentService` (S4.10, O12 a);
+//! (model roles, the inventory, skill install and delete, the prompt) is the daemon's on every host, `AgentService`;
 //! a picked skill reaches it as a staged upload the page makes.
 use crate::*;
 use tauri_plugin_dialog::DialogExt;

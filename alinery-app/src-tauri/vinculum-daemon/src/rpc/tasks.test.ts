@@ -296,7 +296,7 @@ test("a chat thread's attachment uploads into its attachments directory, reads b
   expect(existsSync(join(sessions, "plain.attachments"))).toBe(false);
 });
 
-// The issue import (plan S4.10): the shell fetches a ticket with this machine's token and the page hands its fields to CreateTask, so the
+// The issue import: the shell fetches a ticket with this machine's token and the page hands its fields to CreateTask, so the
 // tree a ticket becomes is the daemon's. Fixed GitHub issues and Linear tickets in, task trees out (the timestamps differ, so they are
 // not compared; the slug is derived from the title and is).
 const GITHUB_ISSUES = [

@@ -1,4 +1,4 @@
-// Nothing but the F_FULLFSYNC binding, on a thread of its own so the loop that owns every PTY never waits on the disk (O26 a).
+// Nothing but the F_FULLFSYNC binding, on a thread of its own so the loop that owns every PTY never waits on the disk.
 import { dlopen, FFIType } from "bun:ffi";
 import { closeSync, fsyncSync, openSync } from "node:fs";
 

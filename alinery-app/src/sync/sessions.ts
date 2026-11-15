@@ -1,4 +1,4 @@
-// The session writes and reads (plan S4.4): create, start, rename, archive, kill, notification marks, the scrollback and
+// The session writes and reads: create, start, rename, archive, kill, notification marks, the scrollback and
 // the Vinculum journal. What `rename_session`, `archive_session`, `create_session_for_repo`, `kill_session_for_repo`,
 // `read_session_history` and their neighbours answered is answered here from the daemon's SessionService; the shapes
 // are the ones the views have always read.
@@ -147,7 +147,7 @@ export async function sessionArtifactReady(repo: string, id: string, taskSlug: s
   return (await call(() => sessionApi.sessions(repo).artifactReady({ session: ref(taskSlug, id) }))).ready;
 }
 
-// ---- the turn controls and the process (S5.3) -------------------------------------------------------------------------
+// ---- the turn controls and the process -------------------------------------------------------------------------
 
 /** The model and thinking level the next turn will use, as the views read them. */
 export const controlsOf = (c: SessionControlsMessage | undefined): SessionControls => ({

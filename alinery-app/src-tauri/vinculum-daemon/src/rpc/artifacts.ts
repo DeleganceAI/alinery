@@ -1,4 +1,4 @@
-// ArtifactService (plan S4.5): the writes of review comments and the two halves of a review handoff. The read side is the
+// ArtifactService: the writes of review comments and the two halves of a review handoff. The read side is the
 // task scope (`artifact/`, `attachment/`, `comment/`, `comment_draft/`, `review_pending/` and `artifact_tree/` rows, built
 // by `ArtifactProjector`) and BlobService for bodies. Every write is deduplicated on its MutationMeta, and the rows it changed
 // are in the store before it answers, so the reply's cursor covers them.
@@ -40,7 +40,7 @@ export type ArtifactDeps = {
   projector: ArtifactProjector;
   refresh: (rel: string) => Promise<void>;
   telemetry: Sender;
-  /** A comment, a review send or a prepared comments prompt queues the automatic backup (S4.9). */
+  /** A comment, a review send or a prepared comments prompt queues the automatic backup. */
   backups?: { publish(trigger: "post_artifact_change"): void };
   /** `getTaskExecution`: the retained state and playbook definition of a task, or `{ error }`. */
   taskExecution: (slug: string) => Json;

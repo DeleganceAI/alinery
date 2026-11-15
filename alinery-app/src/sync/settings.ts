@@ -1,4 +1,4 @@
-// A repository's settings from the daemon's `settings/_/repo` entity (plan S4.1): what `read_config_for_repo`,
+// A repository's settings from the daemon's `settings/_/repo` entity: what `read_config_for_repo`,
 // `read_scoped_settings_for_repo` and `read_repo_overrides_for_repo` answered, and the two writes that replace
 // `write_repo_overrides_for_repo` and `clear_repo_override_for_repo`. Global settings stay in the shell.
 import { create } from "@bufbuild/protobuf";

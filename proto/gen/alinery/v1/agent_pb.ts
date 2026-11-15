@@ -568,7 +568,7 @@ export const CustomizationPromptResponseSchema: GenMessage<CustomizationPromptRe
   messageDesc(file_alinery_v1_agent, 22);
 
 /**
- * The host's agent directory (S4.10, O12 a): `<config>/vinculum/config/agent/` beside the app config the daemon was started with,
+ * The host's agent directory: `<config>/vinculum/config/agent/` beside the app config the daemon was started with,
  * so each host has its own and the daemon on it owns it. It holds the model roles (`config.yml`), the skills, the extensions
  * and the user MCP servers a session of that host loads. Nothing here is executed: the inventory only reads names and metadata.
  *
@@ -663,7 +663,7 @@ export const AgentService: GenService<{
     output: typeof CustomizationPromptResponseSchema;
   },
   /**
-   * The agent's built-in tools and the state of each MCP server connection (S5.3: the JSON-lines vinculum_customizations op).
+   * The agent's built-in tools and the state of each MCP server connection (it replaced the JSON-lines vinculum_customizations op).
    *
    * VIEW
    *

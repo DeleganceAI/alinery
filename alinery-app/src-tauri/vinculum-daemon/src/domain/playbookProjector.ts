@@ -1,6 +1,6 @@
-// The playbook library's rows (plan S4.6): one `playbook/<scope>/<key>` row per definition the catalog lists, `playbook/_/picker`
+// The playbook library's rows: one `playbook/<scope>/<key>` row per definition the catalog lists, `playbook/_/picker`
 // (the repository's preferences), `playbook/_/picker-global` (the ones a window with no repository uses) and `playbook/_/library`
-// (what the scan could not read) and `playbook/_/community` (the import registry, S4.10). The library is three directories (the repository's two, the machine's one) and the compiled-in
+// (what the scan could not read) and `playbook/_/community` (the import registry). The library is three directories (the repository's two, the machine's one) and the compiled-in
 // set, not one file per row, so the whole catalog is recomputed on a change and diffed against the keys it owned; the store drops
 // an unchanged put. The feed says when to redo it; an RPC that wrote a file calls `refresh` itself, so its reply's cursor covers it.
 import { create } from "@bufbuild/protobuf";

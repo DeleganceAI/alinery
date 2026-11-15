@@ -682,7 +682,7 @@ export type SessionObservation = {
   state: SessionState | null;
   checkpoint: SemanticCheckpoint;
   transport?: SessionTransport | null;
-  /** What an attention notification calls the session: its task's name (S4.4). */
+  /** What an attention notification calls the session: its task's name. */
   attention_label?: string;
 };
 
@@ -917,7 +917,7 @@ export type TaskExecutionState = {
   max_live_sessions: number;
   enabled_steps: string[];
   auto_approve_all?: boolean;
-  /** O21: the records are the old runner's. They show as finished history, with no approve or resume. */
+  /** The records are the old runner's. They show as finished history, with no approve or resume. */
   history_only?: boolean;
   launch_defaults: LaunchChoices;
   /**

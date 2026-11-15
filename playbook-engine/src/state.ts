@@ -53,7 +53,7 @@ export interface FileRecord {
   size?: number;
 }
 
-/** What one execution consumed and published (O27). The bytes live in the execution's `objects/` directory. */
+/** What one execution consumed and published. The bytes live in the execution's `objects/` directory. */
 export interface Manifest {
   consumed: FileRecord[];
   published: FileRecord[];

@@ -113,7 +113,7 @@ export const ClearOverrideResponseSchema: GenMessage<ClearOverrideResponse> = /*
   messageDesc(file_alinery_v1_settings, 3);
 
 /**
- * The hosted-inference credential (S4.11, R-S4.11-5). The shell mints and refreshes the token (it holds the account)
+ * The hosted-inference credential. The shell mints and refreshes the token (it holds the account)
  * and sends the whole `inference.json` here; the daemon writes it, owner-only, beside its own app config, so a
  * daemon on another host gets a fresh token without a file push. ADMIN: it is a credential. The body must parse
  * as an inference file (a token, an expiry, a catalog); anything else is INVALID_ARGUMENT and nothing is written.
@@ -189,7 +189,7 @@ export const EnsureReadyResponseSchema: GenMessage<EnsureReadyResponse> = /*@__P
   messageDesc(file_alinery_v1_settings, 7);
 
 /**
- * Repository settings (S4.1). The read is the `settings/_/repo` entity (entities.proto); global settings
+ * Repository settings. The read is the `settings/_/repo` entity (entities.proto); global settings
  * stay in the shell.
  *
  * @generated from service alinery.v1.SettingsService
@@ -229,7 +229,7 @@ export const SettingsService: GenService<{
   serviceDesc(file_alinery_v1_settings, 0);
 
 /**
- * The repository half of `set_active_repo` (plan 2.3.4).
+ * The repository half of `set_active_repo`.
  *
  * @generated from service alinery.v1.RepoService
  */

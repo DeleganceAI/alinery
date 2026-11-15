@@ -1,4 +1,4 @@
-//! The daemon writes backups with the host's Info-ZIP `zip` (plan S4.9, O11 b); the shell reads the metadata of one with the
+//! The daemon writes backups with the host's Info-ZIP `zip`; the shell reads the metadata of one with the
 //! `zip` crate to check which repo it belongs to. An archive of 70,000 files is past what a library that writes no zip64 can
 //! hold (65,535 entries), so this is the case that would show the reader and the tool disagreeing.
 //!

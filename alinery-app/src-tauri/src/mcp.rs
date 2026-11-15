@@ -1,10 +1,10 @@
 //! mcp: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
-// R2: spawn (or reuse) the managed MCP child for the active repo: the daemon binary in `--mcp --serve --managed` mode (S5.1, O10 b).
+// Spawn (or reuse) the managed MCP child for the active repo: the daemon binary in `--mcp --serve --managed` mode.
 // The child lives only as long as the app (or until repo switch). It is killed on app exit.
 //
-// It calls each daemon over its RPC socket with an AGENT token this app mints (O20 c) and keeps in an owner-only endpoints file the
+// It calls each daemon over its RPC socket with an AGENT token this app mints and keeps in an owner-only endpoints file the
 // child re-reads on every call, so a repository opened or a daemon restarted after the child started is found without restarting it.
 pub(crate) fn ensure_mcp_server<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Path, restart: bool) {
     // Selection stays stable through check/stop/spawn. A stale caller for A must
@@ -93,7 +93,7 @@ pub(crate) fn ensure_mcp_server<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Pa
                 }
                 Ok(None) => {
                     *guard = Some(ManagedMcpChild { repo: repo.to_path_buf(), child });
-                    eprintln!("R2: spawned managed alinery-mcp for {}", repo.display());
+                    eprintln!("spawned managed MCP for {}", repo.display());
                 }
                 Err(e) => {
                     state.set_mcp_error(Some(format!("alinery-mcp status check failed: {e}")));
@@ -119,7 +119,7 @@ pub(crate) fn mcp_endpoints_path(app_config: &Path, ns: Option<&str>) -> Option<
 }
 
 /// The arguments that start this app's MCP over stdio for a host (Claude Desktop and the like) that runs it itself: the same endpoints file, so the
-/// host's MCP reaches the daemons of the repositories this app has open. The host does not get `alinery_send_review_handoff` (O22 a).
+/// host's MCP reaches the daemons of the repositories this app has open. The host does not get `alinery_send_review_handoff`.
 pub(crate) fn mcp_host_args(app_config: &Path, ns: Option<&str>) -> Vec<String> {
     let mut args = vec!["--mcp".to_string(), "--app-config".into(), app_config.to_string_lossy().into_owned()];
     if let Some(file) = mcp_endpoints_path(app_config, ns) {
@@ -143,7 +143,7 @@ pub(crate) fn write_mcp_endpoints(path: &Path, repos: &std::collections::BTreeMa
 }
 
 /// One AGENT token for each local repository whose daemon answers, and the endpoints file written from them. A remote repository is left out: MCP is
-/// on the daemon's host only (O20 c). Blocking. Returns how many tokens were minted.
+/// on the daemon's host only. Blocking. Returns how many tokens were minted.
 fn refresh_mcp_endpoints(app_config: &Path, known_repos: &[String]) -> Result<usize, String> {
     let dir = alinery_core::app_config_dir_of(app_config).ok_or("app config root unavailable")?;
     let ns = alineryd_socket_namespace();

@@ -1,4 +1,4 @@
-// A Pi session's transcript from `WatchTranscript` (plan 2.1.5, S3.3): the daemon sends items from an
+// A Pi session's transcript from `WatchTranscript`: the daemon sends items from an
 // index, then only what changed. This keeps the list the pane renders and resumes at its end after a drop.
 import { toJson } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";

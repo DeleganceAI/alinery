@@ -4,8 +4,8 @@ package alinery.v1;
 service AdminService {
   rpc Hello(HelloRequest) returns (HelloResponse);
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
-  rpc MintToken(MintTokenRequest) returns (MintTokenResponse);  // ADMIN (S5.1, O20 c)
-  // The sessions whose process is running, for the consent a takeover or a restart asks for (S5.3: the JSON-lines `list` op).
+  rpc MintToken(MintTokenRequest) returns (MintTokenResponse);  // ADMIN
+  // The sessions whose process is running, for the consent a takeover or a restart asks for (it replaced the JSON-lines `list` op).
   rpc LiveSessions(LiveSessionsRequest) returns (LiveSessionsResponse);  // ADMIN
   // Joining a daemon someone else started (a coworker on a shared box). RequestJoin and CollectJoin need no token: they are how a
   // client without one asks for one. A member (any holder of the daemon's own or a member token) decides with DecideJoin, and the
@@ -79,7 +79,7 @@ enum Capability {
   CAPABILITY_ACT = 2;      // commands, terminal input
   CAPABILITY_APPROVE = 3;  // approvals, auto-approve
   CAPABILITY_ADMIN = 4;    // Shutdown, daemon-wide settings
-  CAPABILITY_AGENT = 5;    // MCP: the four session tools until S5.1, then exactly the RPCs behind its tools (O18 b)
+  CAPABILITY_AGENT = 5;    // MCP: exactly the RPCs behind its tools
 }
 
 // Invariant 1: the only ways to stop a daemon. UNSPECIFIED is rejected.

@@ -1,4 +1,4 @@
-// AgentService (plan S4.10, O12 a): the host's agent directory. The directory is the one beside the app config this daemon was
+// AgentService: the host's agent directory. The directory is the one beside the app config this daemon was
 // started with, so a remote repository's host has its own, and a session on that host loads that one. The scans and writes are
 // `domain/agentDir.ts`. Writes are serialized with each other (two installs of one skill must not interleave their staging).
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";

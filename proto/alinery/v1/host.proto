@@ -2,7 +2,7 @@
 syntax = "proto3";
 package alinery.v1;
 
-// The host service (S5.2, O15 b): `alinery-vinculum-daemon --host-service`, the work a host needs while no daemon runs. The
+// The host service: `alinery-vinculum-daemon --host-service`, the work a host needs while no daemon runs. The
 // shell talks to it over ONE ssh channel per host (stdin and stdout of that process), not over the daemon's socket, so there
 // is no `service` here: gRPC needs HTTP/2 and a stdio pipe has none. A request is a HostRequest, a reply is a HostReply with
 // the same id, and both travel as `[u32 big-endian length][message]`.
@@ -158,7 +158,7 @@ message HostSpawnDaemon {
   string log = 6;
   Launch launch = 7;
   string unit = 8;               // systemd unit name; required for LAUNCH_SYSTEMD_RUN
-  reserved 9;                    // the secret file of the retired control wire: the RPC token replaced it (S5.3)
+  reserved 9;                    // the secret file of the retired control wire: the RPC token replaced it
   string rpc_secret_file = 10;   // the same for the RPC socket's bearer token
   string app_version = 11;       // the version a telemetry event carries (--app-version)
   string started_by = 12;        // how this app describes its person and machine (--started-by), for whoever else sees the daemon

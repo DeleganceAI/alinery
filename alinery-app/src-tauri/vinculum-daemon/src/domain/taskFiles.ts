@@ -1,4 +1,4 @@
-// The files of a task that the daemon reads and writes itself (plan S4.3): `task.md`, its related-task links and the
+// The files of a task that the daemon reads and writes itself: `task.md`, its related-task links and the
 // naming rules around them, ported from alinery-core `task.rs` and `task_drafts.rs`. `task.md` is TOML that serde reads
 // into `Task`; a writer here keeps every key it does not know (a Rust build one version ahead may have added some),
 // and `parseTask` is the same reader the board uses, so "readable" means the same thing in both places.

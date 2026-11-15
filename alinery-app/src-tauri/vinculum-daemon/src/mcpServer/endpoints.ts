@@ -1,4 +1,4 @@
-// Which daemon answers for which repository (plan S5.1, O20 c). An MCP a daemon launched for a harness holds one endpoint, its own
+// Which daemon answers for which repository. An MCP a daemon launched for a harness holds one endpoint, its own
 // (`ALINERY_RPC_SOCKET` and `ALINERY_RPC_TOKEN` in its environment, put there by `mcp.ts`). The shell's managed MCP is for every
 // repository the app has open: the shell mints one AGENT token per daemon and keeps them in an owner-only file this reads again on
 // each call, so a repository opened or a daemon restarted after the MCP started is found without restarting it.
@@ -16,12 +16,12 @@ export class Endpoints {
     private readonly handoff: boolean = file !== undefined,
   ) {}
 
-  /** O22 (a): `alinery_send_review_handoff` reaches two daemons, so only the shell's managed MCP offers it; a host's stdio MCP reading the same file does not. */
+  /** `alinery_send_review_handoff` reaches two daemons, so only the shell's managed MCP offers it; a host's stdio MCP reading the same file does not. */
   get offersHandoff(): boolean {
     return this.handoff;
   }
 
-  /** True for the shell's managed MCP, the only one that holds a token for more than its own daemon (O22 a). */
+  /** True for the shell's managed MCP, the only one that holds a token for more than its own daemon. */
   get spansRepos(): boolean {
     return this.file !== undefined;
   }

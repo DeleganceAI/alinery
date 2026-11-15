@@ -40,11 +40,6 @@ export const SessionRefSchema: GenMessage<SessionRef> = /*@__PURE__*/
   messageDesc(file_alinery_v1_entities, 0);
 
 /**
- * Each entity message gets its real fields in the session that first produces it (plan 2.1.4):
- * session meta S2.3 (status and attention S2.5), execution S2.4, daemon status S2.5, job S2.6, task S3.5, the rest P4. Until then
- * an entity is empty, except Task and Session, which carry the few fields S2.1's tests need to
- * tell one row from another.
- *
  * @generated from message alinery.v1.PlaybookRef
  */
 export type PlaybookRef = Message<"alinery.v1.PlaybookRef"> & {
@@ -140,7 +135,7 @@ export const BoardStepSchema: GenMessage<BoardStep> = /*@__PURE__*/
   messageDesc(file_alinery_v1_entities, 4);
 
 /**
- * What the board shows about a task that no single file holds: derived by the daemon (S3.5, rule R3)
+ * What the board shows about a task that no single file holds: derived by the daemon
  * from the task, its non-archived sessions and its playbook, and recomputed when any of them commits.
  *
  * @generated from message alinery.v1.BoardProjection
@@ -489,8 +484,7 @@ export const DraftSchema: GenMessage<Draft> = /*@__PURE__*/
 
 /**
  * One task's execution state, as `getTaskExecution` returns it (`TaskExecutionState` and the playbook
- * definition) in JSON form. S4.2 replaces the two Structs with typed fields when it moves the state
- * into execution.json; until then the entity and the RPC read are built by the same function.
+ * definition) in JSON form. The entity and the RPC read are built by the same function.
  *
  * @generated from message alinery.v1.Execution
  */
@@ -520,8 +514,8 @@ export const ExecutionSchema: GenMessage<Execution> = /*@__PURE__*/
 
 /**
  * Fields 3 and up are `SessionMeta` (alinery-core types.rs), named as in the meta.json the daemon and
- * Rust both write, so the parser (S2.3) and Rust's serde output compare field by field. `ref` comes
- * from the file's path; `status` is the live state, which S2.5 fills.
+ * Rust both write, so the parser and Rust's serde output compare field by field. `ref` comes
+ * from the file's path; `status` is the live state.
  *
  * @generated from message alinery.v1.SemanticCheckpoint
  */
@@ -640,7 +634,7 @@ export const SessionStatusSchema: GenMessage<SessionStatus> = /*@__PURE__*/
   messageDesc(file_alinery_v1_entities, 14);
 
 /**
- * The Attention doc's `wait` (plan S2.5): what the agent is waiting on, a field of the session.
+ * The Attention doc's `wait`: what the agent is waiting on, a field of the session.
  *
  * @generated from message alinery.v1.SessionWait
  */
@@ -875,7 +869,7 @@ export type Session = Message<"alinery.v1.Session"> & {
   nameError?: string | undefined;
 
   /**
-   * What an attention notification calls this session: its task's name, else the slug, else "session" (S4.4). The
+   * What an attention notification calls this session: its task's name, else the slug, else "session". The
    * shell shows the OS notification; the text comes from here, so it reads no meta file.
    *
    * @generated from field: string attention_label = 39;
@@ -967,7 +961,7 @@ export const HandoffRecordSchema: GenMessage<HandoffRecord> = /*@__PURE__*/
   messageDesc(file_alinery_v1_entities, 17);
 
 /**
- * One row of a task's artifact list (`artifact/<slug>/<name>`, S4.5), as `board::artifacts_with_metadata` made it: the visible
+ * One row of a task's artifact list (`artifact/<slug>/<name>`), as `board::artifacts_with_metadata` made it: the visible
  * files, and the files an execution has yet to write (no `modified_at_ms`). `position` is the row's place in that list's order.
  *
  * @generated from message alinery.v1.Artifact
@@ -1224,7 +1218,7 @@ export const ReviewPendingSchema: GenMessage<ReviewPending> = /*@__PURE__*/
   messageDesc(file_alinery_v1_entities, 21);
 
 /**
- * A taskless chat thread (key `chat/_/<id>`): what the rail shows beside the thread's `session/_/<id>` row (S4.4).
+ * A taskless chat thread (key `chat/_/<id>`): what the rail shows beside the thread's `session/_/<id>` row.
  *
  * @generated from message alinery.v1.ChatThread
  */
@@ -1264,9 +1258,9 @@ export const ChatThreadSchema: GenMessage<ChatThread> = /*@__PURE__*/
   messageDesc(file_alinery_v1_entities, 22);
 
 /**
- * A background job (plan 2.3.5): a child process of the daemon's binary, reported through this entity.
- * Progress arrives through Subscribe. The result's oneof numbers are fixed: backup = 10 and purge = 12 (S4.9),
- * storage = 11 (S2.6); import = 13 is S4.10's.
+ * A background job: a child process of the daemon's binary, reported through this entity.
+ * Progress arrives through Subscribe. The result's oneof numbers are fixed: backup = 10 and purge = 12,
+ * storage = 11 and import = 13.
  *
  * @generated from message alinery.v1.Job
  */
@@ -2091,7 +2085,7 @@ export const EffectiveHarnessSchema: GenMessage<EffectiveHarness> = /*@__PURE__*
   messageDesc(file_alinery_v1_entities, 41);
 
 /**
- * `settings/_/repo` (S4.1): what `read_scoped_settings_strict` and `effective_harnesses_for` answered, built from
+ * `settings/_/repo`: what `read_scoped_settings_strict` and `effective_harnesses_for` answered, built from
  * the repository's `config.toml` and `harnesses.toml` and the daemon's `app.toml`. When a file
  * is refused, as serde refuses it, only `error` is set.
  *
@@ -2151,7 +2145,7 @@ export type DaemonStatus = Message<"alinery.v1.DaemonStatus"> & {
   liveSessions: number;
 
   /**
-   * "" until S4.1 adds the host-tool check
+   * "" when the host-tool check finds nothing
    *
    * @generated from field: string host_guard_warning = 4;
    */
@@ -2165,7 +2159,7 @@ export type DaemonStatus = Message<"alinery.v1.DaemonStatus"> & {
   watchExhausted: boolean;
 
   /**
-   * Agent-state counts over live sessions (S3.1): the status dot's busy/waiting colour needs them with no poll.
+   * Agent-state counts over live sessions: the status dot's busy/waiting colour needs them with no poll.
    *
    * @generated from field: uint32 busy = 6;
    */
@@ -2230,7 +2224,7 @@ export const PlaybookDiagnosticSchema: GenMessage<PlaybookDiagnostic> = /*@__PUR
   messageDesc(file_alinery_v1_entities, 44);
 
 /**
- * One definition the library offers (`playbook/<scope>/<key>`, S4.6): bundled, global or the repository's. Only what the
+ * One definition the library offers (`playbook/<scope>/<key>`): bundled, global or the repository's. Only what the
  * catalog shows; the whole definition is `PlaybookService.Read`, because the bundled set alone is half a megabyte of prompts.
  * A definition that does not parse is still a row, with `diagnostics` and no title.
  *
@@ -2576,7 +2570,7 @@ export const CommunityPublicationSchema: GenMessage<CommunityPublication> = /*@_
   messageDesc(file_alinery_v1_entities, 53);
 
 /**
- * `playbook/_/community` (S4.10): the repository's community import registry. `error` is why it could not be read (the list is then empty).
+ * `playbook/_/community`: the repository's community import registry. `error` is why it could not be read (the list is then empty).
  *
  * @generated from message alinery.v1.PlaybookCommunity
  */
@@ -2639,7 +2633,7 @@ export const AttachmentSchema: GenMessage<Attachment> = /*@__PURE__*/
   messageDesc(file_alinery_v1_entities, 55);
 
 /**
- * One node of the artifact tree a task shows (S4.5). `kind`: owned, attachment, subtask_folder or referenced. `source`: owned,
+ * One node of the artifact tree a task shows. `kind`: owned, attachment, subtask_folder or referenced. `source`: owned,
  * parent_context, active_child or snapshot. `reveal_path` is the file's path below `.alinery/` on the daemon's machine, set on
  * every file node (not a folder), for Reveal and Copy path; a client names a file by `id` (BlobService `ArtifactNodeBlob`),
  * never by that path.

@@ -1,4 +1,4 @@
-// The sub-task lifecycle against a real repository (plan S4.8): the task page's state, the manager session, creating the
+// The sub-task lifecycle against a real repository: the task page's state, the manager session, creating the
 // child inside the reservation, and killing a child or discarding a setup. The Rust tests of `subtask.rs` are the
 // cases this keeps; each checks the files a Rust reader would find.
 import { afterEach, expect, test } from "bun:test";

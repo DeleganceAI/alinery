@@ -1,4 +1,4 @@
-// S4.2: where the engine's State lives, and what a restart, an old log, the old runner's records, another lane's task and
+// Where the engine's State lives, and what a restart, an old log, the old runner's records, another lane's task and
 // the Rust writers do to it.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -131,7 +131,7 @@ describe("recovery from execution.json alone", () => {
     const again = JSON.parse(readFileSync(join(dir, "execution.json"), "utf8"));
     expect(again.engine.executions.find((e: { step: string }) => e.step === "sum").manifest.consumed[0].sha256).toBe(original.sha256);
     expect(readFileSync(join(historyDir(repo, "fj"), sum.id, "objects", original.sha256), "utf8")).toBe("seed output");
-    // BlobService's reader (S4.5) finds what the engine really wrote: the bytes the step saw, not the edited live file.
+    // BlobService's reader finds what the engine really wrote: the bytes the step saw, not the edited live file.
     const blob = stepObjectBlob(repo, "fj", sum.id, original.sha256);
     expect(blob.read(0, blob.total).toString()).toBe("seed output");
     // The executions directory is not an artifact: nothing under artifacts/ was added for it.
@@ -175,7 +175,7 @@ describe("a task from before this change", () => {
     expect(shape(loadStored(repo, "old"))).toEqual(shape(folded));
   });
 
-  test("O21: the old runner's records and no engine state start no session, even after a restart, and the entity equals the records", async () => {
+  test("the old runner's records and no engine state start no session, even after a restart, and the entity equals the records", async () => {
     const repo = mkdtempSync(join(tmpdir(), "vinculum-o21-"));
     const records = {
       "11111111-1111-4111-8111-111111111111": { id: "11111111-1111-4111-8111-111111111111", binding_key: "k", candidate: { step_key: "seed", context_id: "root", inputs: {} }, outputs: [], lifecycle: "completed", owner_session_id: "old-s", permission: { kind: "automatic" }, receipt_id: "r1" },
@@ -292,7 +292,7 @@ describe("Rust and TypeScript writers on one repository", () => {
     }
     return repo;
   }
-  /** Task creation is TypeScript now (S4.3); Rust still reads every file it writes, which the probe rounds below check. */
+  /** Task creation is TypeScript now; Rust still reads every file it writes, which the probe rounds below check. */
   const provision = (repo: string, name: string) =>
     provisionTask(
       { repo, lane: "lane", identity: "identity" },

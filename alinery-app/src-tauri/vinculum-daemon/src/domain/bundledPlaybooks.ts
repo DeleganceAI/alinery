@@ -1,4 +1,4 @@
-// The playbooks that ship with the app (plan S4.6), embedded in the daemon the way `config.default.toml` is. The order is the
+// The playbooks that ship with the app, embedded in the daemon the way `config.default.toml` is. The order is the
 // order of alinery-core `BUNDLED_PLAYBOOKS`; `playbookLibrary.test.ts` checks the keys against the `playbooks/` directory.
 import p0 from "../../../playbooks/superdevelop/playbook.md" with { type: "text" };
 import p1 from "../../../playbooks/one-shot/playbook.md" with { type: "text" };

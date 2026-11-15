@@ -4,7 +4,7 @@ package alinery.v1;
 
 import "alinery/v1/common.proto";
 
-// Execution approvals (S4.2). The read side is the `execution/<slug>/<slug>` entity (entities.proto).
+// Execution approvals. The read side is the `execution/<slug>/<slug>` entity (entities.proto).
 // The engine decides everything else about an execution; the daemon only passes the person's permission on.
 service ExecutionService {
   rpc AllowCompletion(AllowCompletionRequest) returns (AllowCompletionResponse);  // APPROVE

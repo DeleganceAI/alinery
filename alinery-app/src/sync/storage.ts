@@ -1,4 +1,4 @@
-// Storage and backup (plan S4.9). The scan, the backup and the purge are jobs of the repository's daemon, so a repository on
+// Storage and backup. The scan, the backup and the purge are jobs of the repository's daemon, so a repository on
 // another machine does them on its own disk; the lists and checks around a backup are unary calls. Restore is the one step the
 // shell keeps (it stops the daemon first, 2.3.5), so the page asks the daemon to verify the archive and then calls `ipc.restoreBackup`.
 import { Code, ConnectError, createClient } from "@connectrpc/connect";

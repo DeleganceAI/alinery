@@ -1,4 +1,4 @@
-// MCP's connection to one daemon (plan S5.1, O10 b, O20 c): the generated gRPC client over the daemon's unix socket with a minted
+// MCP's connection to one daemon: the generated gRPC client over the daemon's unix socket with a minted
 // AGENT token. It reads with a one-shot subscription (the WA: no unary read RPC exists for MCP) and never calls `Shutdown`, so a
 // protocol mismatch ends the call and touches nothing (`check-no-auto-session-kill.sh` scans this folder).
 import { randomUUID } from "node:crypto";
@@ -39,7 +39,7 @@ export class DaemonConnection {
   private readonly clients = new Map<DescService, unknown>();
   private checked = false;
   /** The token for the next request. The managed MCP's file is re-minted every 30 s, so each request asks again instead of holding
-   * the one a tool call started with (R-S5.1-4); `connection()` points this at the endpoints file. */
+   * the one a tool call started with; `connection()` points this at the endpoints file. */
   tokenSource: () => string;
 
   constructor(

@@ -66,7 +66,7 @@ fn mcp_stem(namespace: Option<&str>) -> String {
     }
 }
 
-/// The daemon's gRPC socket (plan T1): `.alinery/rpc.sock` or `.alinery/rpc-<ns>.sock`, the lane naming of `alineryd[-ns].sock`.
+/// The daemon's gRPC socket: `.alinery/rpc.sock` or `.alinery/rpc-<ns>.sock`, the lane naming of `alineryd[-ns].sock`.
 pub fn rpc_socket_path(repo: &Path, namespace: Option<&str>) -> PathBuf {
     let clean = namespace
         .unwrap_or("")
@@ -420,7 +420,7 @@ mod tests {
         assert_eq!(alineryd_lock_path(repo, Some("")), alineryd_lock_path(repo, None));
     }
 
-    // D1: the namespaced lane survives B2 as a debug-only escape hatch so
+    // The namespaced lane survives as a debug-only escape hatch so
     // `npm run tauri dev` does not fight an installed alinery over the same repo.
     #[test]
     fn debug_lane_namespace_stays_distinct_from_the_product_lane() {

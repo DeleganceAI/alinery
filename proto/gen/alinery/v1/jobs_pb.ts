@@ -178,8 +178,8 @@ export const StartPurgeResponseSchema: GenMessage<StartPurgeResponse> = /*@__PUR
   messageDesc(file_alinery_v1_jobs, 7);
 
 /**
- * One Start RPC per kind (O24 b), so a capability is per RPC. StartBackup is ACT, StartPurge is ADMIN (S4.9);
- * S4.10 adds StartImport. The Job entity (entities.proto) carries progress and the result.
+ * One Start RPC per kind, so a capability is per RPC. StartBackup is ACT, StartPurge is ADMIN;
+ * The Job entity (entities.proto) carries progress and the result.
  *
  * @generated from service alinery.v1.JobService
  */

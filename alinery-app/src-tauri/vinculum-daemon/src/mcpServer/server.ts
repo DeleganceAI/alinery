@@ -1,4 +1,4 @@
-// The MCP server itself: JSON-RPC over stdio, or over a unix socket the app's managed child serves (plan S5.1, O10 b). It replaces the Rust
+// The MCP server itself: JSON-RPC over stdio, or over a unix socket the app's managed child serves. It replaces the Rust
 // `alinery-mcp` binary's two modes; the tools are in `handlers.ts` and every one of them is a call on the daemon.
 import { existsSync, unlinkSync } from "node:fs";
 import { createServer, type Socket } from "node:net";

@@ -1,4 +1,4 @@
-// The execution entity (plan 2.2.8 feed 4, S2.4). It is what `getTaskExecution` returns, so the RPC
+// The execution entity. It is what `getTaskExecution` returns, so the RPC
 // read and the delta cannot differ: both come from that one builder.
 import { create, type JsonObject } from "@bufbuild/protobuf";
 import { type Entity, EntitySchema } from "alinery-proto/alinery/v1/entities_pb";

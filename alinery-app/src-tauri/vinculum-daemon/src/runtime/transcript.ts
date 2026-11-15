@@ -1,4 +1,4 @@
-// WatchTranscript (plan 2.1.5, S3.3): the pane's items from an index, then only what changed.
+// WatchTranscript: the pane's items from an index, then only what changed.
 // The items are `formatTranscript`'s list; an item's index is its position in that list.
 import type { Context } from "@earendil-works/chord/context";
 import { watchEvents, type Harness } from "@earendil-works/pi-durable";
@@ -18,7 +18,7 @@ export type TranscriptFrame = { items: TranscriptReply[]; nextItem: number; repl
 
 /** Streaming deltas arrive faster than a pane needs; the daemon already folds the partial about every 100 ms. */
 export const COALESCE_MS = 100;
-/** Only if the events stream ends under us: the last resort of the fallback order (plan S3.3 Research). */
+/** Only if the events stream ends under us: the last resort of the fallback order. */
 export const POLL_MS = 250;
 
 /**

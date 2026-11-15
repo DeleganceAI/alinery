@@ -1,4 +1,4 @@
-// The other end of the runner (plan 2.3.5): `main.ts` hands `--job <kind>` here before any daemon
+// The other end of the runner: `main.ts` hands `--job <kind>` here before any daemon
 // start-up. Params arrive as JSON on stdin; the child answers with JSON lines on stdout, one of
 // {progress}, {result} or {error}. A kind that throws is an {error} line and exit code 1.
 import { type BackupSettings, type BackupTrigger, createBackup, restoreBackup } from "../domain/backup.ts";
@@ -26,7 +26,7 @@ const HANDLERS: Record<string, Handler> = {
 const emit = (line: object) => process.stdout.write(`${JSON.stringify(line)}\n`);
 
 /**
- * `--restore-backup <repo> <archive>`: the one-shot restore (plan 2.3.5). It replaces the files under a daemon, so it runs only
+ * `--restore-backup <repo> <archive>`: the one-shot restore. It replaces the files under a daemon, so it runs only
  * after the shell has stopped that daemon, and it is not a job: nothing subscribes to it. One JSON line on stdout, `{result}` or `{error}`.
  */
 export async function runRestoreBackup(repo: string, archive: string): Promise<number> {

@@ -1,4 +1,4 @@
-// The conformance cases of the task creator (plan S4.3): the Rust `provision_task` wrote `expected.json` for each
+// The conformance cases of the task creator: the Rust `provision_task` wrote `expected.json` for each
 // `conformance/task_create/<case>/command.json`, and `provisionTask` must leave the same task behind. The task record
 // is compared without its clock and its paths, `execution.json` by its shape.
 import { afterEach, expect, test } from "bun:test";

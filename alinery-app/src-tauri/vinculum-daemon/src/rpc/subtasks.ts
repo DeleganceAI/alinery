@@ -1,4 +1,4 @@
-// SubtaskService (plan S4.8): the sub-task controls of a task page, served by the daemon that owns the files and the sessions,
+// SubtaskService: the sub-task controls of a task page, served by the daemon that owns the files and the sessions,
 // so a repository on another machine answers the same calls. The state is a read; starting a manager and discarding are
 // writes that name their mutation, and each answers with a cursor that covers the files it changed.
 import type { ServiceImpl } from "@connectrpc/connect";
@@ -22,7 +22,7 @@ type Struct = { [key: string]: JsonValue };
 export function subtaskService(c: SessionControl, dedupe: Dedupe, store: Store, tasks?: TaskDeps): ServiceImpl<typeof SubtaskService> {
   const applied = () => ({ cursor: store.cursor() });
   return {
-    // The manager agent's own calls (S5.1). The child is created inside the parent's reservation, as the page's manager flow does.
+    // The manager agent's own calls. The child is created inside the parent's reservation, as the page's manager flow does.
     createSubtask: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return dedupe.once(metaOf(req.meta), () =>

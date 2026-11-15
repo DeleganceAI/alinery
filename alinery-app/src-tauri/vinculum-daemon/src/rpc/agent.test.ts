@@ -1,4 +1,4 @@
-// AgentService (plan S4.10): the host's agent directory through the RPC. The directory is the one beside the app config the daemon was
+// AgentService: the host's agent directory through the RPC. The directory is the one beside the app config the daemon was
 // started with; the file logic is `domain/agentDir.test.ts`. Here: the wire, the staged upload, the dedupe and the capability.
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";

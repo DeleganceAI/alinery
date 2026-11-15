@@ -250,7 +250,7 @@ export const ArtifactNodeBlobSchema: GenMessage<ArtifactNodeBlob> = /*@__PURE__*
   messageDesc(file_alinery_v1_blobs, 8);
 
 /**
- * A file an execution kept when it started or finished (O27): `tasks/<slug>/executions/<execution_id>/objects/<sha256>`, read-only.
+ * A file an execution kept when it started or finished: `tasks/<slug>/executions/<execution_id>/objects/<sha256>`, read-only.
  * The manifest in the execution's engine state names the hashes. Gone when the task is archived (NOT_FOUND).
  *
  * @generated from message alinery.v1.StepObjectBlob
@@ -595,8 +595,8 @@ export const CommitUploadResponseSchema: GenMessage<CommitUploadResponse> = /*@_
 
 /**
  * Blobs never take a path from the client. A `BlobRef` names the thing and the daemon resolves and checks the path,
- * so a client cannot read or write outside `.alinery/`. S4.3 builds the upload half and the reads of attachments and
- * draft images; S4.5 adds artifact bodies, tree nodes and the files a step kept.
+ * so a client cannot read or write outside `.alinery/`. It uploads attachments and draft images and reads
+ * them back, along with artifact bodies, tree nodes and the files a step kept.
  *
  * @generated from service alinery.v1.BlobService
  */

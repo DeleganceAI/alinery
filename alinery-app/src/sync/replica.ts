@@ -1,4 +1,4 @@
-// Client replica of one daemon scope (plan 2.2.10). `apply` is the tested core of the spike's
+// Client replica of one daemon scope. `apply` is the tested core of the spike's
 // `Replica`; `runReplica` adds the resubscribe loop. No persistence on desktop.
 import type { Cursor } from "alinery-proto/alinery/v1/common_pb";
 import type { Entity } from "alinery-proto/alinery/v1/entities_pb";

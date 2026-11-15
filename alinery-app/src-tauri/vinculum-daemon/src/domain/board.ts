@@ -1,4 +1,4 @@
-// The board's derived fields (plan S3.5, rule R3): what `board_task` and `resolve_task_activity_for_repo`
+// The board's derived fields: what `board_task` and `resolve_task_activity_for_repo`
 // computed from files and the app's polled session states, now computed here from the store's Session
 // rows and recomputed whenever one of the task's inputs commits. `decorate` fills `Task.board` and
 // `Task.activity` on a task row; `dependents` says which task.md to re-read when another file changes,

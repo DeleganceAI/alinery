@@ -1,4 +1,4 @@
-// Human review comments on a task's artifacts (plan S4.5): the comment, draft and review-pending files, and the prepared
+// Human review comments on a task's artifacts: the comment, draft and review-pending files, and the prepared
 // "address these comments" prompt. Ports alinery-core `artifact_comments.rs` byte for byte where a file is written: the
 // comments markdown is what an agent reads, and its hash is what proves the prompt a person sent is the one on disk.
 // Everything here is synchronous, so two calls cannot interleave; the files are written atomically.

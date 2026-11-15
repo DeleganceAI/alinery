@@ -1,4 +1,4 @@
-// The cases of core's `git_actions` tests (plan S4.7), run against temporary repositories: the source branches, the compare URL,
+// The cases of core's `git_actions` tests, run against temporary repositories: the source branches, the compare URL,
 // commit, push, remove, the PR link writes, and the refs that keep an execution's files. A GIT_DIR in the daemon's own
 // environment is set for the whole file, so a call that skipped the scrub in platform/git.ts would act on the wrong repository.
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";

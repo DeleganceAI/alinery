@@ -8,7 +8,7 @@ import "alinery/v1/tasks.proto";
 import "google/protobuf/struct.proto";
 
 // Pi sessions have transcripts, not just bytes. The read side of a session is the `session/<slug>/<id>` entity; the
-// unary calls are its writes (S4.4), each with MutationMeta first, and they replace the JSON-lines ops of the same job.
+// unary calls are its writes, each with MutationMeta first, and they replace the JSON-lines ops of the same job.
 // The history reads are one-off byte answers, not entities.
 service SessionService {
   rpc WatchTranscript(WatchTranscriptRequest) returns (stream WatchTranscriptResponse);  // VIEW
@@ -24,7 +24,7 @@ service SessionService {
   rpc ReadHistory(ReadHistoryRequest) returns (ReadHistoryResponse);                      // VIEW
   rpc ReadVinculumWindow(ReadVinculumWindowRequest) returns (ReadVinculumWindowResponse); // VIEW
   rpc ArtifactReady(ArtifactReadyRequest) returns (ArtifactReadyResponse);                // VIEW
-  // The turn controls of a live harness session (S5.3: the JSON-lines prompt, abort, set_model and set_thinking_level ops).
+  // The turn controls of a live harness session (they replaced the JSON-lines prompt, abort, set_model and set_thinking_level ops).
   rpc PromptSession(PromptSessionRequest) returns (PromptSessionResponse);                // ACT
   rpc AbortSession(AbortSessionRequest) returns (AbortSessionResponse);                   // ACT
   rpc SetSessionModel(SetSessionModelRequest) returns (SetSessionModelResponse);          // ACT

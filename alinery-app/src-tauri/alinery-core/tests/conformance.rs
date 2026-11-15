@@ -1,4 +1,4 @@
-//! Conformance cases shared with the daemon's TypeScript parsers (plan S2.3).
+//! Conformance cases shared with the daemon's TypeScript parsers.
 //!
 //! `conformance/<domain>/<case>/input/` is a small `.alinery` tree and `expected.json` is today's serde
 //! JSON of what the Rust reader makes of it, keyed by the store key. The daemon's `bun test` runs its
@@ -149,12 +149,12 @@ fn rust_readers_match_expected_json() {
     let mut cases = 0;
     for domain in fs::read_dir(root()).unwrap().flatten().filter(|e| e.path().is_dir()) {
         let domain_name = domain.file_name().to_string_lossy().into_owned();
-        // `board`: the derived fields have one implementation now (the daemon's, rule R3). Its cases were written by the
+        // `board`: the derived fields have one implementation now (the daemon's). Its cases were written by the
         // Rust `board_task` before that was deleted, and the daemon's `bun test` still checks them.
         // `chat`, `artifact_comments` and `artifact_list` the same way: the Rust copies are gone and the daemon's `bun test`
         // still checks their cases against the `expected.json` written from them.
         // `session_meta`, `settings`, `settings_write`, `task_create`, `history`, `artifact_tree` and `playbook`: the Rust readers and
-        // writers were deleted with `alinery-mcp`'s tools (S5.1), the last callers; the daemon's `bun test` checks these cases.
+        // writers were deleted with `alinery-mcp`'s tools, the last callers; the daemon's `bun test` checks these cases.
         if matches!(
             domain_name.as_str(),
             "board" | "chat" | "artifact_comments" | "artifact_list" | "session_meta" | "settings" | "settings_write" | "task_create" | "history" | "artifact_tree" | "playbook"

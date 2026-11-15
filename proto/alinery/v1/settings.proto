@@ -5,7 +5,7 @@ package alinery.v1;
 import "alinery/v1/common.proto";
 import "alinery/v1/entities.proto";
 
-// Repository settings (S4.1). The read is the `settings/_/repo` entity (entities.proto); global settings
+// Repository settings. The read is the `settings/_/repo` entity (entities.proto); global settings
 // stay in the shell.
 service SettingsService {
   rpc WriteOverrides(WriteOverridesRequest) returns (WriteOverridesResponse);  // ACT
@@ -30,7 +30,7 @@ message ClearOverrideResponse {
   Applied applied = 1;
 }
 
-// The hosted-inference credential (S4.11, R-S4.11-5). The shell mints and refreshes the token (it holds the account)
+// The hosted-inference credential. The shell mints and refreshes the token (it holds the account)
 // and sends the whole `inference.json` here; the daemon writes it, owner-only, beside its own app config, so a
 // daemon on another host gets a fresh token without a file push. ADMIN: it is a credential. The body must parse
 // as an inference file (a token, an expiry, a catalog); anything else is INVALID_ARGUMENT and nothing is written.
@@ -40,7 +40,7 @@ message WriteHostedInferenceRequest {
 }
 message WriteHostedInferenceResponse {}
 
-// The repository half of `set_active_repo` (plan 2.3.4).
+// The repository half of `set_active_repo`.
 service RepoService {
   rpc EnsureReady(EnsureReadyRequest) returns (EnsureReadyResponse);  // ADMIN
 }

@@ -1,4 +1,4 @@
-// Provider sign-in, custom providers and the model list through ProviderService (plan S4.12). The daemon owns the credential
+// Provider sign-in, custom providers and the model list through ProviderService. The daemon owns the credential
 // files, so a repository on another machine signs in on that machine and lists its models. Which daemon: the repository a call
 // names; with none, the active repository, else the first local one the app knows (the agent directory's rule). The browser
 // stays here: the page opens an `auth_url` event with the shell's `open_url`, the daemon holds the poll.

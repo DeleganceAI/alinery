@@ -4,8 +4,8 @@ package alinery.v1;
 
 import "alinery/v1/entities.proto";
 
-// A no-harness shell's bytes (plan 2.1.5). Attach streams output; input comes back as unary Write calls
-// because a fetch has no request stream (O8 a). The daemon keeps each attach's writes in input_seq order.
+// A no-harness shell's bytes. Attach streams output; input comes back as unary Write calls
+// because a fetch has no request stream. The daemon keeps each attach's writes in input_seq order.
 service TerminalService {
   rpc Attach(AttachRequest) returns (stream AttachResponse);  // VIEW; read-only unless the credential has ACT
   rpc Write(WriteRequest) returns (WriteResponse);            // ACT

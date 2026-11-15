@@ -27,7 +27,7 @@
 #      up to the prompt. A declined install touches nothing: no daemon, no session, no
 #      bundle, no mv of `.alinery` or app-support dirs.
 #
-# WHAT THE INSTALLER CAN ASK A DAEMON (plan S5.3). A daemon serves the typed alinery.v1 wire
+# WHAT THE INSTALLER CAN ASK A DAEMON. A daemon serves the typed alinery.v1 wire
 # on `<repo>/.alinery/rpc.sock` and nothing else; every call on it needs a bearer token the
 # installer does not hold (it is neither the app nor a minted agent). So against a current
 # daemon the installer does three things without speaking the wire: it CONNECTS to the socket
@@ -195,7 +195,7 @@ first_live_daemon_socket() {
 ALINERYD_PROCESS_PATTERN='(^|[[:space:]/])(alinery-vinculum-daemon|alineryd)([[:space:]]|$)'
 
 is_product_daemon_ps_line() {
-  # The daemon binary also runs the MCP server (`--mcp`, S5.1): a harness's or the app's MCP child carries the same
+  # The daemon binary also runs the MCP server (`--mcp`): a harness's or the app's MCP child carries the same
   # `--repo` and is not a daemon, so it is neither counted nor shut down.
   printf '%s' "${1-}" | grep -qE "$ALINERYD_PROCESS_PATTERN" && ! printf '%s' "${1-}" | grep -qE '[[:space:]]--mcp([[:space:]]|$)'
 }

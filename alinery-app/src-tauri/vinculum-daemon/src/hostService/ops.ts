@@ -1,4 +1,4 @@
-// What a host needs while no daemon runs (plan S5.2, O15 b), ported from alinery-core `repo_service.rs`, `git.rs` (the folder
+// What a host needs while no daemon runs, ported from alinery-core `repo_service.rs`, `git.rs` (the folder
 // classifier) and `daemon_client.rs` (`wait_for_daemon_gone`, `daemon_command`). Each function takes plain values and either
 // returns or throws an Error whose message is the sentence the shell shows; `serve.ts` is the wire around them.
 import { closeSync, type Dirent, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync } from "node:fs";

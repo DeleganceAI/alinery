@@ -1,4 +1,4 @@
-// A task the person just created, shown before its row arrives (plan S4.3, "create shows the card at once"). The daemon
+// A task the person just created, shown before its row arrives. The daemon
 // answers a create with the stored task and the cursor the write was applied at; until the replica reaches that cursor
 // the card comes from here, through the same `Overlay` every optimistic write uses, and once the stream carries the
 // task's own row the card is dropped, so the task appears exactly once.

@@ -1,4 +1,4 @@
-// The webview half of the daemon bridge (plan 2.1.9). `bridgeFetch` turns the frames the shell
+// The webview half of the daemon bridge. `bridgeFetch` turns the frames the shell
 // sends on a Channel into a fetch `Response`, so a stock connect-web client works unchanged;
 // `grpcWebFetch` adds the two gRPC-web differences. It imports nothing from Tauri:
 // the one native call is `daemonRpc`, which `ipc.ts` provides.

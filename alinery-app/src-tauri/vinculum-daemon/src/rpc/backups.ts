@@ -1,4 +1,4 @@
-// BackupService (plan S4.9): the reads and checks around a backup. The daemon runs `zip` and `unzip` where the repository lives,
+// BackupService: the reads and checks around a backup. The daemon runs `zip` and `unzip` where the repository lives,
 // so a repository on another machine lists and checks the archives on its own disk.
 import { dirname } from "node:path";
 import { realpathSync } from "node:fs";

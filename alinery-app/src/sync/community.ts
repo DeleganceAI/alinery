@@ -1,4 +1,4 @@
-// The community library's imports (plan S4.10). The registry of what a repository downloaded is the daemon's `playbook/_/community`
+// The community library's imports. The registry of what a repository downloaded is the daemon's `playbook/_/community`
 // row, and importing, updating and forgetting are its `PlaybookService` calls, so a repository on another machine keeps its own.
 // This machine's account does the network half through `ipc`: a package is downloaded here, staged with the repository's daemon
 // (`BlobService`), and named in the import call. These keep the names and result shapes the library view already reads.

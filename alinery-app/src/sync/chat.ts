@@ -1,4 +1,4 @@
-// Chat threads (plan S4.4). The rail is the chat scope of each open repo: a thread is its `session/_/<id>` row beside its
+// Chat threads. The rail is the chat scope of each open repo: a thread is its `session/_/<id>` row beside its
 // `chat/_/<id>` row, so a thread another window made, a rename and an archive all show without a poll. The writes are
 // ChatService calls; a thread's attachments and images travel through BlobService.
 import { create } from "@bufbuild/protobuf";

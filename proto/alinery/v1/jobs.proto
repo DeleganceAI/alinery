@@ -4,8 +4,8 @@ package alinery.v1;
 
 import "alinery/v1/common.proto";
 
-// One Start RPC per kind (O24 b), so a capability is per RPC. StartBackup is ACT, StartPurge is ADMIN (S4.9);
-// S4.10 adds StartImport. The Job entity (entities.proto) carries progress and the result.
+// One Start RPC per kind, so a capability is per RPC. StartBackup is ACT, StartPurge is ADMIN;
+// The Job entity (entities.proto) carries progress and the result.
 service JobService {
   rpc StartStorageScan(StartStorageScanRequest) returns (StartStorageScanResponse);  // ACT
   rpc StartBackup(StartBackupRequest) returns (StartBackupResponse);                // ACT

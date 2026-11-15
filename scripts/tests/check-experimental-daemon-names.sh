@@ -9,7 +9,7 @@ fails=0
 fail() { echo "FAIL - $1" >&2; fails=$((fails + 1)); }
 
 EXT="$(python3 -c 'import json,sys; print(",".join(json.load(open(sys.argv[1]))["bundle"]["externalBin"]))' "$TAURI")"
-# The MCP server and the host service are modes of this one binary (S5.1, S5.2); there is no second sidecar.
+# The MCP server and the host service are modes of this one binary; there is no second sidecar.
 if [ "$EXT" != "alinery-vinculum-daemon" ]; then
   fail "externalBin must be alinery-vinculum-daemon alone, got: $EXT"
 else
