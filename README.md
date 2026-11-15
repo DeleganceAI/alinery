@@ -24,7 +24,7 @@ Alinery puts a team of agents to work on a Playbook: a process that says who doe
 
 ## Install
 
-For **macOS on Apple Silicon** and **Linux on x86_64**:
+For macOS on Apple Silicon and Linux on x86_64:
 
 ```bash
 curl -fsSL https://cdn.alinery.ai/install.sh | bash
@@ -38,11 +38,11 @@ Alinery is built for slower, deeper work with AI. Human review is part of the Pl
 
 Work in the wrong direction still has to be reviewed, and a large pile of generated code creates pressure to salvage an approach that should be reconsidered. Agreeing early avoids most of that.
 
-- **Organize by task.** The investigation, decisions, implementation, and review stay together as the work moves through sessions.
-- **Review artifacts and code.** Chatting with an agent directly is a low-level tool for debugging and intervention. Most of your attention belongs on the work it produces and the decisions that work needs.
-- **Make the process your own.** Customize Playbooks so you can understand, inspect, and steer the process the agents follow.
-- **Build resonant software.** We want Alinery to be resonant software, as the [Resonant Computing Manifesto](https://resonantcomputing.org/) describes it.
-- **Build confidence through process.** Much knowledge work, software design included, has outcomes you cannot know in advance. For complex, consequential tasks, a Playbook gives agents a deliberate sequence of investigation, decisions, and review, which is a better basis for trusting the result than the result alone.
+- Organize by task. The investigation, decisions, implementation, and review stay together as the work moves through sessions.
+- Review artifacts and code. Chatting with an agent directly is a low-level tool for debugging and intervention. Most of your attention belongs on the work it produces and the decisions that work needs.
+- Make the process your own. Customize Playbooks so you can understand, inspect, and steer the process the agents follow.
+- Build resonant software. We want Alinery to be resonant software, as the [Resonant Computing Manifesto](https://resonantcomputing.org/) describes it.
+- Build confidence through process. Much knowledge work, software design included, has outcomes you cannot know in advance. For complex, consequential tasks, a Playbook gives agents a deliberate sequence of investigation, decisions, and review, which is a better basis for trusting the result than the result alone.
 
 [Read the project vision →](VISION.md)
 
@@ -50,14 +50,14 @@ Work in the wrong direction still has to be reviewed, and a large pile of genera
 
 | Concept | What it gives you |
 | --- | --- |
-| **Task** | One place for the work, its agent sessions, decisions, and artifacts |
-| **Playbook** | A reusable process with defined Steps and review points |
-| **Session** | An agent or terminal session; a task can have many |
-| **Artifact** | A numbered Markdown output to inspect, comment on, and use in later Steps |
-| **Worktree** | An optional isolated Git checkout and branch for a task |
-| **Grid** | Views of tasks grouped by their current Playbook Step |
+| Task | One place for the work, its agent sessions, decisions, and artifacts |
+| Playbook | A reusable process with defined Steps and review points |
+| Session | An agent or terminal session; a task can have many |
+| Artifact | A numbered Markdown output to inspect, comment on, and use in later Steps |
+| Worktree | An optional isolated Git checkout and branch for a task |
+| Grid | Views of tasks grouped by their current Playbook Step |
 
-The default **SuperDevelop** Playbook takes a change through:
+The default SuperDevelop Playbook takes a change through:
 
 ```text
 Clarify → Investigate → Decide → Plan → Define Tests → Build → Prepare Review
@@ -65,11 +65,11 @@ Clarify → Investigate → Decide → Plan → Define Tests → Build → Prepa
 
 Review the decision before Plan starts. Other bundled Playbooks cover one-shot implementation, code review, bug hunting, and free-form sessions. **Build a New Playbook** is a Playbook for making Playbooks: it defines, drafts, and refines a new one, then saves it to your global or repository library once you approve. It is in the bundled list and the new-task picker.
 
-**Images and files at creation.** Paste clipboard images into Description, Evidence / pointers, or the Attachments input on New task. Each image shows a preview where supported, its name and size, and a Remove button. Accepted images and files are copied into the task's `artifacts/attachments/` directory, which Task Detail's Attachments view can reveal. The limit is 25 MiB per file and 100 MiB per creation; a rejected file is reported and the valid ones stay. URLs stay pointers and are never fetched. Pasted images are not saved with text drafts: Create attaches them, and Clear draft or leaving the form discards them.
+When you create a task, paste clipboard images into Description, Evidence / pointers, or the Attachments input on New task. Each image shows a preview where supported, its name and size, and a Remove button. Accepted images and files are copied into the task's `artifacts/attachments/` directory, which Task Detail's Attachments view can reveal. The limit is 25 MiB per file and 100 MiB per creation; a rejected file is reported and the valid ones stay. URLs stay pointers and are never fetched. Pasted images are not saved with text drafts: Create attaches them, and Clear draft or leaving the form discards them.
 
-**Sessions survive app quit.** A per-repository daemon owns the agent and terminal sessions. Close the app with sessions running and they reconnect, scrollback included, when you return. Stopping them is always your choice; the quit dialog offers **Quit & close all repos** next to leaving them running.
+Sessions survive app quit: a per-repository daemon owns the agent and terminal sessions. Close the app with sessions running and they reconnect, scrollback included, when you return. Stopping them is always your choice; the quit dialog offers **Quit & close all repos** next to leaving them running.
 
-**Editable work names.** An agent in a task session suggests a short name for its work early in an ordinary turn, once it understands the task. The working agent does this itself, with no separate naming model or upload; if the model is unavailable, the session stays unnamed. Names appear beside status in the task's session table, the global session list, the session header, and search, along with the task and execution type.
+An agent in a task session suggests a short name for its work early in an ordinary turn, once it understands the task. The working agent does this itself, with no separate naming model or upload; if the model is unavailable, the session stays unnamed. Names appear beside status in the task's session table, the global session list, the session header, and search, along with the task and execution type.
 
 Use **Rename session** to correct the name of any retained task session, including never-started, exited, archived, and Terminal sessions, without starting it. Names are trimmed single-line text of at most 40 Unicode characters (suggested names aim for under 30). Your correction always wins over later suggestions. Names are stored apart from session lifecycle data and never change a session ID or execution state. Terminal names are manual only.
 
@@ -83,9 +83,9 @@ The Grid's saved-progress notice can be dismissed. It stays dismissed for the sa
 
 Completion grants, queued starts, and starting or recovering a primary execution still need a live daemon, with the same ownership checks. Missing live status does not prove a session stopped or finished. Missing or corrupt saved data is reported as a storage error, never shown as an empty execution or replaced with the current playbook library's version.
 
-**GitHub pull requests.** Task detail shows a clickable indicator for the task branch's pull request: green when open, purple when merged, gray when closed without merging. Clicking opens the pull request in your browser and does nothing to the task. Lookups use your GitHub CLI connection (`gh`) in the background, at most four tasks at a time per batch. Results are shared between views and cached for 60 seconds, and refresh while a view that shows them is open and visible. A discovered pull request link survives removing the branch or worktree. A failed lookup shows an unavailable indicator, or marks the last known status stale. Compare links do not count as pull requests, and discovery is GitHub only. In the Grid, turn on **pull request** under **Card properties** to show the same icon in any card mode. It is off by default and saved per Grid view, and a disabled property or an inactive Grid tab requests no refreshes.
+Task detail shows a clickable indicator for the task branch's GitHub pull request: green when open, purple when merged, gray when closed without merging. Clicking opens the pull request in your browser and does nothing to the task. Lookups use your GitHub CLI connection (`gh`) in the background, at most four tasks at a time per batch. Results are shared between views and cached for 60 seconds, and refresh while a view that shows them is open and visible. A discovered pull request link survives removing the branch or worktree. A failed lookup shows an unavailable indicator, or marks the last known status stale. Compare links do not count as pull requests, and discovery is GitHub only. In the Grid, turn on **pull request** under **Card properties** to show the same icon in any card mode. It is off by default and saved per Grid view, and a disabled property or an inactive Grid tab requests no refreshes.
 
-**Grid settings and presets.** The gear adjusts layout, filters, card properties, and tile width (up to 960px). Detailed and compact cards show every enabled property and scroll when their contents outgrow the fixed tile height. Icon-only mode hides text. Draft tasks carry a Draft label and open their saved creation form.
+The Grid's gear adjusts layout, filters, card properties, and tile width (up to 960px). Detailed and compact cards show every enabled property and scroll when their contents outgrow the fixed tile height. Icon-only mode hides text. Draft tasks carry a Draft label and open their saved creation form.
 
 On a fresh workspace the default Grid view, Canvas, starts with **Progress lanes**: playbook steps left to right, every step label, no grouping, repository fill, attention borders, manual lane order, compact cards, all tasks, fixed brightness, and archives hidden. Tiles are 150 × 78px, row and column spacing is 10 and 8px, and the first column is 190px. Every card property except playbook is on. Saved Grid layouts are restored as they were, and additional Grid tabs start from the Step Kanban layout.
 
@@ -128,7 +128,7 @@ npm run tauri dev
 
 `npm run tauri dev` compiles the daemon (`alinery-vinculum-daemon`) with your Bun before it launches; without Bun it prints a line and agent sessions will not start. To fetch the pinned Bun and compile the daemon by hand, run `./scripts/dev-fetch-bun.sh` from the repository root. It also builds the runtimes Alinery installs on SSH hosts: the first run downloads Bun's cross-compile targets, and a failure there only warns.
 
-Run checks from the **repository root**:
+Run checks from the repository root:
 
 ```bash
 ./scripts/check.sh --quick    # lint, typecheck, tests, source gates
@@ -138,9 +138,9 @@ Run checks from the **repository root**:
 <details>
 <summary><strong>Development instances and build notes</strong></summary>
 
-`npm run tauri dev` launches **Alinery Dev**. It takes port `1420` when that port is free, and otherwise the next free local port, with Vite and Tauri on the same URL. Set `ALINERY_DEV_PORT` to a free port when a test needs a fixed value. Each source checkout or worktree keeps its own app state at `~/Library/Application Support/ai.delegance.alinery.dev/instances/<source-root-hash>/app.toml`, and the bottom **ALINERY SOURCE** bar shows the full path of the worktree that launched it. Separate worktrees can run at the same time against different target repositories; two instances cannot own the same target repository at once.
+`npm run tauri dev` launches Alinery Dev. It takes port `1420` when that port is free, and otherwise the next free local port, with Vite and Tauri on the same URL. Set `ALINERY_DEV_PORT` to a free port when a test needs a fixed value. Each source checkout or worktree keeps its own app state at `~/Library/Application Support/ai.delegance.alinery.dev/instances/<source-root-hash>/app.toml`, and the bottom **ALINERY SOURCE** bar shows the full path of the worktree that launched it. Separate worktrees can run at the same time against different target repositories; two instances cannot own the same target repository at once.
 
-Builds and installs are **Alinery** and use the production `~/Library/Application Support/ai.delegance.alinery/app.toml`. A repository's data lives in its own `.alinery/` whichever app opens it, so use disposable repositories for live development writes.
+Builds and installs are Alinery and use the production `~/Library/Application Support/ai.delegance.alinery/app.toml`. A repository's data lives in its own `.alinery/` whichever app opens it, so use disposable repositories for live development writes.
 
 The first launch compiles Rust. Native notification banners appear only from a real `.app` bundle, not from `tauri dev`.
 
@@ -150,7 +150,7 @@ The first launch compiles Rust. Native notification banners appear only from a r
 
 ## MCP Server
 
-The MCP server is the daemon binary run with `--mcp`. Any MCP host that takes **command + args** can use it. In the app, **Settings → MCP server** has **Copy config**, which fills in the binary path and its arguments. One process serves every repository; `repo` is an argument to each tool call (a path from `alinery_list_repos`), not a launch flag. Every tool is a call on that repository's daemon.
+The MCP server is the daemon binary run with `--mcp`. Any MCP host that takes a command and args can use it. In the app, **Settings → MCP server** has **Copy config**, which fills in the binary path and its arguments. One process serves every repository; `repo` is an argument to each tool call (a path from `alinery_list_repos`), not a launch flag. Every tool is a call on that repository's daemon.
 
 ```json
 {
