@@ -1,6 +1,6 @@
 # Machine MCP and the runtime status panel
 
-Status: v0.4, 2026-11-15. P0 is done: M1 to M10 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 onward is not started.
+Status: v0.4, 2026-11-15. P0 is done: M1 to M10 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 is built. P3 onward is not started.
 
 v0.4 adds M9 (an app update asks the MCP to exit) and M10 (HTTP is a bound port the user wires up; Settings shows its address and token per host). v0.3 recorded the decisions: full reach for every caller with an optional token (M2, M5), Restart and Force restart in the panel (M3), refuse protocol mismatches (M7), register over the socket (M8). v0.2 had reviewed the plan against the code.
 
@@ -182,7 +182,7 @@ Each phase ships on its own and leaves the old paths working. While iterating, r
 - Gates: `check-ipc-commands.sh`, `check-remote-routing.sh`, `check-remote-offload.sh`.
 - Exit: the aagent row shows "stale" before a restart and "current" after.
 
-**P2. Panel actions.** Daemon restart and host update with explicit targets and impact text. MCP actions wait for P3 (they become `McpService` calls), because giving the current managed-MCP commands a target is work P6 deletes. Tests: vitest for confirmations and impact lists; Rust for target resolution that never reads `active_repo()`.
+**P2. Panel actions.** Daemon restart and host update with explicit targets and impact text. MCP actions wait for P3 (they become `McpService` calls), because giving the current managed-MCP commands a target is work P6 deletes. Tests: vitest for confirmations and impact lists; Rust for target resolution that never reads `active_repo()`. Built: Restart… per running daemon (the footer's `updateDaemon`, now with the live count; this computer's conflicted daemon keeps its takeover on the banner) and Update host… per stale connected host (`remote_connect`, which reuses running daemons); `stop_target` holds the explicit-key rule.
 
 **P3. Machine MCP, local.**
 - Proto: `mcp.proto` (`McpService`), regenerate, golden, `PROTOCOL_VERSION` bump.

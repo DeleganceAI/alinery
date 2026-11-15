@@ -1,11 +1,13 @@
 import { Fragment, useEffect, useState } from "react";
+import { askConfirm } from "../confirm";
 import * as ipc from "../ipc";
-import { machineOf } from "../remoteRepo";
+import { isRemoteRepo, machineOf } from "../remoteRepo";
+import { updateDaemon } from "../SyncLinks";
 import { repoName } from "../shared";
 import { type OfficeTools, readOfficeTools } from "../sync/agent";
 import { useLiveSessionsByRepo } from "../sync/hooks";
 import { toast } from "../toast";
-import type { RepoRuntime, RuntimeStatus } from "../types";
+import type { HostRuntime, RepoRuntime, RuntimeStatus } from "../types";
 import { type McpStatusHandle, mcpStatusLabel } from "../useMcpStatus";
 
 const REPO_STATE: Record<RepoRuntime["state"], string> = {
@@ -27,7 +29,31 @@ export function officeSummary(office: OfficeTools): string {
   return missing.length ? `${python} · missing ${missing.join(", ")}` : `${python} · LibreOffice, pdftoppm and qpdf found`;
 }
 
-/** Read-only view of what runs where. Loaded on open and on Refresh only: the shell answers from memory, never over ssh. */
+/** A daemon this panel can restart: one that runs, and not this computer's conflicted one (its takeover is on the repo's banner). */
+export const canRestart = (repo: RepoRuntime) => repo.state !== "not_attached" && (repo.state !== "conflict" || isRemoteRepo(repo.repo));
+
+/** Reconnecting installs the bundled runtime and a new repo service from it; running daemons are reused, never stopped. */
+export async function updateHost(host: HostRuntime): Promise<boolean> {
+  const answer = await askConfirm({
+    title: `Install the new runtime on ${host.label}?`,
+    body: (
+      <p>Alinery reconnects to {host.label} and installs this app's runtime there. Running daemons and their sessions keep going on the old runtime until each one is restarted.</p>
+    ),
+    choices: [
+      { key: "confirm", label: "Reconnect and install" },
+      { key: "cancel", label: "Cancel", tone: "ghost" },
+    ],
+    defaultKey: "cancel",
+  });
+  if (answer !== "confirm") return false;
+  await ipc.remoteConnect(host.host_id, false).then(
+    () => toast.success(`Installed the new runtime on ${host.label}`),
+    (cause: unknown) => toast.error(`Couldn't update ${host.label}: ${String(cause)}`),
+  );
+  return true;
+}
+
+/** What runs where, with a restart per daemon and an update per stale host. Loaded on open and on Refresh only: the shell answers from memory, never over ssh. */
 export function RuntimePanel({ mcp }: { mcp: McpStatusHandle }) {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [failed, setFailed] = useState(false);
@@ -45,6 +71,15 @@ export function RuntimePanel({ mcp }: { mcp: McpStatusHandle }) {
   }, []);
   const attached = status?.repos.filter((repo) => repo.state === "current" || repo.state === "build_drift").map((repo) => repo.repo) ?? [];
   const live = useLiveSessionsByRepo(attached);
+  const [busy, setBusy] = useState<string | null>(null);
+  const act = async (key: string, run: () => Promise<boolean>) => {
+    setBusy(key);
+    try {
+      if (await run()) await load();
+    } finally {
+      setBusy(null);
+    }
+  };
   const [office, setOffice] = useState<Record<string, OfficeTools>>({});
   const attachedKey = attached.join("\n");
   // biome-ignore lint/correctness/useExhaustiveDependencies: reread when the attached daemons change (open and Refresh)
@@ -86,6 +121,13 @@ export function RuntimePanel({ mcp }: { mcp: McpStatusHandle }) {
                     {stale && ` → ${short(host.bundled)}`}
                   </td>
                   <td>{stale ? "Stale: restarting a daemon on this host installs the new runtime" : host.running ? "Current" : ""}</td>
+                  <td>
+                    {stale && host.state === "connected" && (
+                      <button type="button" className="btn ghost small" disabled={busy !== null} onClick={() => void act(`host:${host.host_id}`, () => updateHost(host))}>
+                        Update host…
+                      </button>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -96,12 +138,25 @@ export function RuntimePanel({ mcp }: { mcp: McpStatusHandle }) {
                   <td className="dim">daemon · {machineOf(repo.repo) || "this computer"}</td>
                   <td className="dim">{repo.repo in live ? `${live[repo.repo]} live` : ""}</td>
                   <td title={repo.issues.join("\n") || undefined}>{REPO_STATE[repo.state]}</td>
+                  <td>
+                    {canRestart(repo) && (
+                      <button
+                        type="button"
+                        className="btn ghost small"
+                        aria-label={`Restart the daemon for ${repoName(repo.repo)}`}
+                        disabled={busy !== null}
+                        onClick={() => void act(`repo:${repo.repo}`, () => updateDaemon(repo, live[repo.repo]))}
+                      >
+                        Restart…
+                      </button>
+                    )}
+                  </td>
                 </tr>
                 {office[repo.repo] && (
                   <tr>
                     <td />
                     <td className="dim">office tools</td>
-                    <td colSpan={2} title={office[repo.repo].tools.map((tool) => `${tool.name}: ${tool.path || "not found"}`).join("\n")}>
+                    <td colSpan={3} title={office[repo.repo].tools.map((tool) => `${tool.name}: ${tool.path || "not found"}`).join("\n")}>
                       {officeSummary(office[repo.repo])}
                       {!office[repo.repo].tools.some((tool) => tool.name === "soffice" && tool.path) && (
                         <>
@@ -129,6 +184,7 @@ export function RuntimePanel({ mcp }: { mcp: McpStatusHandle }) {
               <td className="dim">managed · {mcp.repo ? repoName(mcp.repo) : "no repo"}</td>
               <td />
               <td>{mcpStatusLabel(mcp)}</td>
+              <td />
             </tr>
           </tbody>
         </table>

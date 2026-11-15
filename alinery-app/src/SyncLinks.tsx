@@ -51,18 +51,28 @@ function links(status: RuntimeStatus): Link[] {
 export const starterNote = (repo: Pick<RepoRuntime, "started_by" | "os_user" | "mine">) =>
   repo.mine || !repo.started_by ? "" : `${repo.started_by}${repo.os_user ? ` (as ${repo.os_user})` : ""}`;
 
-async function updateDaemon(repo: RepoRuntime) {
+/** Asks, then restarts a repo's daemon on this app's build. `live` is its session count when known. Returns whether it ran. */
+export async function updateDaemon(repo: RepoRuntime, live?: number): Promise<boolean> {
   const name = repoName(repo.repo);
+  const plural = (n: number) => `${n} live session${n === 1 ? "" : "s"}`;
   const ok = await confirmDanger(
     `Restart the daemon for ${name}?`,
-    <p className="confirm-loss">It is replaced with this app's build. Any live sessions in this repository are stopped, and their in-flight work is lost.</p>,
-    "Restart daemon",
+    <p className="confirm-loss">
+      It is replaced with this app's build.{" "}
+      {live === undefined
+        ? "Any live sessions in this repository are stopped, and their in-flight work is lost."
+        : live === 0
+          ? "No sessions are live."
+          : `Its ${plural(live)} ${live === 1 ? "is" : "are"} stopped, and their in-flight work is lost.`}
+    </p>,
+    live ? `Stop ${plural(live).replace(" live", "")} and restart` : "Restart daemon",
   );
-  if (!ok || !(await confirmRestartingOthers(otherStarter(repo), name))) return;
+  if (!ok || !(await confirmRestartingOthers(otherStarter(repo), name))) return false;
   await stopDaemon(repo.repo).then(
-    () => toast.success(`Restarted the daemon for ${repoName(repo.repo)}`),
-    (cause) => toast.error(`Couldn't restart the daemon for ${repoName(repo.repo)}: ${String(cause)}`),
+    () => toast.success(`Restarted the daemon for ${name}`),
+    (cause) => toast.error(`Couldn't restart the daemon for ${name}: ${String(cause)}`),
   );
+  return true;
 }
 
 /**

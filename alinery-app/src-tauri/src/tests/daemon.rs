@@ -1533,3 +1533,13 @@ fn a_repo_that_cannot_open_can_still_be_closed() {
     assert!(crate::require_repo_closable(&owned_elsewhere, &repo).is_err());
     let _ = fs::remove_dir_all(&repo);
 }
+
+#[test]
+fn an_explicit_stop_target_never_asks_for_the_active_repo() {
+    use crate::stop_target;
+    let never = || -> Result<String, String> { panic!("the active repo was read") };
+    assert_eq!(stop_target(Some("alinery+ssh://h1/home/me/svc"), never).unwrap(), "alinery+ssh://h1/home/me/svc");
+    assert_eq!(stop_target(Some(" /Users/me/app "), never).unwrap(), "/Users/me/app");
+    assert_eq!(stop_target(Some("  "), || Ok("/active".into())).unwrap(), "/active");
+    assert_eq!(stop_target(None, || Ok("/active".into())).unwrap(), "/active");
+}

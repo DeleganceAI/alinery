@@ -774,6 +774,14 @@ pub(crate) fn canonical_host_executable(current_exe: std::io::Result<PathBuf>) -
     fs::canonicalize(current_exe.ok()?).ok()
 }
 
+/// The repo `stop_daemon` acts on: the caller's key, or the active repo only when none was given.
+pub(crate) fn stop_target(path: Option<&str>, active: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
+    match path.map(str::trim) {
+        Some(p) if !p.is_empty() => Ok(p.to_string()),
+        _ => active(),
+    }
+}
+
 // DELIBERATE TEARDOWN ORIGIN (B1). Settings explicitly stops this daemon's sessions.
 //
 // Ends EVERY live session for the TARGET repo and stops its daemon, then brings a fresh
@@ -789,10 +797,7 @@ pub(crate) fn canonical_host_executable(current_exe: std::io::Result<PathBuf>) -
 pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let target = match path.as_deref().map(str::trim) {
-            Some(p) if !p.is_empty() => p.to_string(),
-            _ => active_repo_ref()?.uri(),
-        };
+        let target = stop_target(path.as_deref(), || Ok(active_repo_ref()?.uri()))?;
         let repo = match RepoRef::parse(&target)? {
             RepoRef::Remote { host_id, path } => {
                 crate::stop_remote_daemon(&app, &host_id, &path, |_, _| Ok(()))?;
