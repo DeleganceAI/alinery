@@ -45,6 +45,8 @@ pub(crate) fn start_daemon(repo: &Path, app_config: &Path) -> Result<(), String>
     if let Some(runtime) = local_runtime_home(app_config) {
         command.env("ALINERY_RUNTIME_HOME", runtime);
     }
+    // Registers with this lane's machine MCP and starts it when nothing answers (docs/machine-mcp-plan.md M6, M8).
+    command.arg("--machine-mcp");
     let spawned = command.spawn();
     match spawned {
         Ok(_) => Ok(()),

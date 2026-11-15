@@ -1,12 +1,14 @@
 // The MCP server itself: JSON-RPC over stdio, or over a unix socket the app's managed child serves (plan S5.1, O10 b). It replaces the Rust
 // `alinery-mcp` binary's two modes; the tools are in `handlers.ts` and every one of them is a call on the daemon.
 import { existsSync, unlinkSync } from "node:fs";
-import { createServer, type Socket } from "node:net";
+import { connect, createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { writeAtomic } from "../platform/fs.ts";
 import { callTool, type Context } from "./handlers.ts";
 import { Endpoints } from "./endpoints.ts";
+import { appConfigDirOf } from "../domain/playbookLibrary.ts";
+import { ask, currentToken, ensureMachine, machinePaths, serveMachine, spawnMachine } from "./machine.ts";
 import { TOOLS } from "./tools.ts";
 
 type Json = Record<string, unknown>;
@@ -112,7 +114,7 @@ export async function handleRequest(ctx: Context, req: Json): Promise<Json | nul
 }
 
 /** Feeds every line of `input` to `handle` one after another and writes each answer, so tool calls on a connection never overlap. */
-function serveLines(input: NodeJS.ReadableStream, write: (line: string) => void, ctx: Context, onLine?: (req: Json) => boolean) {
+export function serveLines(input: NodeJS.ReadableStream, write: (line: string) => void, ctx: Context, onLine?: (req: Json) => boolean) {
   let chain: Promise<void> = Promise.resolve();
   const lines = createInterface({ input });
   lines.on("line", (line) => {
@@ -204,10 +206,78 @@ async function serveSocket(ctx: Context, args: string[]): Promise<number> {
   return new Promise<number>(() => {});
 }
 
+/**
+ * The stdio bridge (plan 4.5): a client's `--mcp` becomes a pipe to the machine MCP's socket. It holds no daemon tokens, presents
+ * the optional token, starts the MCP when nothing answers, and refuses an MCP of another protocol (M7).
+ */
+async function bridge(appConfig: string, namespace: string | undefined, protocol: number): Promise<number> {
+  const paths = machinePaths(appConfigDirOf(appConfig), namespace);
+  if (!(await ensureMachine(paths, () => spawnMachine(appConfig, namespace)))) {
+    console.error(`alinery-mcp: the machine MCP did not start at ${paths.socket}`);
+    return 1;
+  }
+  const token = currentToken(paths.key);
+  let status: Record<string, unknown>;
+  try {
+    status = await ask(paths.socket, { op: "status" }, token);
+  } catch (e) {
+    console.error(`alinery-mcp: the machine MCP at ${paths.socket} did not answer (${(e as Error).message}); use Restart MCP in Alinery's Settings → Updates → Runtime`);
+    return 1;
+  }
+  if (status.ok !== true) {
+    console.error(`alinery-mcp: the machine MCP refused this bridge: ${String(status.error)}`);
+    return 1;
+  }
+  if (status.protocol !== protocol) {
+    console.error(`alinery-mcp: the machine MCP speaks protocol ${String(status.protocol)}, this bridge ${protocol}; use Restart MCP in Alinery's Settings → Updates → Runtime`);
+    return 1;
+  }
+  const socket = connect(paths.socket);
+  await new Promise<void>((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+  // The auth answer is the bridge's, not the client's: swallow the first line, then pipe both ways.
+  if (token) {
+    socket.write(`${JSON.stringify({ op: "auth", token })}\n`);
+    await new Promise<void>((resolve) => {
+      let seen = "";
+      const first = (chunk: Buffer) => {
+        seen += chunk.toString("utf8");
+        const at = seen.indexOf("\n");
+        if (at < 0) return;
+        socket.off("data", first);
+        const rest = seen.slice(at + 1);
+        if (rest) process.stdout.write(rest);
+        resolve();
+      };
+      socket.on("data", first);
+    });
+  }
+  socket.pipe(process.stdout);
+  process.stdin.pipe(socket);
+  return new Promise<number>((resolve) => {
+    socket.on("close", () => resolve(0));
+    process.stdin.on("end", () => socket.end());
+  });
+}
+
 /** `alinery-vinculum-daemon --mcp`: the entry `main.ts` hands the command line to. Returns the exit code. */
-export async function runMcp(args: string[], protocol: number): Promise<number> {
+export async function runMcp(args: string[], protocol: number, version = ""): Promise<number> {
+  const appConfig = flagValue(args, "--app-config");
+  const namespace = flagValue(args, "--socket-namespace");
+  if (args.includes("--machine")) {
+    if (!appConfig) {
+      console.error("Usage: alinery-vinculum-daemon --mcp --machine --app-config /path/to/app.toml");
+      return 2;
+    }
+    const idle = Number(flagValue(args, "--idle-ms"));
+    return serveMachine({ paths: machinePaths(appConfigDirOf(appConfig), namespace), protocol, build: version, appConfig, idleMs: idle > 0 ? idle : undefined });
+  }
   const ctx = contextFrom(args, protocol);
   if (args.includes("--serve")) return serveSocket(ctx, args);
+  // A harness's MCP carries its daemon's endpoint; a client's carries only the app config, and goes through the machine MCP.
+  if (args.includes("--bridge") && appConfig) return bridge(appConfig, namespace, protocol);
   console.error(`alinery-mcp starting (stdio); --repo=${ctx.processRepo ?? "none"} (repo is a per-call tool argument)`);
   await serveLines(process.stdin, (line) => process.stdout.write(`${line}\n`), ctx);
   return 0;

@@ -1,6 +1,6 @@
 # Machine MCP and the runtime status panel
 
-Status: v0.4, 2026-11-15. P0 is done: M1 to M10 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 is built. P3 onward is not started.
+Status: v0.4, 2026-11-15. P0 is done: M1 to M10 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 is built. P3 is built (local). P4 onward is not started.
 
 v0.4 adds M9 (an app update asks the MCP to exit) and M10 (HTTP is a bound port the user wires up; Settings shows its address and token per host). v0.3 recorded the decisions: full reach for every caller with an optional token (M2, M5), Restart and Force restart in the panel (M3), refuse protocol mismatches (M7), register over the socket (M8). v0.2 had reviewed the plan against the code.
 
@@ -191,6 +191,14 @@ Each phase ships on its own and leaves the old paths working. While iterating, r
 - Tests: `bun test` beside the source, including a real-socket test of the singleton race (two starters), the idle exit, a daemon re-registering after the MCP restarts, a mismatched-protocol daemon listed `incompatible`, the bridge refusing a mismatched MCP, a missing or wrong token refused while the key file exists and accepted during a rotation overlap, Force restart refused when the socket's peer incarnation changed, and that `McpService` is absent from `AGENT_RPCS` and an AGENT token gets `PermissionDenied` on it.
 - Gates: `check-proto-gen.sh`, `check-protocol-version-bump.sh`, `check-no-auto-session-kill.sh`, `check-daemon-fs-writes.sh`.
 - Exit: Claude Desktop through the bridge reaches two repos with the app closed.
+- Built, with these choices made while building:
+  - Daemons register only when started with `--machine-mcp` (the shell's local launch passes it), so the test suites' throwaway daemons never start an MCP. `McpService` is on every daemon.
+  - The token is managed by `McpService.Token` (read, rotate, clear), written by the daemon through `platform/fs.ts`, not by the shell: one home that P5's remote hosts reuse. The key file is JSON with the previous token and its overlap end; an unreadable file accepts nothing.
+  - The bridge is `--mcp --bridge`, an explicit flag, so the old endpoints-file form in configs users already pasted keeps working until P6. "Copy config" now emits the bridge form.
+  - `build` in `status` is the app version (the local `--build-id` is only the binary's file name), so `behind` means another release.
+  - The socket is owner-only (0700, from the umask), not 0600; a unix socket needs only the owner bits.
+  - Force restart's SIGTERM lives in `alinery-core` (`PeerProcessIdentity::terminate`) because the app crate has no `libc`.
+  - Not built: the "Exit" check against Claude Desktop by hand, and the M9 updater exit. A daemon whose registration drops respawns the MCP after 1 s, so the M9 exit must come after the swap has replaced the binary, or the old build comes back.
 
 **P4. Remote hosts.** Spawn through the launcher recipe (transient unit on systemd hosts), per-host panel rows with Restart MCP through the host daemon's `McpService`. No client forward or bridge (section 1). Rebuild runtimes. Run the live tests against the Docker sshd (`scripts/tests/remote-sshd/run.sh`).
 

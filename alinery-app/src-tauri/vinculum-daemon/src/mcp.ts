@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { Type, type TSchema } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
-import { signalChild, spawnDetached } from "./platform/process.ts";
+import { selfCommand, signalChild, spawnDetached } from "./platform/process.ts";
 
 /** A stdio MCP child gets only these, then its own env: one exported key must not sign in a store the UI shows empty. */
 const ENV_ALLOWLIST = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TZ", "LANG", "LC_ALL", "LC_CTYPE", "SSH_AUTH_SOCK", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
@@ -38,8 +38,8 @@ type Live = { key: string; extension: InstalledExtension; endpoint: Endpoint; re
 /** The built-in `alinery` server is this binary run with `--mcp` (plan S5.1, O10 b). Under `bun run` the script comes first; in a
  * `bun build --compile` binary the entry is the binary itself, as for a job child. */
 export function selfMcpCommand(): { command: string; args: string[] } {
-  const compiled = import.meta.url.includes("/$bunfs/");
-  return { command: process.execPath, args: [...(compiled ? [] : [Bun.main]), "--mcp"] };
+  const [command, ...args] = selfCommand("--mcp");
+  return { command, args };
 }
 
 export class McpHub {

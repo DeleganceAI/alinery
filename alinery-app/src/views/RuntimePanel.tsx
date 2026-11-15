@@ -1,11 +1,13 @@
 import { Fragment, useEffect, useState } from "react";
-import { askConfirm } from "../confirm";
+import { copyTextToClipboard } from "../chat/CopyMessage";
+import { askConfirm, confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { isRemoteRepo, machineOf } from "../remoteRepo";
 import { updateDaemon } from "../SyncLinks";
 import { repoName } from "../shared";
 import { type OfficeTools, readOfficeTools } from "../sync/agent";
 import { useLiveSessionsByRepo } from "../sync/hooks";
+import { McpState, type McpStatus, machineMcpStatus, machineMcpToken, restartMachineMcp } from "../sync/mcp";
 import { toast } from "../toast";
 import type { HostRuntime, RepoRuntime, RuntimeStatus } from "../types";
 import { type McpStatusHandle, mcpStatusLabel } from "../useMcpStatus";
@@ -51,6 +53,149 @@ export async function updateHost(host: HostRuntime): Promise<boolean> {
     (cause: unknown) => toast.error(`Couldn't update ${host.label}: ${String(cause)}`),
   );
   return true;
+}
+
+const MCP_STATE: Record<McpState, string> = {
+  [McpState.UNSPECIFIED]: "",
+  [McpState.ABSENT]: "Starts on demand",
+  [McpState.OK]: "Running",
+  [McpState.BEHIND]: "Other build: restart to update",
+  [McpState.STUCK]: "Not answering",
+};
+
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+
+/** After the state: its clients and the daemons it reaches, and how many it refuses for speaking another protocol (M7). */
+export function machineMcpDetail(status: McpStatus): string {
+  if (status.state !== McpState.OK && status.state !== McpState.BEHIND) return "";
+  const refused = status.daemons.filter((daemon) => !daemon.compatible).length;
+  return [plural(status.clients, "client"), plural(status.daemons.length - refused, "daemon"), refused ? `${refused} incompatible` : ""].filter(Boolean).join(" · ");
+}
+
+const yes = (title: string, body: string, label: string) =>
+  askConfirm({
+    title,
+    body: <p>{body}</p>,
+    choices: [
+      { key: "confirm", label },
+      { key: "cancel", label: "Cancel", tone: "ghost" },
+    ],
+    defaultKey: "cancel",
+  }).then((key) => key === "confirm");
+
+/** This computer's machine MCP (docs/machine-mcp-plan.md), read and restarted through `repo`'s daemon; its token below it. */
+function MachineMcpRows({ repo }: { repo: string | undefined }) {
+  const [status, setStatus] = useState<McpStatus | null>(null);
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = () => {
+    if (!repo) return;
+    machineMcpStatus(repo).then(setStatus, () => setStatus(null));
+    machineMcpToken(repo, "read").then(setToken, () => {});
+  };
+  useEffect(load, [repo]);
+  if (!repo)
+    return (
+      <tr>
+        <td>Machine MCP</td>
+        <td className="dim">this computer</td>
+        <td />
+        <td className="dim">No daemon running here to ask</td>
+        <td />
+      </tr>
+    );
+  const run = (action: () => Promise<void>) => async () => {
+    setBusy(true);
+    try {
+      await action();
+    } catch (cause) {
+      toast.error(String(cause));
+    } finally {
+      setBusy(false);
+      load();
+    }
+  };
+  const restart = run(async () => {
+    const clients = status?.clients ?? 0;
+    const lose = clients ? `Its ${plural(clients, "connected client")} lose any tool call in flight and reconnect.` : "No clients are connected.";
+    if (!(await yes("Restart the machine MCP?", `${lose} Daemons register again on their own.`, "Restart MCP"))) return;
+    const next = await restartMachineMcp(repo);
+    if (next.state === McpState.STUCK) toast.error("The machine MCP did not leave when asked. Force restart ends it.");
+    else toast.success("Restarted the machine MCP");
+  });
+  const force = run(async () => {
+    const incarnation = await ipc.machineMcpPeer();
+    const pid = incarnation.split(":")[0];
+    const body = (
+      <p>It does not answer. Alinery ends process {pid} with SIGTERM, and any client connected to it loses its tool calls. The next daemon to register starts a new one.</p>
+    );
+    if (!(await confirmDanger("Force restart the machine MCP?", body, "Force restart"))) return;
+    await ipc.forceRestartMachineMcp(incarnation);
+    toast.success("Ended the machine MCP; daemons start a new one");
+  });
+  const rotate = run(async () => {
+    const accepted = token
+      ? await yes("Rotate the machine MCP token?", "The old token keeps working for 10 minutes. Update every client you gave it to.", "Rotate token")
+      : await yes(
+          "Require a token for the machine MCP?",
+          "Every caller then presents it. The bridge and the daemons read it themselves; a client you set up by hand needs it in its config.",
+          "Require token",
+        );
+    if (accepted) setToken(await machineMcpToken(repo, "rotate"));
+  });
+  const clear = run(async () => {
+    if (!(await confirmDanger("Stop requiring a token?", <p>Any process running as you can then use the machine MCP without one.</p>, "Clear token"))) return;
+    setToken(await machineMcpToken(repo, "clear"));
+  });
+  const state = status?.state ?? McpState.UNSPECIFIED;
+  return (
+    <>
+      <tr>
+        <td>Machine MCP</td>
+        <td className="dim">this computer</td>
+        <td className="dim">{status ? machineMcpDetail(status) : ""}</td>
+        <td title={status?.socketPath}>{status ? MCP_STATE[state] : "Could not ask"}</td>
+        <td>
+          {status && (
+            <button type="button" className="btn ghost small" disabled={busy} onClick={() => void restart()}>
+              {state === McpState.ABSENT ? "Start MCP" : "Restart MCP"}
+            </button>
+          )}
+          {state === McpState.STUCK && (
+            <button type="button" className="btn ghost small" disabled={busy} onClick={() => void force()}>
+              Force restart…
+            </button>
+          )}
+        </td>
+      </tr>
+      <tr>
+        <td />
+        <td className="dim">token</td>
+        <td colSpan={2}>
+          {token ? (
+            <>
+              <span className="mono">{token.slice(0, 8)}…</span>{" "}
+              <button type="button" className="btn ghost small" onClick={() => void copyTextToClipboard(token).then(() => toast.success("Copied the token"))}>
+                Copy
+              </button>
+            </>
+          ) : (
+            <span className="dim">Not required</span>
+          )}
+        </td>
+        <td>
+          <button type="button" className="btn ghost small" disabled={busy} onClick={() => void rotate()}>
+            {token ? "Rotate…" : "Require token…"}
+          </button>
+          {token && (
+            <button type="button" className="btn ghost small" disabled={busy} onClick={() => void clear()}>
+              Clear…
+            </button>
+          )}
+        </td>
+      </tr>
+    </>
+  );
 }
 
 /** What runs where, with a restart per daemon and an update per stale host. Loaded on open and on Refresh only: the shell answers from memory, never over ssh. */
@@ -179,6 +324,7 @@ export function RuntimePanel({ mcp }: { mcp: McpStatusHandle }) {
                 )}
               </Fragment>
             ))}
+            <MachineMcpRows repo={status.repos.find((repo) => !isRemoteRepo(repo.repo) && (repo.state === "current" || repo.state === "build_drift"))?.repo} />
             <tr>
               <td>MCP</td>
               <td className="dim">managed · {mcp.repo ? repoName(mcp.repo) : "no repo"}</td>

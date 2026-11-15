@@ -111,7 +111,7 @@ function readApp(appConfig: string | undefined): App {
 function listRepos(ctx: Context): Reply {
   const fallback = ctx.processRepo ?? "";
   const app = readApp(ctx.appConfig) ?? { active: fallback, known: fallback ? [fallback] : [] };
-  return json({ active_repo: app.active, known_repos: app.known });
+  return json({ active_repo: app.active, known_repos: [...app.known, ...ctx.endpoints.repos().filter((repo) => !app.known.some((r) => trimSlash(r) === trimSlash(repo)))] });
 }
 
 const trimSlash = (path: string) => path.trim().replace(/\/+$/, "");
@@ -120,7 +120,7 @@ const trimSlash = (path: string) => path.trim().replace(/\/+$/, "");
 function knownRepos(ctx: Context): string[] {
   const app = readApp(ctx.appConfig);
   const repos = [...(app?.known ?? [])];
-  if (app?.active.trim() && !repos.some((r) => r.trim() === app.active.trim())) repos.push(app.active);
+  for (const repo of [app?.active ?? "", ...ctx.endpoints.repos()]) if (repo.trim() && !repos.some((r) => trimSlash(r) === trimSlash(repo))) repos.push(repo);
   return repos;
 }
 

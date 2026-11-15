@@ -1,7 +1,8 @@
 // Which daemon answers for which repository (plan S5.1, O20 c). An MCP a daemon launched for a harness holds one endpoint, its own
 // (`ALINERY_RPC_SOCKET` and `ALINERY_RPC_TOKEN` in its environment, put there by `mcp.ts`). The shell's managed MCP is for every
 // repository the app has open: the shell mints one AGENT token per daemon and keeps them in an owner-only file this reads again on
-// each call, so a repository opened or a daemon restarted after the MCP started is found without restarting it.
+// each call, so a repository opened or a daemon restarted after the MCP started is found without restarting it. The machine MCP
+// holds the daemons that registered with it (`machine.ts`, M8), each with the token it minted for this MCP.
 import { readFileSync } from "node:fs";
 import type { Endpoint } from "./client.ts";
 
@@ -14,6 +15,7 @@ export class Endpoints {
     private readonly own: { repo: string; endpoint: Endpoint } | undefined,
     private readonly file: string | undefined,
     private readonly handoff: boolean = file !== undefined,
+    private readonly registered?: () => Record<string, Endpoint>,
   ) {}
 
   /** O22 (a): `alinery_send_review_handoff` reaches two daemons, so only the shell's managed MCP offers it; a host's stdio MCP reading the same file does not. */
@@ -23,10 +25,16 @@ export class Endpoints {
 
   /** True for the shell's managed MCP, the only one that holds a token for more than its own daemon (O22 a). */
   get spansRepos(): boolean {
-    return this.file !== undefined;
+    return this.file !== undefined || this.registered !== undefined;
+  }
+
+  /** The repositories registered daemons serve, which a machine MCP may name besides the app's known list. */
+  repos(): string[] {
+    return Object.keys(this.registered?.() ?? {});
   }
 
   private fromFile(): Record<string, Endpoint> {
+    if (this.registered) return this.registered();
     if (!this.file) return {};
     try {
       const parsed = JSON.parse(readFileSync(this.file, "utf8")) as Partial<EndpointFile>;

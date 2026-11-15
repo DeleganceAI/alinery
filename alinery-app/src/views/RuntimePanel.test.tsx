@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -31,8 +31,31 @@ vi.mock("../ipc", () =>
     }),
     stopDaemon: vi.fn(async () => {}),
     remoteConnect: vi.fn(async () => {}),
+    machineMcpPeer: vi.fn(async () => "4242:1700000000.000001"),
+    forceRestartMachineMcp: vi.fn(async () => {}),
   }),
 );
+const mcpStatus = (state: number, extra = {}) => ({
+  state,
+  build: "0.600.0",
+  protocol: 49,
+  uptimeMs: 10n,
+  clients: 3,
+  daemons: [
+    { repo: "/Users/me/app", protocol: 49, compatible: true },
+    { repo: "/old", protocol: 48, compatible: false },
+  ],
+  socketPath: "/cfg/machine-mcp.sock",
+  tokenRequired: false,
+  ...extra,
+});
+const machine = vi.hoisted(() => ({ status: vi.fn(), restart: vi.fn(), token: vi.fn() }));
+vi.mock("../sync/mcp", async (original) => ({
+  ...(await original<typeof import("../sync/mcp")>()),
+  machineMcpStatus: machine.status,
+  restartMachineMcp: machine.restart,
+  machineMcpToken: machine.token,
+}));
 const confirms = vi.hoisted(() => ({ danger: vi.fn(), ask: vi.fn() }));
 vi.mock("../confirm", () => ({ confirmDanger: confirms.danger, askConfirm: confirms.ask }));
 vi.mock("../sync/hooks", () => ({ useLiveSessionsByRepo: () => ({ "/Users/me/app": 2 }) }));
@@ -50,6 +73,7 @@ vi.mock("../sync/agent", () => ({
 }));
 
 import * as ipc from "../ipc";
+import { McpState } from "../sync/mcp";
 import { RuntimePanel } from "./RuntimePanel";
 
 const mcp: McpStatusHandle = {
@@ -69,6 +93,11 @@ const mcp: McpStatusHandle = {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+});
+beforeEach(() => {
+  machine.status.mockResolvedValue(mcpStatus(McpState.OK));
+  machine.restart.mockResolvedValue(mcpStatus(McpState.OK));
+  machine.token.mockResolvedValue("");
 });
 
 const text = (node: ReactNode) => render(<>{node}</>).container.textContent;
@@ -130,4 +159,39 @@ it("updates only a stale connected host, by reconnecting it after a yes", async 
   fireEvent.click(buttons[0]);
   await waitFor(() => expect(ipc.remoteConnect).toHaveBeenCalledWith("h1", false));
   expect(text(confirms.ask.mock.calls[0][0].body)).toContain("keep going on the old runtime");
+});
+
+it("shows the machine MCP through a local daemon, and restarts it after a yes that counts its clients", async () => {
+  confirms.ask.mockResolvedValue("confirm");
+  render(<RuntimePanel mcp={mcp} />);
+  expect(await screen.findByText("3 clients · 1 daemon · 1 incompatible")).toBeTruthy();
+  expect(machine.status).toHaveBeenCalledWith("/Users/me/app");
+  fireEvent.click(screen.getByRole("button", { name: "Restart MCP" }));
+  await waitFor(() => expect(machine.restart).toHaveBeenCalledWith("/Users/me/app"));
+  expect(text(confirms.ask.mock.calls[0][0].body)).toContain("Its 3 connected clients lose any tool call in flight");
+});
+
+it("offers Force restart only when it does not answer, bound to the incarnation the user confirmed", async () => {
+  machine.status.mockResolvedValue(mcpStatus(McpState.STUCK));
+  confirms.danger.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  render(<RuntimePanel mcp={mcp} />);
+  const force = await screen.findByRole("button", { name: "Force restart…" });
+  fireEvent.click(force);
+  await waitFor(() => expect(confirms.danger).toHaveBeenCalledTimes(1));
+  expect(text(confirms.danger.mock.calls[0][1])).toContain("process 4242");
+  expect(ipc.forceRestartMachineMcp).not.toHaveBeenCalled();
+  await waitFor(() => expect((force as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(force);
+  await waitFor(() => expect(ipc.forceRestartMachineMcp).toHaveBeenCalledWith("4242:1700000000.000001"));
+});
+
+it("requires a token only after a yes, and shows no Force restart for an MCP that answers", async () => {
+  confirms.ask.mockResolvedValue("confirm");
+  let held = "";
+  machine.token.mockImplementation(async (_repo: string, action: string) => (held = action === "rotate" ? "feedface00112233" : action === "clear" ? "" : held));
+  render(<RuntimePanel mcp={mcp} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Require token…" }));
+  await waitFor(() => expect(machine.token).toHaveBeenCalledWith("/Users/me/app", "rotate"));
+  expect(await screen.findByText("feedface…")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Force restart…" })).toBeNull();
 });

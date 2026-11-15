@@ -208,6 +208,8 @@ pub fn run() {
             close_all_repos,
             cancel_quit,
             mcp_status,
+            machine_mcp_peer,
+            force_restart_machine_mcp,
             start_mcp_server,
             stop_mcp_server,
             pick_backup_destination_dialog,

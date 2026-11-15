@@ -233,6 +233,22 @@ else
   echo "ok       mcpServer (calls no Shutdown, signals nothing)"
 fi
 
+# The shell signals one process of its own: the machine MCP, on the user's confirmed Force restart (docs/machine-mcp-plan.md M3), bound
+# to the incarnation the kernel reports for its socket's peer. `PeerProcessIdentity::terminate` is the only SIGTERM in the shell and
+# alinery-core, and `force_restart_peer` in src/mcp.rs its only caller. The machine MCP holds no session.
+CORE_SRC="$ROOT/alinery-app/src-tauri/alinery-core/src"
+SHELL_SRC="$ROOT/alinery-app/src-tauri/src"
+sigterms="$(grep -rnE 'SIGTERM' "$CORE_SRC" "$SHELL_SRC" --include='*.rs' | grep -v '/tests/' | grep -vE ':[0-9]+:[[:space:]]*//' | grep -v "^$CORE_SRC/legacy_daemon.rs:.*libc::kill(self.pid, libc::SIGTERM)" || true)"
+terminators="$(grep -rnE '\.terminate\(\)' "$SHELL_SRC" "$CORE_SRC" --include='*.rs' | grep -v '/tests/' | grep -vE ':[0-9]+:[[:space:]]*//' || true)"
+if [ -n "$sigterms" ] || [ "$(echo "$terminators" | grep -c .)" -ne 1 ] || ! echo "$terminators" | grep -q "^$SHELL_SRC/mcp.rs:"; then
+  echo "ERROR: the shell sends SIGTERM only through PeerProcessIdentity::terminate, called once, from src/mcp.rs force_restart_peer:" >&2
+  [ -n "$sigterms" ] && echo "$sigterms" >&2
+  echo "$terminators" >&2
+  status=1
+else
+  echo "ok       mcp.rs force_restart_peer (the user's confirmed Force restart of the machine MCP)"
+fi
+
 case " $origin_users $legacy_users " in
   *" ensure_daemon "*)
     echo "ERROR: ensure_daemon must NEVER send shutdown. Reuse on protocol equality; on" >&2

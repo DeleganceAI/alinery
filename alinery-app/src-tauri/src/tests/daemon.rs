@@ -1486,11 +1486,30 @@ fn mcp_endpoints_file_is_owner_only_and_holds_the_shape_the_daemon_binary_reads(
         serde_json::json!({"version": 1, "repos": {"/work/a": {"socket": "/work/a/.alinery/rpc.sock", "token": "token-a"}}})
     );
 
-    let args = crate::mcp::mcp_host_args(&app_config, None);
-    assert_eq!(args[0], "--mcp");
-    assert_eq!(args[args.len() - 2], "--endpoints-file");
-    assert_eq!(args[args.len() - 1], path.to_string_lossy());
+    let config = app_config.to_string_lossy().into_owned();
+    assert_eq!(crate::mcp::mcp_host_args(&app_config, None), ["--mcp", "--bridge", "--app-config", &config]);
+    assert_eq!(
+        crate::mcp::mcp_host_args(&app_config, Some("dabc")),
+        ["--mcp", "--bridge", "--app-config", &config, "--socket-namespace", "dabc"]
+    );
+    assert_eq!(crate::mcp::machine_mcp_socket(&app_config, None).unwrap(), root.join("config").join("machine-mcp.sock"));
+    assert!(crate::mcp::machine_mcp_socket(&app_config, Some("da/bc")).unwrap().ends_with("machine-mcp-dabc.sock"));
     let _ = fs::remove_dir_all(&root);
+}
+
+// M3: Force restart signals only the incarnation the user confirmed, read from the socket's kernel-reported peer.
+#[test]
+fn force_restart_refuses_when_the_socket_peer_is_not_the_confirmed_incarnation() {
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let socket = std::env::temp_dir().join(format!("mmcp-{n}.sock"));
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let peer = crate::mcp::socket_peer(&socket).unwrap();
+    assert_eq!(peer.pid(), std::process::id() as i32);
+    assert!(peer.incarnation().starts_with(&format!("{}:", std::process::id())));
+    let refused = crate::mcp::force_restart_peer(&socket, "1:1.000000").unwrap_err();
+    assert!(refused.contains("changed since you confirmed"), "{refused}");
+    let _ = fs::remove_file(&socket);
+    assert!(crate::mcp::force_restart_peer(&socket, &peer.incarnation()).unwrap_err().contains("nothing answers"));
 }
 
 // A repository that cannot open (damaged task state) must still close: no daemon answers for it, so there is nothing to stop.
