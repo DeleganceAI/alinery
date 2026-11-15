@@ -39,12 +39,13 @@
   display: block;
   height: 70vh;
 }
-.settings-group {
+.settings-group,
+.settings-search-empty {
   max-width: 860px;
-  padding: 28px 0 8px;
+  margin-inline: auto;
 }
-.settings-group + .settings-group {
-  border-top: 1px solid var(--border);
+.settings-group {
+  padding: 28px 0 8px;
 }
 .settings-group-head {
   display: flex;
@@ -72,10 +73,13 @@
   text-transform: uppercase;
   color: var(--text-faint);
 }
-.settings-part + .settings-part {
-  margin-top: 28px;
-  padding-top: 20px;
-  border-top: 1px solid var(--border);
+/* Each section is a band, and every other band is tinted, so one section's end reads without a rule. */
+.settings-part {
+  padding: 18px 20px;
+  border-radius: var(--radius-md);
+}
+.settings-part:nth-child(odd of .settings-part:not([hidden])) {
+  background: var(--surface-subtle);
 }
 .settings-part-title {
   margin: 0 0 10px;
@@ -301,3 +305,14 @@
     grid-column: 1;
   }
 }
+
+/* Repo requirements: three files, each an editor with its own status. */
+.specs-slot { margin-top: 16px; }
+.specs-slot-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.specs-slot-head h4 { margin: 0; }
+.specs-slot-head code { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); }
+.specs-status { font-size: calc(11px * var(--ui-scale)); color: var(--danger); }
+.specs-status.ok { color: inherit; opacity: 0.7; }
+.specs-editor { display: block; width: 100%; min-height: 140px; margin: 6px 0; font: calc(12px * var(--ui-scale)) / 1.5 var(--font-mono); resize: vertical; }
+.specs-actions { display: flex; align-items: center; gap: 10px; }
+.specs-over, .specs-error { color: var(--danger); }

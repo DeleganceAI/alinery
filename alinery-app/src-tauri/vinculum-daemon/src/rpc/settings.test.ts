@@ -190,3 +190,54 @@ test("WriteHostedInference is ADMIN: a token-less caller and a local non-shell p
   expect(existsSync(join(other.dir, "inference.json"))).toBe(false);
   expect(existsSync(join(anon.dir, "inference.json"))).toBe(false);
 });
+
+test("ReadSpecs and WriteSpec: create in place, refuse other names, no token is refused, and a retry writes once", async () => {
+  const { settings, repo } = await start();
+  const first = await settings().readSpecs({});
+  expect(first.files.map((f) => [f.name, f.present])).toEqual([["requirements.md", false], ["tooling.md", false], ["architecture.md", false]]);
+  expect(first.maxChars).toBeGreaterThan(0);
+
+  await settings().writeSpec({ meta: meta("w1"), name: "tooling.md", text: "ruff\n" });
+  expect(readFileSync(join(repo, "specs", "tooling.md"), "utf8")).toBe("ruff\n");
+  expect((await settings().readSpecs({})).files[1]).toMatchObject({ present: true, text: "ruff\n", committed: false });
+
+  expect(await code(settings().writeSpec({ meta: meta("w2"), name: "../escape.md", text: "x" }))).toBe(Code.InvalidArgument);
+  expect(existsSync(join(repo, "escape.md"))).toBe(false);
+  expect(await code(settings(null).readSpecs({}))).toBe(Code.Unauthenticated);
+  expect(await code(settings(null).writeSpec({ meta: meta("w3"), name: "tooling.md", text: "x" }))).toBe(Code.Unauthenticated);
+
+  await settings().writeSpec({ meta: meta("same"), name: "tooling.md", text: "first\n" });
+  await settings().writeSpec({ meta: meta("same"), name: "tooling.md", text: "second\n" });
+  expect(readFileSync(join(repo, "specs", "tooling.md"), "utf8")).toBe("first\n");
+});
+
+test("ReadTaskSpecs and RepinTaskSpecs: read the pin, re-pin to HEAD, refuse a bad slug, no token is refused", async () => {
+  const { settings, repo, alinery } = await start();
+  const sh = (...args: string[]) => {
+    const env = { ...process.env };
+    delete env.GIT_DIR;
+    const r = Bun.spawnSync(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { stdout: "pipe", stderr: "pipe", env });
+    if (r.exitCode !== 0) throw new Error(r.stderr.toString());
+    return r.stdout.toString().trim();
+  };
+  sh("init", "-q", "-b", "main");
+  sh("commit", "-q", "--allow-empty", "-m", "init");
+  const task = join(alinery, "tasks", "t1");
+  mkdirSync(task, { recursive: true });
+  writeFileSync(join(task, "task.md"), 'name = "T"\nslug = "t1"\nbranch = "t1"\nworktree = ""\nhas_worktree = false\ncreated = 1\n');
+
+  expect(await settings().readTaskSpecs({ slug: "t1" })).toMatchObject({ commit: "", files: [], headFiles: 0 });
+  await settings().writeSpec({ meta: meta("a"), name: "tooling.md", text: "ruff\n" });
+  sh("add", ".");
+  sh("commit", "-qm", "specs");
+  expect(await settings().readTaskSpecs({ slug: "t1" })).toMatchObject({ commit: "", files: [], headFiles: 1 });
+
+  const pinned = await settings().repinTaskSpecs({ meta: meta("b"), slug: "t1" });
+  expect(pinned.commit).toBe(sh("rev-parse", "HEAD"));
+  expect(pinned.files).toEqual(["tooling.md"]);
+  expect(await settings().readTaskSpecs({ slug: "t1" })).toMatchObject({ commit: pinned.commit, files: ["tooling.md"], headFiles: 1 });
+
+  expect(await code(settings().readTaskSpecs({ slug: "../x" }))).toBe(Code.InvalidArgument);
+  expect(await code(settings().repinTaskSpecs({ meta: meta("c"), slug: "nope" }))).toBe(Code.NotFound);
+  expect(await code(settings(null).readTaskSpecs({ slug: "t1" }))).toBe(Code.Unauthenticated);
+});

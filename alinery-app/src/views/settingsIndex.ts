@@ -34,6 +34,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       },
       { id: "agents.providers", label: "Providers", keywords: "sign in login accounts api key openai anthropic claude xai customizations skills extensions agent directory" },
       { id: "agents.playbooks", label: "Playbooks", keywords: "default playbook superdevelop" },
+      { id: "agents.requirements", label: "Repo requirements", keywords: "specs standards rules lint linter tooling architecture kiro steering conventions" },
     ],
   },
   { key: "connections", label: "Connections", keywords: "github linear oauth token keychain gh ssh remote hosts machines import issues", parts: [] },

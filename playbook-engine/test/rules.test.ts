@@ -471,6 +471,46 @@ test('step tokens replace the extra and the handoff for that launch only', async
   assert.match(build.prompt, /\/task\/sessions/);
 });
 
+test('the repository requirements are appended to every step prompt, after the token pass, and read at each launch', async () => {
+  const pb = playbook([
+    step('a', { prompt: 'Do a. {{TASK_SLUG}}', inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'a.md' }] }),
+    step('b', { prompt: 'Do b.', inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'b.md' }] }),
+  ]);
+  const dir = taskDir();
+  const harness = new FakeHarness(async () => {});
+  let reads = 0;
+  const engine = openEngine(pb, harness, dir, { tokens: { TASK_SLUG: 'slug' }, requirements: async () => `Use ruff {{NOT_A_TOKEN}}. Read ${++reads}.` });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  assert.equal(reads, 2);
+  const [a, b] = ['a', 'b'].map((key) => harness.launches.find((launch) => launch.step === key)!.prompt);
+  assert.match(a, /Do a\. slug\n\n## Repository requirements\n\nUse ruff \{\{NOT_A_TOKEN\}\}\. Read \d\.\n\n## Engine assignment/);
+  assert.match(b, /Do b\.\n\n## Repository requirements/);
+  assert.notEqual(a.match(/Read \d/)![0], b.match(/Read \d/)![0]);
+});
+
+test('no requirements adds no section, and a throwing hook fails the launch with its reason', async () => {
+  const pb = playbook([step('s', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'a.md' }] })]);
+  const dir = taskDir();
+  const harness = new FakeHarness(async () => {});
+  const none = openEngine(pb, harness, dir, { requirements: async () => '' });
+  none.seed(seedTicket(dir));
+  await none.tick();
+  assert.doesNotMatch(harness.launches[0].prompt, /Repository requirements/);
+
+  const dir2 = taskDir();
+  const broken = openEngine(pb, new FakeHarness(async () => {}), dir2, {
+    requirements: () => {
+      throw new Error('specs unreadable');
+    },
+  });
+  broken.seed(seedTicket(dir2));
+  await broken.tick();
+  const [execution] = byStep(broken, 's');
+  assert.equal(execution.status, 'failed');
+  assert.match(execution.failure ?? '', /specs unreadable/);
+});
+
 test('overlapping ticks launch an execution once', async () => {
   const one = playbook([step('s', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'a.md' }] })]);
   const dir = taskDir();

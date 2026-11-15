@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { DomainError } from "../platform/lock.ts";
 import { commitWorktree, compareUrl, defaultBaseBranch, deleteExecutionRefs, githubPullRequestRef, pullRequestInputs, pushAndCompareUrl, recordDiscoveredPullRequest, recordWorktreeTree, removeWorktree, setPrUrl, taskSourceBranches } from "./gitActions.ts";
 import { readTaskChecked, taskDir } from "./taskFiles.ts";
+import { readPin, requirementsFor } from "./repoSpecs.ts";
 import { provisionTask } from "./tasks.ts";
 
 const PLAYBOOK = readFileSync(resolve(import.meta.dir, "../../../playbooks/one-shot/playbook.md"), "utf8");
@@ -226,6 +227,22 @@ test("the base branch is origin's HEAD, else main", async () => {
 });
 
 // ---- task writes --------------------------------------------------------------------------------------------
+
+test("a new task's requirements are pinned to the commit its worktree branched from", async () => {
+  const { repo } = makeRepo();
+  mkdirSync(join(repo, "specs"));
+  writeFileSync(join(repo, "specs", "requirements.md"), "Use ruff.\n");
+  sh(repo, "add", ".");
+  sh(repo, "commit", "-qm", "specs");
+  const task = await makeTask(repo);
+  const pinned = sh(String(task.worktree), "rev-parse", "HEAD");
+  expect(readPin(taskDir(repo, task.slug))).toBe(pinned);
+  expect(pinned).toBe(sh(repo, "rev-parse", "HEAD"));
+  // A later commit to the repository leaves the task's pin where it was.
+  writeFileSync(join(repo, "specs", "requirements.md"), "Use black.\n");
+  sh(repo, "commit", "-qam", "later");
+  expect(await requirementsFor(repo, taskDir(repo, task.slug))).toContain("Use ruff.");
+});
 
 test("commit stages everything and commits in the worktree; a second commit reports git's own words", async () => {
   const { repo } = makeRepo();

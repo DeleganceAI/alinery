@@ -16,7 +16,235 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/settings.proto.
  */
 export const file_alinery_v1_settings: GenFile = /*@__PURE__*/
-  fileDesc("ChlhbGluZXJ5L3YxL3NldHRpbmdzLnByb3RvEgphbGluZXJ5LnYxIogBChVXcml0ZU92ZXJyaWRlc1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEiwKCW92ZXJyaWRlcxgCIAEoCzIZLmFsaW5lcnkudjEuUmVwb092ZXJyaWRlcxIZChFleHBlY3RlZF9yZXZpc2lvbhgDIAEoBCI+ChZXcml0ZU92ZXJyaWRlc1Jlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiaAoUQ2xlYXJPdmVycmlkZVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEg0KBWZpZWxkGAIgASgJEhkKEWV4cGVjdGVkX3JldmlzaW9uGAMgASgEIj0KFUNsZWFyT3ZlcnJpZGVSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkIl0KG1dyaXRlSG9zdGVkSW5mZXJlbmNlUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESFgoOaW5mZXJlbmNlX2pzb24YAiABKAkiHgocV3JpdGVIb3N0ZWRJbmZlcmVuY2VSZXNwb25zZSI8ChJFbnN1cmVSZWFkeVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhIjsKE0Vuc3VyZVJlYWR5UmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZDKrAgoPU2V0dGluZ3NTZXJ2aWNlElcKDldyaXRlT3ZlcnJpZGVzEiEuYWxpbmVyeS52MS5Xcml0ZU92ZXJyaWRlc1JlcXVlc3QaIi5hbGluZXJ5LnYxLldyaXRlT3ZlcnJpZGVzUmVzcG9uc2USVAoNQ2xlYXJPdmVycmlkZRIgLmFsaW5lcnkudjEuQ2xlYXJPdmVycmlkZVJlcXVlc3QaIS5hbGluZXJ5LnYxLkNsZWFyT3ZlcnJpZGVSZXNwb25zZRJpChRXcml0ZUhvc3RlZEluZmVyZW5jZRInLmFsaW5lcnkudjEuV3JpdGVIb3N0ZWRJbmZlcmVuY2VSZXF1ZXN0GiguYWxpbmVyeS52MS5Xcml0ZUhvc3RlZEluZmVyZW5jZVJlc3BvbnNlMl0KC1JlcG9TZXJ2aWNlEk4KC0Vuc3VyZVJlYWR5Eh4uYWxpbmVyeS52MS5FbnN1cmVSZWFkeVJlcXVlc3QaHy5hbGluZXJ5LnYxLkVuc3VyZVJlYWR5UmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common, file_alinery_v1_entities]);
+  fileDesc("ChlhbGluZXJ5L3YxL3NldHRpbmdzLnByb3RvEgphbGluZXJ5LnYxIhIKEFJlYWRTcGVjc1JlcXVlc3QiXQoIU3BlY0ZpbGUSDAoEbmFtZRgBIAEoCRIPCgdwcmVzZW50GAIgASgIEgwKBHRleHQYAyABKAkSEQoJY29tbWl0dGVkGAQgASgIEhEKCXRvb19sYXJnZRgFIAEoCCJLChFSZWFkU3BlY3NSZXNwb25zZRIjCgVmaWxlcxgBIAMoCzIULmFsaW5lcnkudjEuU3BlY0ZpbGUSEQoJbWF4X2NoYXJzGAIgASgNIlYKEFdyaXRlU3BlY1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgwKBG5hbWUYAiABKAkSDAoEdGV4dBgDIAEoCSITChFXcml0ZVNwZWNSZXNwb25zZSIkChRSZWFkVGFza1NwZWNzUmVxdWVzdBIMCgRzbHVnGAEgASgJIkoKFVJlYWRUYXNrU3BlY3NSZXNwb25zZRIOCgZjb21taXQYASABKAkSDQoFZmlsZXMYAiADKAkSEgoKaGVhZF9maWxlcxgDIAEoDSJNChVSZXBpblRhc2tTcGVjc1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgwKBHNsdWcYAiABKAkiNwoWUmVwaW5UYXNrU3BlY3NSZXNwb25zZRIOCgZjb21taXQYASABKAkSDQoFZmlsZXMYAiADKAkiiAEKFVdyaXRlT3ZlcnJpZGVzUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESLAoJb3ZlcnJpZGVzGAIgASgLMhkuYWxpbmVyeS52MS5SZXBvT3ZlcnJpZGVzEhkKEWV4cGVjdGVkX3JldmlzaW9uGAMgASgEIj4KFldyaXRlT3ZlcnJpZGVzUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJoChRDbGVhck92ZXJyaWRlUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESDQoFZmllbGQYAiABKAkSGQoRZXhwZWN0ZWRfcmV2aXNpb24YAyABKAQiPQoVQ2xlYXJPdmVycmlkZVJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiXQobV3JpdGVIb3N0ZWRJbmZlcmVuY2VSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIWCg5pbmZlcmVuY2VfanNvbhgCIAEoCSIeChxXcml0ZUhvc3RlZEluZmVyZW5jZVJlc3BvbnNlIjwKEkVuc3VyZVJlYWR5UmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGEiOwoTRW5zdXJlUmVhZHlSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkMu4ECg9TZXR0aW5nc1NlcnZpY2USVwoOV3JpdGVPdmVycmlkZXMSIS5hbGluZXJ5LnYxLldyaXRlT3ZlcnJpZGVzUmVxdWVzdBoiLmFsaW5lcnkudjEuV3JpdGVPdmVycmlkZXNSZXNwb25zZRJUCg1DbGVhck92ZXJyaWRlEiAuYWxpbmVyeS52MS5DbGVhck92ZXJyaWRlUmVxdWVzdBohLmFsaW5lcnkudjEuQ2xlYXJPdmVycmlkZVJlc3BvbnNlEmkKFFdyaXRlSG9zdGVkSW5mZXJlbmNlEicuYWxpbmVyeS52MS5Xcml0ZUhvc3RlZEluZmVyZW5jZVJlcXVlc3QaKC5hbGluZXJ5LnYxLldyaXRlSG9zdGVkSW5mZXJlbmNlUmVzcG9uc2USSAoJUmVhZFNwZWNzEhwuYWxpbmVyeS52MS5SZWFkU3BlY3NSZXF1ZXN0Gh0uYWxpbmVyeS52MS5SZWFkU3BlY3NSZXNwb25zZRJICglXcml0ZVNwZWMSHC5hbGluZXJ5LnYxLldyaXRlU3BlY1JlcXVlc3QaHS5hbGluZXJ5LnYxLldyaXRlU3BlY1Jlc3BvbnNlElQKDVJlYWRUYXNrU3BlY3MSIC5hbGluZXJ5LnYxLlJlYWRUYXNrU3BlY3NSZXF1ZXN0GiEuYWxpbmVyeS52MS5SZWFkVGFza1NwZWNzUmVzcG9uc2USVwoOUmVwaW5UYXNrU3BlY3MSIS5hbGluZXJ5LnYxLlJlcGluVGFza1NwZWNzUmVxdWVzdBoiLmFsaW5lcnkudjEuUmVwaW5UYXNrU3BlY3NSZXNwb25zZTJdCgtSZXBvU2VydmljZRJOCgtFbnN1cmVSZWFkeRIeLmFsaW5lcnkudjEuRW5zdXJlUmVhZHlSZXF1ZXN0Gh8uYWxpbmVyeS52MS5FbnN1cmVSZWFkeVJlc3BvbnNlYgZwcm90bzM", [file_alinery_v1_common, file_alinery_v1_entities]);
+
+/**
+ * The repository's requirement files: `specs/requirements.md`, `specs/tooling.md` and `specs/architecture.md` in the
+ * repository root, and no other file in that folder. ReadSpecs answers with the working tree (what Settings edits);
+ * a playbook step is given the committed text instead. WriteSpec creates or replaces one file and never commits. It is
+ * not an AGENT RPC: an agent must not write the rules it is held to.
+ *
+ * @generated from message alinery.v1.ReadSpecsRequest
+ */
+export type ReadSpecsRequest = Message<"alinery.v1.ReadSpecsRequest"> & {
+};
+
+/**
+ * Describes the message alinery.v1.ReadSpecsRequest.
+ * Use `create(ReadSpecsRequestSchema)` to create a new message.
+ */
+export const ReadSpecsRequestSchema: GenMessage<ReadSpecsRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 0);
+
+/**
+ * @generated from message alinery.v1.SpecFile
+ */
+export type SpecFile = Message<"alinery.v1.SpecFile"> & {
+  /**
+   * one of the three names
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * @generated from field: bool present = 2;
+   */
+  present: boolean;
+
+  /**
+   * empty when absent or too_large
+   *
+   * @generated from field: string text = 3;
+   */
+  text: string;
+
+  /**
+   * present and identical to HEAD's copy
+   *
+   * @generated from field: bool committed = 4;
+   */
+  committed: boolean;
+
+  /**
+   * over max_chars: no text is returned, since saving a cut-down copy would lose the rest
+   *
+   * @generated from field: bool too_large = 5;
+   */
+  tooLarge: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.SpecFile.
+ * Use `create(SpecFileSchema)` to create a new message.
+ */
+export const SpecFileSchema: GenMessage<SpecFile> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 1);
+
+/**
+ * @generated from message alinery.v1.ReadSpecsResponse
+ */
+export type ReadSpecsResponse = Message<"alinery.v1.ReadSpecsResponse"> & {
+  /**
+   * always the three names, in order
+   *
+   * @generated from field: repeated alinery.v1.SpecFile files = 1;
+   */
+  files: SpecFile[];
+
+  /**
+   * @generated from field: uint32 max_chars = 2;
+   */
+  maxChars: number;
+};
+
+/**
+ * Describes the message alinery.v1.ReadSpecsResponse.
+ * Use `create(ReadSpecsResponseSchema)` to create a new message.
+ */
+export const ReadSpecsResponseSchema: GenMessage<ReadSpecsResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 2);
+
+/**
+ * @generated from message alinery.v1.WriteSpecRequest
+ */
+export type WriteSpecRequest = Message<"alinery.v1.WriteSpecRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * not one of the three, or text over max_chars: INVALID_ARGUMENT
+   *
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string text = 3;
+   */
+  text: string;
+};
+
+/**
+ * Describes the message alinery.v1.WriteSpecRequest.
+ * Use `create(WriteSpecRequestSchema)` to create a new message.
+ */
+export const WriteSpecRequestSchema: GenMessage<WriteSpecRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 3);
+
+/**
+ * @generated from message alinery.v1.WriteSpecResponse
+ */
+export type WriteSpecResponse = Message<"alinery.v1.WriteSpecResponse"> & {
+};
+
+/**
+ * Describes the message alinery.v1.WriteSpecResponse.
+ * Use `create(WriteSpecResponseSchema)` to create a new message.
+ */
+export const WriteSpecResponseSchema: GenMessage<WriteSpecResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 4);
+
+/**
+ * A task's requirements are pinned to the commit its worktree branched from (`tasks/<slug>/specs.lock.json`), so the
+ * rules it is held to do not move when the repository changes. Not AGENT RPCs: an agent must not re-pin its own task.
+ *
+ * @generated from message alinery.v1.ReadTaskSpecsRequest
+ */
+export type ReadTaskSpecsRequest = Message<"alinery.v1.ReadTaskSpecsRequest"> & {
+  /**
+   * @generated from field: string slug = 1;
+   */
+  slug: string;
+};
+
+/**
+ * Describes the message alinery.v1.ReadTaskSpecsRequest.
+ * Use `create(ReadTaskSpecsRequestSchema)` to create a new message.
+ */
+export const ReadTaskSpecsRequestSchema: GenMessage<ReadTaskSpecsRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 5);
+
+/**
+ * @generated from message alinery.v1.ReadTaskSpecsResponse
+ */
+export type ReadTaskSpecsResponse = Message<"alinery.v1.ReadTaskSpecsResponse"> & {
+  /**
+   * empty: the task has no pin yet (it is pinned at its first launch)
+   *
+   * @generated from field: string commit = 1;
+   */
+  commit: string;
+
+  /**
+   * the spec files committed at that commit
+   *
+   * @generated from field: repeated string files = 2;
+   */
+  files: string[];
+
+  /**
+   * how many the repository's HEAD has now
+   *
+   * @generated from field: uint32 head_files = 3;
+   */
+  headFiles: number;
+};
+
+/**
+ * Describes the message alinery.v1.ReadTaskSpecsResponse.
+ * Use `create(ReadTaskSpecsResponseSchema)` to create a new message.
+ */
+export const ReadTaskSpecsResponseSchema: GenMessage<ReadTaskSpecsResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 6);
+
+/**
+ * Pins the task to the repository's HEAD now. A step that is already running keeps the rules it started with.
+ *
+ * @generated from message alinery.v1.RepinTaskSpecsRequest
+ */
+export type RepinTaskSpecsRequest = Message<"alinery.v1.RepinTaskSpecsRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string slug = 2;
+   */
+  slug: string;
+};
+
+/**
+ * Describes the message alinery.v1.RepinTaskSpecsRequest.
+ * Use `create(RepinTaskSpecsRequestSchema)` to create a new message.
+ */
+export const RepinTaskSpecsRequestSchema: GenMessage<RepinTaskSpecsRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 7);
+
+/**
+ * @generated from message alinery.v1.RepinTaskSpecsResponse
+ */
+export type RepinTaskSpecsResponse = Message<"alinery.v1.RepinTaskSpecsResponse"> & {
+  /**
+   * @generated from field: string commit = 1;
+   */
+  commit: string;
+
+  /**
+   * @generated from field: repeated string files = 2;
+   */
+  files: string[];
+};
+
+/**
+ * Describes the message alinery.v1.RepinTaskSpecsResponse.
+ * Use `create(RepinTaskSpecsResponseSchema)` to create a new message.
+ */
+export const RepinTaskSpecsResponseSchema: GenMessage<RepinTaskSpecsResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 8);
 
 /**
  * @generated from message alinery.v1.WriteOverridesRequest
@@ -47,7 +275,7 @@ export type WriteOverridesRequest = Message<"alinery.v1.WriteOverridesRequest"> 
  * Use `create(WriteOverridesRequestSchema)` to create a new message.
  */
 export const WriteOverridesRequestSchema: GenMessage<WriteOverridesRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 0);
+  messageDesc(file_alinery_v1_settings, 9);
 
 /**
  * @generated from message alinery.v1.WriteOverridesResponse
@@ -64,7 +292,7 @@ export type WriteOverridesResponse = Message<"alinery.v1.WriteOverridesResponse"
  * Use `create(WriteOverridesResponseSchema)` to create a new message.
  */
 export const WriteOverridesResponseSchema: GenMessage<WriteOverridesResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 1);
+  messageDesc(file_alinery_v1_settings, 10);
 
 /**
  * @generated from message alinery.v1.ClearOverrideRequest
@@ -93,7 +321,7 @@ export type ClearOverrideRequest = Message<"alinery.v1.ClearOverrideRequest"> & 
  * Use `create(ClearOverrideRequestSchema)` to create a new message.
  */
 export const ClearOverrideRequestSchema: GenMessage<ClearOverrideRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 2);
+  messageDesc(file_alinery_v1_settings, 11);
 
 /**
  * @generated from message alinery.v1.ClearOverrideResponse
@@ -110,7 +338,7 @@ export type ClearOverrideResponse = Message<"alinery.v1.ClearOverrideResponse"> 
  * Use `create(ClearOverrideResponseSchema)` to create a new message.
  */
 export const ClearOverrideResponseSchema: GenMessage<ClearOverrideResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 3);
+  messageDesc(file_alinery_v1_settings, 12);
 
 /**
  * The hosted-inference credential. The shell mints and refreshes the token (it holds the account)
@@ -137,7 +365,7 @@ export type WriteHostedInferenceRequest = Message<"alinery.v1.WriteHostedInferen
  * Use `create(WriteHostedInferenceRequestSchema)` to create a new message.
  */
 export const WriteHostedInferenceRequestSchema: GenMessage<WriteHostedInferenceRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 4);
+  messageDesc(file_alinery_v1_settings, 13);
 
 /**
  * @generated from message alinery.v1.WriteHostedInferenceResponse
@@ -150,7 +378,7 @@ export type WriteHostedInferenceResponse = Message<"alinery.v1.WriteHostedInfere
  * Use `create(WriteHostedInferenceResponseSchema)` to create a new message.
  */
 export const WriteHostedInferenceResponseSchema: GenMessage<WriteHostedInferenceResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 5);
+  messageDesc(file_alinery_v1_settings, 14);
 
 /**
  * Idempotent: `.alinery/`, the `.gitignore` entry, `harnesses.toml` and `config.toml`, each created only when missing.
@@ -169,7 +397,7 @@ export type EnsureReadyRequest = Message<"alinery.v1.EnsureReadyRequest"> & {
  * Use `create(EnsureReadyRequestSchema)` to create a new message.
  */
 export const EnsureReadyRequestSchema: GenMessage<EnsureReadyRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 6);
+  messageDesc(file_alinery_v1_settings, 15);
 
 /**
  * @generated from message alinery.v1.EnsureReadyResponse
@@ -186,7 +414,7 @@ export type EnsureReadyResponse = Message<"alinery.v1.EnsureReadyResponse"> & {
  * Use `create(EnsureReadyResponseSchema)` to create a new message.
  */
 export const EnsureReadyResponseSchema: GenMessage<EnsureReadyResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 7);
+  messageDesc(file_alinery_v1_settings, 16);
 
 /**
  * Repository settings. The read is the `settings/_/repo` entity (entities.proto); global settings
@@ -224,6 +452,46 @@ export const SettingsService: GenService<{
     methodKind: "unary";
     input: typeof WriteHostedInferenceRequestSchema;
     output: typeof WriteHostedInferenceResponseSchema;
+  },
+  /**
+   * VIEW
+   *
+   * @generated from rpc alinery.v1.SettingsService.ReadSpecs
+   */
+  readSpecs: {
+    methodKind: "unary";
+    input: typeof ReadSpecsRequestSchema;
+    output: typeof ReadSpecsResponseSchema;
+  },
+  /**
+   * ACT
+   *
+   * @generated from rpc alinery.v1.SettingsService.WriteSpec
+   */
+  writeSpec: {
+    methodKind: "unary";
+    input: typeof WriteSpecRequestSchema;
+    output: typeof WriteSpecResponseSchema;
+  },
+  /**
+   * VIEW
+   *
+   * @generated from rpc alinery.v1.SettingsService.ReadTaskSpecs
+   */
+  readTaskSpecs: {
+    methodKind: "unary";
+    input: typeof ReadTaskSpecsRequestSchema;
+    output: typeof ReadTaskSpecsResponseSchema;
+  },
+  /**
+   * ACT
+   *
+   * @generated from rpc alinery.v1.SettingsService.RepinTaskSpecs
+   */
+  repinTaskSpecs: {
+    methodKind: "unary";
+    input: typeof RepinTaskSpecsRequestSchema;
+    output: typeof RepinTaskSpecsResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_settings, 0);
