@@ -1789,6 +1789,9 @@ pub(crate) struct RepoRuntime {
     /// A conflict's owners by lane, every one a takeover must stop before this build's daemon starts; empty otherwise.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) owner_lanes: Vec<String>,
+    /// The conflict is sessions from an older Alinery: only Back up and reset opens the project.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) outdated: bool,
     /// `local`, or the ssh host id the repo lives on.
     pub(crate) host: String,
     /// The wire protocol its daemon speaks: from `Hello`, or for a conflict from its owners; `None` when nothing said.
@@ -1805,6 +1808,7 @@ pub(crate) struct RepoRuntime {
 
 pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>, origin: Option<DaemonOrigin>) -> RepoRuntime {
     let mut protocol = origin.as_ref().and_then(|origin| origin.protocol);
+    let mut outdated = false;
     let (state, issues, owner_lanes) = match daemon {
         Some(RepoDaemon::Connected { compat: DaemonCompat::Current }) => ("current", vec![], vec![]),
         Some(RepoDaemon::Connected {
@@ -1813,6 +1817,7 @@ pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>, origin: Optio
         Some(RepoDaemon::Connected { .. }) => ("build_drift", vec![], vec![]),
         Some(RepoDaemon::Conflicted(conflict)) => {
             protocol = conflict.owners.iter().find_map(|owner| owner.protocol).or(protocol);
+            outdated = conflict.outdated;
             ("conflict", conflict.issues, conflict.owners.into_iter().map(|owner| owner.lane).collect())
         }
         None => ("not_attached", vec![], vec![]),
@@ -1822,6 +1827,7 @@ pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>, origin: Optio
         state,
         issues,
         owner_lanes,
+        outdated,
         protocol,
         host: crate::daemon_rpc::link_host(repo),
         mine: origin.as_ref().is_some_and(|origin| origin.started_by == alinery_core::started_by_label()),

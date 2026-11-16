@@ -360,17 +360,23 @@ fn classify_attached(hello: &HelloResponse, repo: &Path, app_config: &Path) -> R
     Ok(compat)
 }
 
-pub(crate) fn ensure_daemon(repo: &Path, app_config: &Path) -> Result<DaemonCompat, EnsureDaemonError> {
-    if let Ok(hello) = hello_current(repo, app_config, HELLO_OBSERVE) {
-        return classify_attached(&hello, repo, app_config);
-    }
+/// The gate before any start: nothing else may own the project, and it may not hold sessions from an older Alinery. Every
+/// start goes through it, the poller's included, so a held project stays down and shows why instead of running anyway.
+fn available(repo: &Path, app_config: &Path) -> Result<(), Box<DaemonConflict>> {
     alinery_core::repo_ownership::check_available(repo).map_err(|detail| {
         let mut conflict = daemon_conflicts(repo, app_config);
         if !conflict.issues.contains(&detail) {
             conflict.issues.push(detail);
         }
-        EnsureDaemonError::Mismatch(Box::new(conflict))
-    })?;
+        Box::new(conflict)
+    })
+}
+
+pub(crate) fn ensure_daemon(repo: &Path, app_config: &Path) -> Result<DaemonCompat, EnsureDaemonError> {
+    if let Ok(hello) = hello_current(repo, app_config, HELLO_OBSERVE) {
+        return classify_attached(&hello, repo, app_config);
+    }
+    available(repo, app_config).map_err(EnsureDaemonError::Mismatch)?;
     crate::pi_durable::start_daemon(repo, app_config).map_err(EnsureDaemonError::Failed)?;
     // About 5 s: the daemon takes the repository's ownership locks and adopts its tasks before it listens.
     for _ in 0..100 {
@@ -1046,9 +1052,16 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
                         state.set_daemon(&repo, compat);
                     }
                 }
-                PollerAction::Spawn if !daemon_answers(&repo) => {
-                    let _ = crate::pi_durable::start_daemon(&repo, &app_config);
-                }
+                PollerAction::Spawn if !daemon_answers(&repo) => match available(&repo, &app_config) {
+                    Ok(()) => {
+                        let _ = crate::pi_durable::start_daemon(&repo, &app_config);
+                    }
+                    Err(conflict) => {
+                        if !state.is_quitting() && !state.is_closing(&repo) {
+                            state.set_daemon_conflict(&repo, *conflict);
+                        }
+                    }
+                },
                 PollerAction::Spawn => {}
                 PollerAction::SurfaceConflict => {
                     let conflict = daemon_conflicts(&repo, &app_config);

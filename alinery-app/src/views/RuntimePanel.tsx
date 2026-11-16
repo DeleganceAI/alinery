@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useState } from "react";
 import { copyTextToClipboard } from "../chat/CopyMessage";
 import { askConfirm, confirmDanger } from "../confirm";
+import { backUpAndReset } from "../DaemonConflictBanner";
 import * as ipc from "../ipc";
+import { isRemoteRepo } from "../remoteRepo";
 import { updateDaemon } from "../SyncLinks";
 import { repoName } from "../shared";
 import { type OfficeTools, readOfficeTools } from "../sync/agent";
@@ -44,6 +46,9 @@ export function officeSummary(office: OfficeTools): string {
   const missing = ["soffice", "pdftoppm", "qpdf"].filter((name) => !found(name)).map((name) => (name === "soffice" ? "LibreOffice" : name));
   return missing.length ? `${python} · missing ${missing.join(", ")}` : `${python} · LibreOffice, pdftoppm and qpdf found`;
 }
+
+/** Down and held for sessions from an older Alinery: nothing runs to restart, and only Back up and reset opens it. */
+export const isHeld = (repo: RepoRuntime) => !!repo.outdated && !repo.owner_lanes?.length && !isRemoteRepo(repo.repo);
 
 /** Every running daemon gets Restart, a conflicted one most of all: on this computer `stop_daemon` replaces an older protocol
  *  on this build's lane (the usual conflict after an update), and refuses another build's owner, whose takeover is the repo's banner. */
@@ -388,18 +393,30 @@ export function RuntimePanel() {
                           </td>
                           <td className="dim">{daemonBuild(repo, status.protocol)}</td>
                           <td className="dim">{repo.repo in live ? `${live[repo.repo]} live` : ""}</td>
-                          <td title={repo.issues.join("\n") || undefined}>{REPO_STATE[repo.state]}</td>
+                          <td title={repo.issues.join("\n") || undefined}>{isHeld(repo) ? "Held: has sessions from an older Alinery" : REPO_STATE[repo.state]}</td>
                           <td>
-                            {canRestart(repo) && (
+                            {isHeld(repo) ? (
                               <button
                                 type="button"
                                 className="btn ghost small"
-                                aria-label={`Restart the daemon for ${repoName(repo.repo)}`}
+                                aria-label={`Back up and reset ${repoName(repo.repo)}`}
                                 disabled={busy !== null}
-                                onClick={() => void act(`repo:${repo.repo}`, () => updateDaemon(repo, live[repo.repo]))}
+                                onClick={() => void act(`repo:${repo.repo}`, () => backUpAndReset(repo.repo, true))}
                               >
-                                Restart…
+                                Back up and reset…
                               </button>
+                            ) : (
+                              canRestart(repo) && (
+                                <button
+                                  type="button"
+                                  className="btn ghost small"
+                                  aria-label={`Restart the daemon for ${repoName(repo.repo)}`}
+                                  disabled={busy !== null}
+                                  onClick={() => void act(`repo:${repo.repo}`, () => updateDaemon(repo, live[repo.repo]))}
+                                >
+                                  Restart…
+                                </button>
+                              )
                             )}
                           </td>
                         </tr>

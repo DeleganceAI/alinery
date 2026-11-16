@@ -440,6 +440,8 @@ export type RepoRuntime = {
   issues: string[];
   /** A conflict's owners by lane; absent otherwise. */
   owner_lanes?: string[];
+  /** The conflict is sessions from an older Alinery, which only Back up and reset clears; absent otherwise. */
+  outdated?: boolean;
   /** The wire protocol its daemon speaks; null when nothing said. */
   protocol: number | null;
   host: string;

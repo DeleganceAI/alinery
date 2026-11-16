@@ -40,6 +40,7 @@ vi.mock("../ipc", () =>
     })),
     confirmRepoTakeover: vi.fn(async () => ({ status: "attached" as const })),
     cancelRepoTakeover: vi.fn(async () => {}),
+    resetRepoState: vi.fn(async () => ""),
     remoteConnect: vi.fn(async () => {}),
     machineMcpPeer: vi.fn(async () => "4242:1700000000.000001"),
     forceRestartMachineMcp: vi.fn(async () => {}),
@@ -298,4 +299,16 @@ it("reports a takeover the shell still blocks (sessions from an older Alinery) a
   fireEvent.click(await screen.findByRole("button", { name: "Restart the daemon for stuck" }));
   await waitFor(() => expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining("sessions from an older version of Alinery")));
   expect(toasts.success).not.toHaveBeenCalled();
+});
+
+it("offers Back up and reset, not Restart, on a project held for sessions from an older Alinery", async () => {
+  runtime.extra = [{ ...(stuck as object), owner_lanes: undefined, outdated: true } as never];
+  confirms.danger.mockResolvedValue(true);
+  vi.mocked(ipc.resetRepoState).mockResolvedValue("/Users/me/stuck-backup.zip");
+  render(<RuntimePanel />);
+  expect(await screen.findByText("Held: has sessions from an older Alinery")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Restart the daemon for stuck" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Back up and reset stuck" }));
+  await waitFor(() => expect(ipc.resetRepoState).toHaveBeenCalledWith("/Users/me/stuck"));
+  expect(confirms.danger.mock.calls[0][0]).toBe("Back up and reset stuck?");
 });
