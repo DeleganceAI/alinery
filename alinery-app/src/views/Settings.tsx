@@ -55,6 +55,7 @@ import { isRemoteRepo } from "../remoteRepo";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, playbookRefKey, repoName, samePlaybookRef, vinculumDefaultModel } from "../shared";
 import { startupViewOptions } from "../startupView";
 import { useLiveSessionsByRepo } from "../sync/hooks";
+import { type McpStatus as MachineMcpStatus, McpState, machineMcpStatus } from "../sync/mcp";
 import { useOverlay } from "../sync/overlay";
 import { listPlaybookCatalog } from "../sync/playbooks";
 import { clearRepoOverride, SettingsConflict, useRepoSettings, writeRepoOverrides } from "../sync/settings";
@@ -86,7 +87,7 @@ import type {
 import type { McpStatus } from "../useMcpStatus";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 import { RemoteHostsSettings } from "./RemoteHostsSettings";
-import { RuntimePanel } from "./RuntimePanel";
+import { MCP_STATE, RuntimePanel } from "./RuntimePanel";
 import "./Settings.css";
 import { SettingsSpecs } from "./SettingsSpecs";
 import { groupOf, matchSettings, SETTINGS_GROUPS, visibleGroups } from "./settingsIndex";
@@ -397,6 +398,13 @@ export function Settings({
   }, [activeRepo, knownRepos]);
 
   const selectedRepo = scope.kind === "repo" ? scope.repoPath : activeRepo;
+  // The machine MCP on this computer, asked through the active repository's daemon when that daemon is local.
+  const [machineMcp, setMachineMcp] = useState<MachineMcpStatus | null>(null);
+  const mcpRepo = activeRepo && !isRemoteRepo(activeRepo) ? activeRepo : "";
+  useEffect(() => {
+    if (!mcpRepo) return setMachineMcp(null);
+    machineMcpStatus(mcpRepo).then(setMachineMcp, () => setMachineMcp(null));
+  }, [mcpRepo]);
   const effective = cfg;
   const chatEnabled = global?.experiments?.show_chat ?? false;
   useEffect(() => {
@@ -933,6 +941,7 @@ export function Settings({
   const shownGroups = groups.filter((group) => !hide(group.key));
   // Each group's status line: read from state the page already holds, never a fetch of its own.
   const connected = connections?.filter((c) => c.connected).length ?? 0;
+  const mcpTone = (state: McpState) => (state === McpState.OK ? "ok" : state === McpState.ABSENT ? "off" : "warn");
   const readouts: Partial<Record<SettingsSectionKey, { text: string; tone?: "ok" | "warn" | "off" }>> = {
     appearance: { text: `${appearance.mode} · ${uiScale}×` },
     views: { text: `${gridViews.length} grid view${gridViews.length === 1 ? "" : "s"}` },
@@ -940,7 +949,11 @@ export function Settings({
     connections: connections ? { text: `${connected} of ${connections.length} linked`, tone: connected ? "ok" : "off" } : undefined,
     notifications: global.notifications.enabled ? { text: "On", tone: "ok" } : { text: "Off", tone: "off" },
     data: { text: isGlobal ? "Per repository" : selectedRepo },
-    mcp: mcpInstallReady(mcp) ? { text: "Ready", tone: "ok" } : { text: "Binary missing", tone: "warn" },
+    mcp: !mcpInstallReady(mcp)
+      ? { text: "Binary missing", tone: "warn" }
+      : machineMcp?.state
+        ? { text: MCP_STATE[machineMcp.state], tone: mcpTone(machineMcp.state) }
+        : { text: "Binary found" },
     system: displayedUpdate?.available ? { text: `${displayedUpdate.available.version} ready`, tone: "warn" } : { text: appVersion ? `v${appVersion}` : "Version unknown" },
   };
   // Shown in the rail only while something here needs the person, like the library's Signals.
@@ -2604,35 +2617,27 @@ export function Settings({
     );
     return (
       <div className="mcp-page">
-        <div className="mcp-hero">
-          <div className="mcp-hero-status">
-            <div className="mcp-chips">
-              {installReady && (
-                <span className="mcp-chip ok" title={mcp.binary_path}>
-                  <Check size={12} strokeWidth={2} aria-hidden="true" />
-                  Binary ready
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
         {!installReady && (
           <div className="mcp-unmet">
             <p>alinery-vinculum-daemon binary not found next to the app — rebuild.</p>
           </div>
         )}
         <p className="mcp-caption">
-          One MCP per computer serves every repository whose daemon is running, the app open or not. Its status, Restart, the optional token and HTTP are in Settings → Updates →
-          Runtime, for this computer and each connected ssh host.
+          One MCP per user on this computer serves every repository whose daemon runs here, the app open or not; an SSH host&apos;s repositories use that host&apos;s own MCP. Its
+          status, restart, optional token and HTTP are in{" "}
+          <button type="button" className="settings-link" onClick={() => jumpTo("system.updates")}>
+            System → Updates → Runtime
+          </button>
+          , for this computer and each connected SSH host.
         </p>
         <section className="mcp-section">
           <div className="mcp-section-head">
             <div>
               <h4 className="mcp-section-title">Host config</h4>
               <p className="mcp-caption">
-                Add Alinery MCP to Claude Desktop, Cursor, or any host that runs a command with args. Merge the <span className="mono">alinery</span> entry — do not overwrite the
-                whole file. Restart the host after editing config. One process serves every repo; pass <span className="mono">repo</span> as a per-call tool argument (a path from{" "}
-                <span className="mono">alinery_list_repos</span>).
+                Add Alinery MCP to Claude Desktop, Cursor, or any host that runs a command with args. Merge the <span className="mono">alinery</span> entry; do not overwrite the
+                whole file. Restart the host after editing its config. Each host runs its own bridge to the machine MCP, which serves every repo; pass{" "}
+                <span className="mono">repo</span> as a per-call tool argument (a path from <span className="mono">alinery_list_repos</span>).
               </p>
             </div>
             <button
@@ -2655,7 +2660,9 @@ export function Settings({
           <div className="mcp-advanced-body">
             <p className="mcp-caption">
               The config runs a bridge to the machine MCP, which calls each daemon with the token that daemon registered, so tools work while the daemon runs (the window can be
-              closed once the app has started it). There is <strong>no live PTY control</strong> over MCP. Host config file paths are in the README.
+              closed once the app has started it). There is <strong>no live PTY control</strong> over MCP. Config files: Claude Desktop,{" "}
+              <span className="mono">~/Library/Application Support/Claude/claude_desktop_config.json</span>; Cursor, <span className="mono">~/.cursor/mcp.json</span> (or{" "}
+              <span className="mono">.cursor/mcp.json</span> in a project).
             </p>
             {checkRow(installReady, "Binary path", mcp.binary_path, "alinery-vinculum-daemon binary not found next to the app — rebuild.")}
           </div>

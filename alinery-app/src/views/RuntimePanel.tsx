@@ -54,7 +54,7 @@ export async function updateHost(host: HostRuntime): Promise<boolean> {
   return true;
 }
 
-const MCP_STATE: Record<McpState, string> = {
+export const MCP_STATE: Record<McpState, string> = {
   [McpState.UNSPECIFIED]: "",
   [McpState.ABSENT]: "Starts on demand",
   [McpState.OK]: "Running",

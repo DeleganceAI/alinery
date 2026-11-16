@@ -85,7 +85,7 @@ describe("MCP settings", () => {
     expect(config.textContent).toContain("--bridge");
     expect(config.textContent).not.toContain("/path/to/");
     expect((screen.getByRole("button", { name: "Copy config" }) as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.getByText("Binary ready")).toBeTruthy();
+    expect(screen.getByText("Binary found")).toBeTruthy();
     expect(screen.queryByText(MISSING)).toBe(null);
     expect(screen.getByText(/Updates → Runtime/)).toBeTruthy();
     expect(screen.queryByRole("checkbox", { name: /App-managed server/ })).toBe(null);
