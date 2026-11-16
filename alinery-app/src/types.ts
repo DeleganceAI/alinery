@@ -416,7 +416,8 @@ export type RemoteHostView = {
   erased_sign_ins: string[];
 };
 /** The Settings Runtime panel's rows (`runtime_status`), read from the shell's memory and the bundled manifest. */
-export type RuntimeStatus = { hosts: HostRuntime[]; repos: RepoRuntime[]; local_link: LinkTraffic };
+/** `protocol` is the wire protocol this app speaks. */
+export type RuntimeStatus = { hosts: HostRuntime[]; repos: RepoRuntime[]; protocol: number; local_link: LinkTraffic };
 /** Calls and bytes the shell's bridge has carried to one host's daemons since the app started. */
 export type LinkTraffic = { calls: number; bytes_up: number; bytes_down: number };
 /** `running` is the host's runtime while connected; `bundled` is what this app carries for it. They differ when the host is stale. */
@@ -439,6 +440,8 @@ export type RepoRuntime = {
   issues: string[];
   /** A conflict's owners by lane; absent otherwise. */
   owner_lanes?: string[];
+  /** The wire protocol its daemon speaks; null when nothing said. */
+  protocol: number | null;
   host: string;
   version: string | null;
   started_by: string;

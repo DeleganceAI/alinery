@@ -135,9 +135,11 @@ function takeoverPrompt(owner: DaemonOwnerConflict): { sentence: string; accept:
 
 /** Takes over every daemon that owns `repo` on this computer, one confirmed owner at a time; the last one's takeover starts this
  *  build's daemon. Each dialog names what that owner's takeover stops, since a conflicted daemon's sessions are counted only here.
- *  A reconfirm (its sessions changed after the dialog) asks again. False once a dialog is declined. */
+ *  A reconfirm (its sessions changed after the dialog) asks again. False once a dialog is declined. Throws when the owners are gone
+ *  and this build's daemon still may not start (the conflict's issues say why, such as sessions from an older Alinery). */
 export async function takeOverEveryOwner(repo: string, lanes: string[]): Promise<boolean> {
   const name = repoName(repo);
+  let blocked: DaemonConflict | null = null;
   for (const lane of lanes) {
     let preview = await ipc.prepareRepoTakeover(repo, lane);
     for (;;) {
@@ -147,10 +149,14 @@ export async function takeOverEveryOwner(repo: string, lanes: string[]): Promise
         return false;
       }
       const outcome = await ipc.confirmRepoTakeover(preview.confirmation_id);
-      if (outcome.status !== "reconfirm") break;
+      if (outcome.status !== "reconfirm") {
+        blocked = outcome.status === "blocked" ? outcome.conflict : null;
+        break;
+      }
       preview = outcome.preview;
     }
   }
+  if (blocked) throw new Error(`${conflictEvidence(blocked).issues[0] ?? "another owner still holds it"}. Open ${name} to resolve it.`);
   return true;
 }
 

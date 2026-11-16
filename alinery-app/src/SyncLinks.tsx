@@ -56,12 +56,13 @@ export async function updateDaemon(repo: RepoRuntime, live?: number): Promise<bo
   const name = repoName(repo.repo);
   // A conflicted daemon here may be another build's, which only a takeover stops; it asks per owner, with the real session count.
   if (repo.owner_lanes?.length && !isRemoteRepo(repo.repo)) {
-    const done = await takeOverEveryOwner(repo.repo, repo.owner_lanes).catch((cause: unknown) => {
-      toast.error(`Couldn't restart the daemon for ${name}: ${String(cause)}`);
-      return true;
-    });
-    if (done) toast.success(`Restarted the daemon for ${name}`);
-    return done;
+    try {
+      if (!(await takeOverEveryOwner(repo.repo, repo.owner_lanes))) return false;
+      toast.success(`Restarted the daemon for ${name}`);
+    } catch (cause) {
+      toast.error(`Couldn't restart the daemon for ${name}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+    return true;
   }
   const plural = (n: number) => `${n} live session${n === 1 ? "" : "s"}`;
   const ok = await confirmDanger(

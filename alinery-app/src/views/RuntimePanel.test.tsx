@@ -13,7 +13,7 @@ vi.mock("../ipc", () =>
         { host_id: "h3", label: "offline", state: "idle", running: null, bundled: null, link: { calls: 0, bytes_up: 0, bytes_down: 0 }, daemons: [] },
       ],
       repos: [
-        { repo: "/Users/me/app", state: "build_drift", issues: [], host: "local", version: "0.25.0", started_by: "", os_user: "", mine: true },
+        { repo: "/Users/me/app", state: "build_drift", issues: [], host: "local", version: "0.25.0", started_by: "", os_user: "", protocol: 50, mine: true },
         {
           repo: "alinery+ssh://h1/home/me/svc",
           state: "conflict",
@@ -22,12 +22,14 @@ vi.mock("../ipc", () =>
           version: null,
           started_by: "",
           os_user: "",
+          protocol: 49,
           mine: false,
         },
-        { repo: "alinery+ssh://h2/srv/shared", state: "joined", issues: [], host: "h2", version: "0.25.0", started_by: "sam", os_user: "sam", mine: false },
-        { repo: "/Users/me/idle", state: "not_attached", issues: [], host: "local", version: null, started_by: "", os_user: "", mine: true },
+        { repo: "alinery+ssh://h2/srv/shared", state: "joined", issues: [], host: "h2", version: "0.25.0", started_by: "sam", os_user: "sam", protocol: 50, mine: false },
+        { repo: "/Users/me/idle", state: "not_attached", issues: [], host: "local", version: null, started_by: "", os_user: "", protocol: 50, mine: true },
         ...runtime.extra,
       ],
+      protocol: 50,
       local_link: { calls: 0, bytes_up: 0, bytes_down: 0 },
     }),
     stopDaemon: vi.fn(async () => {}),
@@ -67,6 +69,8 @@ vi.mock("../sync/mcp", async (original) => ({
 }));
 const confirms = vi.hoisted(() => ({ danger: vi.fn(), ask: vi.fn() }));
 vi.mock("../confirm", () => ({ confirmDanger: confirms.danger, askConfirm: confirms.ask }));
+const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn() }));
+vi.mock("../toast", () => ({ toast: Object.assign(vi.fn(), toasts) }));
 vi.mock("../sync/hooks", () => ({ useLiveSessionsByRepo: () => ({ "/Users/me/app": 2 }) }));
 vi.mock("../sync/agent", () => ({
   readOfficeTools: async () => ({
@@ -83,7 +87,7 @@ vi.mock("../sync/agent", () => ({
 
 import * as ipc from "../ipc";
 import { McpState } from "../sync/mcp";
-import { mcpHttpUrl, RuntimePanel } from "./RuntimePanel";
+import { daemonBuild, mcpHttpUrl, RuntimePanel } from "./RuntimePanel";
 
 afterEach(() => {
   runtime.extra = [];
@@ -111,6 +115,7 @@ it("marks only the host whose bundled runtime differs as stale, and names each d
   expect(rows.findIndex((row) => row.startsWith("svc"))).toBe(rows.findIndex((row) => row.startsWith("aagent")) + 1);
   expect(screen.getByText("Daemons by host")).toBeTruthy();
   expect(screen.getByText("Machine MCP by host")).toBeTruthy();
+  expect(screen.getByText("protocol 49 (app: 50)")).toBeTruthy();
 });
 
 it("says what the office skills will find on each running daemon, and links LibreOffice when it is missing", async () => {
@@ -197,7 +202,7 @@ it("requires a token only after a yes, and shows no Force restart for an MCP tha
 });
 
 it("asks each connected host's MCP through a daemon on that host, and offers Force restart for this computer's only", async () => {
-  const remote = { repo: "alinery+ssh://h2/srv/api", state: "current" as const, issues: [], host: "h2", version: "0.600.0", started_by: "", os_user: "", mine: true };
+  const remote = { repo: "alinery+ssh://h2/srv/api", state: "current" as const, issues: [], host: "h2", version: "0.600.0", started_by: "", os_user: "", protocol: 50, mine: true };
   runtime.extra = [remote as never];
   machine.status.mockImplementation(async (repo: string) => mcpStatus(repo === remote.repo ? McpState.STUCK : McpState.OK));
   render(<RuntimePanel />);
@@ -238,7 +243,18 @@ it("names the URL a client uses: the bind, the first address for all interfaces,
   expect(mcpHttpUrl(httpOf({ bind: "0.0.0.0", addresses: [] }), "box")).toBe("http://box:39470/mcp");
 });
 
-const stuck = { repo: "/Users/me/stuck", state: "conflict", issues: [], owner_lanes: ["", "dev"], host: "local", version: null, started_by: "", os_user: "", mine: true } as never;
+const stuck = {
+  repo: "/Users/me/stuck",
+  state: "conflict",
+  issues: [],
+  owner_lanes: ["", "dev"],
+  host: "local",
+  version: null,
+  started_by: "",
+  os_user: "",
+  protocol: 50,
+  mine: true,
+} as never;
 
 it("restarts this computer's conflicted daemon by taking over every owner, each confirmed, never through stop_daemon", async () => {
   runtime.extra = [stuck];
@@ -262,4 +278,24 @@ it("stops at the first declined owner and releases its confirmation", async () =
   await waitFor(() => expect(ipc.cancelRepoTakeover).toHaveBeenCalledWith("c-"));
   expect(ipc.confirmRepoTakeover).not.toHaveBeenCalled();
   expect(ipc.prepareRepoTakeover).toHaveBeenCalledTimes(1);
+});
+
+it("names a daemon's release and its protocol against the app's", () => {
+  const row = { repo: "/r", state: "current", issues: [], host: "local", version: "0.601.0", protocol: 50, started_by: "", os_user: "", mine: true } as const;
+  expect(daemonBuild({ ...row, issues: [] }, 50)).toBe("v0.601.0 · protocol 50 (latest)");
+  expect(daemonBuild({ ...row, issues: [], version: "", protocol: 49 }, 50)).toBe("protocol 49 (app: 50)");
+  expect(daemonBuild({ ...row, issues: [], version: null, protocol: null }, 50)).toBe("daemon");
+});
+
+it("reports a takeover the shell still blocks (sessions from an older Alinery) as an error, never as restarted", async () => {
+  runtime.extra = [stuck];
+  confirms.danger.mockResolvedValue(true);
+  vi.mocked(ipc.confirmRepoTakeover).mockResolvedValue({
+    status: "blocked",
+    conflict: { issues: ["this project has sessions from an older version of Alinery"], owners: [] } as never,
+  });
+  render(<RuntimePanel />);
+  fireEvent.click(await screen.findByRole("button", { name: "Restart the daemon for stuck" }));
+  await waitFor(() => expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining("sessions from an older version of Alinery")));
+  expect(toasts.success).not.toHaveBeenCalled();
 });

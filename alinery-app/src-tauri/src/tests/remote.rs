@@ -1006,11 +1006,12 @@ fn a_repo_row_names_its_host_and_daemon_version_and_traffic_is_counted_per_host(
     use crate::daemon_rpc::{count_traffic, link_traffic};
     let origin = crate::state::DaemonOrigin {
         version: "0.600.0".into(),
+        protocol: Some(50),
         started_by: "jon on Strix".into(),
         os_user: "dev".into(),
     };
     let remote = repo_runtime("alinery+ssh://box-1/srv/r", None, Some(origin));
-    assert_eq!((remote.host.as_str(), remote.version.as_deref()), ("box-1", Some("0.600.0")));
+    assert_eq!((remote.host.as_str(), remote.version.as_deref(), remote.protocol), ("box-1", Some("0.600.0"), Some(50)));
     assert_eq!((remote.started_by.as_str(), remote.os_user.as_str(), remote.mine), ("jon on Strix", "dev", false));
     assert_eq!(repo_runtime("/r", None, None).host, "local");
     let before = link_traffic("box-count-test");

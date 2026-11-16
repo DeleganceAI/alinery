@@ -21,6 +21,7 @@ pub(crate) enum RepoDaemon {
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub(crate) struct DaemonOrigin {
     pub(crate) version: String,
+    pub(crate) protocol: Option<u32>,
     pub(crate) started_by: String,
     pub(crate) os_user: String,
 }
@@ -123,6 +124,7 @@ impl AppState {
     pub(crate) fn set_daemon_hello(&self, repo: &Path, hello: &crate::daemon_rpc::HelloResponse) {
         let origin = DaemonOrigin {
             version: hello.version.clone(),
+            protocol: Some(hello.protocol),
             started_by: hello.started_by.clone(),
             os_user: hello.os_user.clone(),
         };

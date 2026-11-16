@@ -25,12 +25,23 @@ vi.mock("./ipc", () =>
           { host_id: "h2", label: "laptop", state: "reconnecting", running: null, bundled: null, link: { calls: 0, bytes_up: 0, bytes_down: 0 }, daemons: [] },
         ],
         repos: [
-          { repo: "/me/app", state: "current", issues: [], host: "local", version: "0.600.0", started_by: "", os_user: "", mine: true },
-          { repo: "alinery+ssh://h1/srv/api", state: "current", issues: [], host: "h1", version: "0.25.0", started_by: "", os_user: "", mine: true },
-          { repo: "/me/idle", state: "not_attached", issues: [], host: "local", version: null, started_by: "", os_user: "", mine: true },
-          { repo: "alinery+ssh://h1/srv/shared", state: "joined", issues: [], host: "h1", version: "0.600.0", started_by: "jon on Strix", os_user: "dev", mine: false },
-          { repo: "/me/clash", state: "conflict", issues: ["another lane owns it"], host: "local", version: null, started_by: "", os_user: "", mine: true },
+          { repo: "/me/app", state: "current", issues: [], host: "local", version: "0.600.0", started_by: "", os_user: "", protocol: 50, mine: true },
+          { repo: "alinery+ssh://h1/srv/api", state: "current", issues: [], host: "h1", version: "0.25.0", started_by: "", os_user: "", protocol: 50, mine: true },
+          { repo: "/me/idle", state: "not_attached", issues: [], host: "local", version: null, started_by: "", os_user: "", protocol: 50, mine: true },
+          {
+            repo: "alinery+ssh://h1/srv/shared",
+            state: "joined",
+            issues: [],
+            host: "h1",
+            version: "0.600.0",
+            started_by: "jon on Strix",
+            os_user: "dev",
+            protocol: 50,
+            mine: false,
+          },
+          { repo: "/me/clash", state: "conflict", issues: ["another lane owns it"], host: "local", version: null, started_by: "", os_user: "", protocol: 50, mine: true },
         ],
+        protocol: 50,
         local_link: { calls: n, bytes_up: n * 100, bytes_down: n * 200 },
       };
     },
@@ -48,7 +59,7 @@ it("computes rates between samples and formats them", () => {
 });
 
 it("offers an update only for a daemon from another release, a drifted build, or one too old to say", () => {
-  const repo = { repo: "/r", state: "current" as const, issues: [], host: "local", started_by: "", os_user: "", mine: true };
+  const repo = { repo: "/r", state: "current" as const, issues: [], host: "local", started_by: "", os_user: "", protocol: 50, mine: true };
   expect(daemonIsOld({ ...repo, version: "0.600.0" }, "0.600.0")).toBe(false);
   expect(daemonIsOld({ ...repo, version: null }, "0.600.0")).toBe(false);
   expect(daemonIsOld({ ...repo, version: "0.25.0" }, "0.600.0")).toBe(true);

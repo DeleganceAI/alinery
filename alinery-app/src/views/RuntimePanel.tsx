@@ -18,6 +18,12 @@ const REPO_STATE: Record<RepoRuntime["state"], string> = {
   not_attached: "Not running",
 };
 
+/** The release and wire protocol a daemon reported, the protocol read against this app's: "v0.601.0 · protocol 50 (latest)". */
+export function daemonBuild(repo: RepoRuntime, appProtocol: number): string {
+  const protocol = repo.protocol === null ? "" : `protocol ${repo.protocol}${repo.protocol === appProtocol ? " (latest)" : ` (app: ${appProtocol})`}`;
+  return [repo.version ? `v${repo.version}` : "", protocol].filter(Boolean).join(" · ") || "daemon";
+}
+
 export const LIBREOFFICE_URL = "https://www.libreoffice.org/download/download-libreoffice/";
 const short = (hash: string | null) => (hash ? hash.slice(0, 8) : "—");
 /** This computer heads its own group; it has no installed runtime to compare, so those fields stay empty. */
@@ -380,7 +386,7 @@ export function RuntimePanel() {
                           <td className="runtime-indent" title={repo.repo}>
                             {repoName(repo.repo)}
                           </td>
-                          <td className="dim">daemon</td>
+                          <td className="dim">{daemonBuild(repo, status.protocol)}</td>
                           <td className="dim">{repo.repo in live ? `${live[repo.repo]} live` : ""}</td>
                           <td title={repo.issues.join("\n") || undefined}>{REPO_STATE[repo.state]}</td>
                           <td>

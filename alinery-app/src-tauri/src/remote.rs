@@ -1416,6 +1416,7 @@ fn attach_remote_repo(state: &AppState, session: &RemoteSession, app_config: &Pa
             if let Some(record) = record {
                 let origin = DaemonOrigin {
                     version: record.version.clone(),
+                    protocol: Some(record.protocol),
                     started_by: record.started_by.clone(),
                     os_user: record.os_user.clone(),
                 };
@@ -1757,6 +1758,8 @@ pub(crate) fn remote_hosts(app: AppHandle, state: State<'_, AppState>) -> Vec<Re
 pub(crate) struct RuntimeStatus {
     pub(crate) hosts: Vec<HostRuntime>,
     pub(crate) repos: Vec<RepoRuntime>,
+    /// The wire protocol this app speaks, which each row's `protocol` is read against.
+    pub(crate) protocol: u32,
     /// What the bridge has carried to and from this computer's daemons.
     pub(crate) local_link: crate::daemon_rpc::LinkTraffic,
 }
@@ -1788,6 +1791,8 @@ pub(crate) struct RepoRuntime {
     pub(crate) owner_lanes: Vec<String>,
     /// `local`, or the ssh host id the repo lives on.
     pub(crate) host: String,
+    /// The wire protocol its daemon speaks: from `Hello`, or for a conflict from its owners; `None` when nothing said.
+    pub(crate) protocol: Option<u32>,
     /// The app release its daemon reported in `Hello`; empty from a daemon too old to say, `None` before any answer.
     pub(crate) version: Option<String>,
     /// How the app that started it described its person and machine; empty when the daemon does not say.
@@ -1799,13 +1804,17 @@ pub(crate) struct RepoRuntime {
 }
 
 pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>, origin: Option<DaemonOrigin>) -> RepoRuntime {
+    let mut protocol = origin.as_ref().and_then(|origin| origin.protocol);
     let (state, issues, owner_lanes) = match daemon {
         Some(RepoDaemon::Connected { compat: DaemonCompat::Current }) => ("current", vec![], vec![]),
         Some(RepoDaemon::Connected {
             compat: DaemonCompat::AppConfigMismatch,
         }) => ("joined", vec![], vec![]),
         Some(RepoDaemon::Connected { .. }) => ("build_drift", vec![], vec![]),
-        Some(RepoDaemon::Conflicted(conflict)) => ("conflict", conflict.issues, conflict.owners.into_iter().map(|owner| owner.lane).collect()),
+        Some(RepoDaemon::Conflicted(conflict)) => {
+            protocol = conflict.owners.iter().find_map(|owner| owner.protocol).or(protocol);
+            ("conflict", conflict.issues, conflict.owners.into_iter().map(|owner| owner.lane).collect())
+        }
         None => ("not_attached", vec![], vec![]),
     };
     RepoRuntime {
@@ -1813,6 +1822,7 @@ pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>, origin: Optio
         state,
         issues,
         owner_lanes,
+        protocol,
         host: crate::daemon_rpc::link_host(repo),
         mine: origin.as_ref().is_some_and(|origin| origin.started_by == alinery_core::started_by_label()),
         started_by: origin.as_ref().map(|origin| origin.started_by.clone()).unwrap_or_default(),
@@ -1849,6 +1859,7 @@ pub(crate) fn runtime_status(app: AppHandle, state: State<'_, AppState>) -> Runt
     RuntimeStatus {
         hosts,
         repos,
+        protocol: alinery_core::PROTOCOL_VERSION,
         local_link: crate::daemon_rpc::link_traffic("local"),
     }
 }
