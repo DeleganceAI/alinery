@@ -133,6 +133,27 @@ function takeoverPrompt(owner: DaemonOwnerConflict): { sentence: string; accept:
   };
 }
 
+/** Takes over every daemon that owns `repo` on this computer, one confirmed owner at a time; the last one's takeover starts this
+ *  build's daemon. Each dialog names what that owner's takeover stops, since a conflicted daemon's sessions are counted only here.
+ *  A reconfirm (its sessions changed after the dialog) asks again. False once a dialog is declined. */
+export async function takeOverEveryOwner(repo: string, lanes: string[]): Promise<boolean> {
+  const name = repoName(repo);
+  for (const lane of lanes) {
+    let preview = await ipc.prepareRepoTakeover(repo, lane);
+    for (;;) {
+      const { sentence, accept } = takeoverPrompt(preview.owner);
+      if (!(await confirmDanger(`Take over ${name}?`, <p>{sentence}</p>, accept))) {
+        await ipc.cancelRepoTakeover(preview.confirmation_id);
+        return false;
+      }
+      const outcome = await ipc.confirmRepoTakeover(preview.confirmation_id);
+      if (outcome.status !== "reconfirm") break;
+      preview = outcome.preview;
+    }
+  }
+  return true;
+}
+
 // A conflict prompts once per owner process for the life of the app: polling may drop
 // and re-raise the same conflict, and a cancelled dialog must not keep coming back.
 const prompted = new Set<string>();

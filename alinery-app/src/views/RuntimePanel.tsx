@@ -2,7 +2,6 @@ import { Fragment, useEffect, useState } from "react";
 import { copyTextToClipboard } from "../chat/CopyMessage";
 import { askConfirm, confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
-import { isRemoteRepo, machineOf } from "../remoteRepo";
 import { updateDaemon } from "../SyncLinks";
 import { repoName } from "../shared";
 import { type OfficeTools, readOfficeTools } from "../sync/agent";
@@ -21,6 +20,16 @@ const REPO_STATE: Record<RepoRuntime["state"], string> = {
 
 export const LIBREOFFICE_URL = "https://www.libreoffice.org/download/download-libreoffice/";
 const short = (hash: string | null) => (hash ? hash.slice(0, 8) : "—");
+/** This computer heads its own group; it has no installed runtime to compare, so those fields stay empty. */
+const LOCAL_HOST: HostRuntime = {
+  host_id: "local",
+  label: "This computer",
+  state: "connected",
+  running: null,
+  bundled: null,
+  link: { calls: 0, bytes_up: 0, bytes_down: 0 },
+  daemons: [],
+};
 
 /** One line on what the office skills will find: the Python, then LibreOffice and the PDF tools. */
 export function officeSummary(office: OfficeTools): string {
@@ -30,8 +39,9 @@ export function officeSummary(office: OfficeTools): string {
   return missing.length ? `${python} · missing ${missing.join(", ")}` : `${python} · LibreOffice, pdftoppm and qpdf found`;
 }
 
-/** A daemon this panel can restart: one that runs, and not this computer's conflicted one (its takeover is on the repo's banner). */
-export const canRestart = (repo: RepoRuntime) => repo.state !== "not_attached" && (repo.state !== "conflict" || isRemoteRepo(repo.repo));
+/** Every running daemon gets Restart, a conflicted one most of all: on this computer `stop_daemon` replaces an older protocol
+ *  on this build's lane (the usual conflict after an update), and refuses another build's owner, whose takeover is the repo's banner. */
+export const canRestart = (repo: RepoRuntime) => repo.state !== "not_attached";
 
 /** Reconnecting installs the bundled runtime and a new repo service from it; running daemons are reused, never stopped. */
 export async function updateHost(host: HostRuntime): Promise<boolean> {
@@ -182,8 +192,8 @@ function MachineMcpRows({ repo, label, local }: { repo: string | undefined; labe
   if (!repo)
     return (
       <tr>
-        <td>Machine MCP</td>
-        <td className="dim">{label}</td>
+        <td>{label}</td>
+        <td />
         <td />
         <td className="dim">No daemon running here to ask</td>
         <td />
@@ -236,8 +246,8 @@ function MachineMcpRows({ repo, label, local }: { repo: string | undefined; labe
   return (
     <>
       <tr>
-        <td>Machine MCP</td>
-        <td className="dim">{label}</td>
+        <td>{label}</td>
+        <td />
         <td className="dim">{status ? machineMcpDetail(status) : ""}</td>
         <td title={status?.socketPath}>{status ? MCP_STATE[state] : "Could not ask"}</td>
         <td>
@@ -332,87 +342,107 @@ export function RuntimePanel() {
       </div>
       {failed && <div className="dim">Could not read the runtime status.</div>}
       {status && (
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <tbody>
-            {status.hosts.map((host) => {
-              const stale = host.running !== null && host.bundled !== null && host.running !== host.bundled;
-              return (
-                <tr key={`host:${host.host_id}`}>
-                  <td>{host.label}</td>
-                  <td className="dim">host · {host.state}</td>
-                  <td className="mono dim">
-                    {short(host.running)}
-                    {stale && ` → ${short(host.bundled)}`}
-                  </td>
-                  <td>{stale ? "Stale: restarting a daemon on this host installs the new runtime" : host.running ? "Current" : ""}</td>
-                  <td>
-                    {stale && host.state === "connected" && (
-                      <button type="button" className="btn ghost small" disabled={busy !== null} onClick={() => void act(`host:${host.host_id}`, () => updateHost(host))}>
-                        Update host…
-                      </button>
+        <>
+          <h4 className="settings-eyebrow">Daemons by host</h4>
+          <table className="runtime-table">
+            <tbody>
+              {[LOCAL_HOST, ...status.hosts].map((host) => {
+                const stale = host.running !== null && host.bundled !== null && host.running !== host.bundled;
+                const repos = status.repos.filter((repo) => repo.host === host.host_id);
+                return (
+                  <Fragment key={`host:${host.host_id}`}>
+                    <tr className="runtime-host">
+                      <td>{host.label}</td>
+                      <td className="dim">{host.host_id === "local" ? "" : `host · ${host.state}`}</td>
+                      <td className="mono dim">
+                        {short(host.running)}
+                        {stale && ` → ${short(host.bundled)}`}
+                      </td>
+                      <td>{stale ? "Stale: restarting a daemon on this host installs the new runtime" : host.running ? "Current" : ""}</td>
+                      <td>
+                        {stale && host.state === "connected" && (
+                          <button type="button" className="btn ghost small" disabled={busy !== null} onClick={() => void act(`host:${host.host_id}`, () => updateHost(host))}>
+                            Update host…
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {repos.length === 0 && (
+                      <tr>
+                        <td className="runtime-indent dim" colSpan={5}>
+                          No repository daemons
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                </tr>
-              );
-            })}
-            {status.repos.map((repo) => (
-              <Fragment key={`repo:${repo.repo}`}>
-                <tr>
-                  <td title={repo.repo}>{repoName(repo.repo)}</td>
-                  <td className="dim">daemon · {machineOf(repo.repo) || "this computer"}</td>
-                  <td className="dim">{repo.repo in live ? `${live[repo.repo]} live` : ""}</td>
-                  <td title={repo.issues.join("\n") || undefined}>{REPO_STATE[repo.state]}</td>
-                  <td>
-                    {canRestart(repo) && (
-                      <button
-                        type="button"
-                        className="btn ghost small"
-                        aria-label={`Restart the daemon for ${repoName(repo.repo)}`}
-                        disabled={busy !== null}
-                        onClick={() => void act(`repo:${repo.repo}`, () => updateDaemon(repo, live[repo.repo]))}
-                      >
-                        Restart…
-                      </button>
-                    )}
-                  </td>
-                </tr>
-                {office[repo.repo] && (
-                  <tr>
-                    <td />
-                    <td className="dim">office tools</td>
-                    <td colSpan={3} title={office[repo.repo].tools.map((tool) => `${tool.name}: ${tool.path || "not found"}`).join("\n")}>
-                      {officeSummary(office[repo.repo])}
-                      {!office[repo.repo].tools.some((tool) => tool.name === "soffice" && tool.path) && (
-                        <>
-                          {" · "}
-                          <a
-                            href={LIBREOFFICE_URL}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              void ipc.openUrl(LIBREOFFICE_URL).catch((cause: unknown) => toast(String(cause), "error"));
-                            }}
-                          >
-                            Get LibreOffice
-                          </a>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            ))}
-            {[{ host_id: "local", label: "this computer" }, ...status.hosts.filter((host) => host.state === "connected")].map((host) => (
-              <MachineMcpRows
-                key={`mcp:${host.host_id}`}
-                label={host.label}
-                local={host.host_id === "local"}
-                repo={status.repos.find((repo) => repo.host === host.host_id && (repo.state === "current" || repo.state === "build_drift"))?.repo}
-              />
-            ))}
-          </tbody>
-        </table>
+                    {repos.map((repo) => (
+                      <Fragment key={`repo:${repo.repo}`}>
+                        <tr>
+                          <td className="runtime-indent" title={repo.repo}>
+                            {repoName(repo.repo)}
+                          </td>
+                          <td className="dim">daemon</td>
+                          <td className="dim">{repo.repo in live ? `${live[repo.repo]} live` : ""}</td>
+                          <td title={repo.issues.join("\n") || undefined}>{REPO_STATE[repo.state]}</td>
+                          <td>
+                            {canRestart(repo) && (
+                              <button
+                                type="button"
+                                className="btn ghost small"
+                                aria-label={`Restart the daemon for ${repoName(repo.repo)}`}
+                                disabled={busy !== null}
+                                onClick={() => void act(`repo:${repo.repo}`, () => updateDaemon(repo, live[repo.repo]))}
+                              >
+                                Restart…
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                        {office[repo.repo] && (
+                          <tr>
+                            <td />
+                            <td className="dim">office tools</td>
+                            <td colSpan={3} title={office[repo.repo].tools.map((tool) => `${tool.name}: ${tool.path || "not found"}`).join("\n")}>
+                              {officeSummary(office[repo.repo])}
+                              {!office[repo.repo].tools.some((tool) => tool.name === "soffice" && tool.path) && (
+                                <>
+                                  {" · "}
+                                  <a
+                                    href={LIBREOFFICE_URL}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      void ipc.openUrl(LIBREOFFICE_URL).catch((cause: unknown) => toast(String(cause), "error"));
+                                    }}
+                                  >
+                                    Get LibreOffice
+                                  </a>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    ))}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+          <h4 className="settings-eyebrow">Machine MCP by host</h4>
+          <table className="runtime-table">
+            <tbody>
+              {[LOCAL_HOST, ...status.hosts.filter((host) => host.state === "connected")].map((host) => (
+                <MachineMcpRows
+                  key={`mcp:${host.host_id}`}
+                  label={host.label}
+                  local={host.host_id === "local"}
+                  repo={status.repos.find((repo) => repo.host === host.host_id && (repo.state === "current" || repo.state === "build_drift"))?.repo}
+                />
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </section>
   );

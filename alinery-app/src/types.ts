@@ -437,6 +437,8 @@ export type RepoRuntime = {
   repo: string;
   state: "current" | "build_drift" | "joined" | "conflict" | "not_attached";
   issues: string[];
+  /** A conflict's owners by lane; absent otherwise. */
+  owner_lanes?: string[];
   host: string;
   version: string | null;
   started_by: string;

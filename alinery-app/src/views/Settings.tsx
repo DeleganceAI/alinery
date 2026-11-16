@@ -48,6 +48,7 @@ import {
 } from "../appearance";
 import { copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
+import { takeOverEveryOwner } from "../DaemonConflictBanner";
 import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, normalizeGridViews, withGridViewSlots } from "../gridViews";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
@@ -432,6 +433,17 @@ export function Settings({
 
   // Each repo's stream keeps the count current; an unreachable daemon reads 0, so a repo never disappears from the list.
   const liveByRepo = useLiveSessionsByRepo(seen.has("system") ? sessionTargets : NO_REPOS);
+  // A conflicted daemon on this computer (an older protocol, or another build's) stops only through a takeover of each owner.
+  const [takeovers, setTakeovers] = useState<Record<string, string[]>>({});
+  const readTakeovers = () =>
+    ipc
+      .runtimeStatus()
+      .then((status) => setTakeovers(Object.fromEntries(status.repos.filter((r) => r.owner_lanes?.length && !isRemoteRepo(r.repo)).map((r) => [r.repo, r.owner_lanes ?? []]))))
+      .catch(() => {});
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read once the System group is seen.
+  useEffect(() => {
+    if (seen.has("system")) void readTakeovers();
+  }, [seen.has("system")]);
 
   const markSeen = (keys: SettingsSectionKey[]) => setSeen((current) => (keys.every((key) => current.has(key)) ? current : new Set([...current, ...keys])));
   // No smooth scrolling: DESIGN.md keeps keyboard-initiated navigation unanimated.
@@ -913,12 +925,15 @@ export function Settings({
     const problems: string[] = [];
     for (const repo of repos) {
       try {
-        await ipc.stopDaemon(repo);
+        const lanes = takeovers[repo];
+        if (lanes && !(await takeOverEveryOwner(repo, lanes))) problems.push(`${repoName(repo)}: takeover declined`);
+        else if (!lanes) await ipc.stopDaemon(repo);
       } catch (e) {
         problems.push(`${repoName(repo)}: ${String(e)}`);
       }
     }
     setSessionsBusy(false);
+    void readTakeovers();
     const stopped = repos.length - problems.length;
     if (problems.length === 0) {
       report(`Sessions stopped for ${label}; daemon${repos.length === 1 ? "" : "s"} restarted`);
@@ -1897,6 +1912,7 @@ export function Settings({
     const plural = (n: number) => (n === 1 ? "" : "s");
     const scopeName = isGlobal ? (targets.length ? `all ${targets.length} open repositor${targets.length === 1 ? "y" : "ies"}` : "") : repoName(selectedRepo);
     const hitsActiveRepo = targets.some((target) => target.repo === activeRepo);
+    const takeoverCount = targets.filter((target) => takeovers[target.repo]).length;
     return (
       <div className="harness-session-service">
         <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
@@ -1911,7 +1927,7 @@ export function Settings({
           <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
             {targets.map((target) => (
               <div key={target.repo} title={target.repo} style={{ color: target.live > 0 ? "var(--danger)" : undefined }}>
-                {repoName(target.repo)} — {target.live} live session{plural(target.live)}
+                {repoName(target.repo)} — {takeovers[target.repo] ? "older or other build's daemon: taken over first" : `${target.live} live session${plural(target.live)}`}
               </div>
             ))}
           </div>
@@ -1954,7 +1970,7 @@ export function Settings({
             })();
           }}
         >
-          Stop all sessions in {scopeName || "this repo"}
+          {takeoverCount ? "Take over and stop" : "Stop"} all sessions in {scopeName || "this repo"}
         </button>
       </div>
     );

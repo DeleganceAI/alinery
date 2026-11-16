@@ -31,6 +31,13 @@ vi.mock("../ipc", () =>
       local_link: { calls: 0, bytes_up: 0, bytes_down: 0 },
     }),
     stopDaemon: vi.fn(async () => {}),
+    prepareRepoTakeover: vi.fn(async (repo: string, lane: string) => ({
+      confirmation_id: `c-${lane}`,
+      repo,
+      owner: { lane, pid: 1, protocol: 49, build_id: null, app_config_identity: null, impact: { status: "known" as const, sessions: [] }, takeover_unavailable: null },
+    })),
+    confirmRepoTakeover: vi.fn(async () => ({ status: "attached" as const })),
+    cancelRepoTakeover: vi.fn(async () => {}),
     remoteConnect: vi.fn(async () => {}),
     machineMcpPeer: vi.fn(async () => "4242:1700000000.000001"),
     forceRestartMachineMcp: vi.fn(async () => {}),
@@ -99,7 +106,11 @@ it("marks only the host whose bundled runtime differs as stale, and names each d
   expect(screen.getByText("Other build (usable)")).toBeTruthy();
   expect(screen.getByText("2 live")).toBeTruthy();
   expect(screen.getByText("Needs a restart").getAttribute("title")).toContain("protocol 40");
-  expect(screen.getByText("daemon · h1")).toBeTruthy();
+  // Daemons sit under their host's row; the MCP list has its own heading with one row per host.
+  const rows = screen.getAllByRole("row").map((row) => row.textContent ?? "");
+  expect(rows.findIndex((row) => row.startsWith("svc"))).toBe(rows.findIndex((row) => row.startsWith("aagent")) + 1);
+  expect(screen.getByText("Daemons by host")).toBeTruthy();
+  expect(screen.getByText("Machine MCP by host")).toBeTruthy();
 });
 
 it("says what the office skills will find on each running daemon, and links LibreOffice when it is missing", async () => {
@@ -225,4 +236,30 @@ it("names the URL a client uses: the bind, the first address for all interfaces,
   expect(mcpHttpUrl(httpOf({ bind: "0.0.0.0" }), "box")).toBe("http://192.168.1.20:39470/mcp");
   expect(mcpHttpUrl(httpOf({ bind: "fd00::5", port: 8080 }), "box")).toBe("http://[fd00::5]:8080/mcp");
   expect(mcpHttpUrl(httpOf({ bind: "0.0.0.0", addresses: [] }), "box")).toBe("http://box:39470/mcp");
+});
+
+const stuck = { repo: "/Users/me/stuck", state: "conflict", issues: [], owner_lanes: ["", "dev"], host: "local", version: null, started_by: "", os_user: "", mine: true } as never;
+
+it("restarts this computer's conflicted daemon by taking over every owner, each confirmed, never through stop_daemon", async () => {
+  runtime.extra = [stuck];
+  confirms.danger.mockResolvedValue(true);
+  render(<RuntimePanel />);
+  fireEvent.click(await screen.findByRole("button", { name: "Restart the daemon for stuck" }));
+  await waitFor(() => expect(ipc.confirmRepoTakeover).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(ipc.prepareRepoTakeover).mock.calls).toEqual([
+    ["/Users/me/stuck", ""],
+    ["/Users/me/stuck", "dev"],
+  ]);
+  expect(confirms.danger.mock.calls.map((call) => call[0])).toEqual(["Take over stuck?", "Take over stuck?"]);
+  expect(ipc.stopDaemon).not.toHaveBeenCalled();
+});
+
+it("stops at the first declined owner and releases its confirmation", async () => {
+  runtime.extra = [stuck];
+  confirms.danger.mockResolvedValue(false);
+  render(<RuntimePanel />);
+  fireEvent.click(await screen.findByRole("button", { name: "Restart the daemon for stuck" }));
+  await waitFor(() => expect(ipc.cancelRepoTakeover).toHaveBeenCalledWith("c-"));
+  expect(ipc.confirmRepoTakeover).not.toHaveBeenCalled();
+  expect(ipc.prepareRepoTakeover).toHaveBeenCalledTimes(1);
 });

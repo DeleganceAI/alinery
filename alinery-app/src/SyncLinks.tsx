@@ -1,9 +1,9 @@
 import { ArrowRight, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { confirmDanger } from "./confirm";
-import { confirmRestartingOthers, otherStarter } from "./DaemonConflictBanner";
+import { confirmRestartingOthers, otherStarter, takeOverEveryOwner } from "./DaemonConflictBanner";
 import { runtimeStatus, stopDaemon } from "./ipc";
-import { parseRemoteRepo } from "./remoteRepo";
+import { isRemoteRepo, parseRemoteRepo } from "./remoteRepo";
 import { repoName } from "./shared";
 import { toast } from "./toast";
 import type { LinkTraffic, RepoRuntime, RuntimeStatus } from "./types";
@@ -54,6 +54,15 @@ export const starterNote = (repo: Pick<RepoRuntime, "started_by" | "os_user" | "
 /** Asks, then restarts a repo's daemon on this app's build. `live` is its session count when known. Returns whether it ran. */
 export async function updateDaemon(repo: RepoRuntime, live?: number): Promise<boolean> {
   const name = repoName(repo.repo);
+  // A conflicted daemon here may be another build's, which only a takeover stops; it asks per owner, with the real session count.
+  if (repo.owner_lanes?.length && !isRemoteRepo(repo.repo)) {
+    const done = await takeOverEveryOwner(repo.repo, repo.owner_lanes).catch((cause: unknown) => {
+      toast.error(`Couldn't restart the daemon for ${name}: ${String(cause)}`);
+      return true;
+    });
+    if (done) toast.success(`Restarted the daemon for ${name}`);
+    return done;
+  }
   const plural = (n: number) => `${n} live session${n === 1 ? "" : "s"}`;
   const ok = await confirmDanger(
     `Restart the daemon for ${name}?`,
