@@ -61,6 +61,6 @@ export async function startDaemon(fixture?: Fixture, protocol = daemonProtocol()
       proc.kill("SIGTERM");
       await proc.exited;
     },
-    context: (extra = {}) => ({ protocol, processRepo: fx.repo, appConfig: fx.appConfig, endpoints: new Endpoints({ repo: fx.repo, endpoint: { socket, token } }, undefined), ...extra }),
+    context: (extra = {}) => ({ protocol, processRepo: fx.repo, appConfig: fx.appConfig, endpoints: new Endpoints({ repo: fx.repo, endpoint: { socket, token } }), ...extra }),
   };
 }

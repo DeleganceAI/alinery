@@ -4,7 +4,7 @@ import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
 import { effectiveOf, fakeSettings, pickScope } from "../test/settingsHooks";
 import type { GlobalSettings } from "../types";
-import type { McpStatusHandle } from "../useMcpStatus";
+import type { McpStatus } from "../useMcpStatus";
 
 const globalSettings: GlobalSettings = {
   notifications: {
@@ -48,19 +48,7 @@ vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHoo
 import * as ipc from "../ipc";
 import { Settings } from "./Settings";
 
-const mcp: McpStatusHandle = {
-  enabled: false,
-  running: false,
-  clients: 0,
-  socket_reachable: false,
-  binary_found: false,
-  binary_path: "",
-  host_args: [],
-  repo: "",
-  socket_path: "",
-  error: "",
-  refresh: () => {},
-};
+const mcp: McpStatus = { binary_path: "", host_args: [] };
 
 beforeEach(() => {
   fakeSettings.reset();

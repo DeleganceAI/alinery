@@ -9,7 +9,6 @@ const config = (extra: Partial<AppConfig> = {}): AppConfig =>
   ({
     active_repo: "/repo",
     known_repos: ["/repo", REMOTE],
-    mcp_enabled: true,
     remote_hosts: { "devbox-a1b2c3": { label: "devbox", ssh_args: ["me@box"], onboarded: false } },
     ...extra,
   }) as AppConfig;

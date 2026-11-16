@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ARTIFACT_FONT_MAX, ARTIFACT_VIEWER_WIDTH_DEFAULT, DEFAULT_APPEARANCE, TERMINAL_FONT_MIN } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
 import type { AppConfig, AppearancePrefs, GlobalSettings } from "../types";
-import type { McpStatusHandle } from "../useMcpStatus";
+import type { McpStatus } from "../useMcpStatus";
 
 // Regression pin for the Stage D triage finding: the appearance-mode select must
 // apply the theme synchronously and persist through write_appearance. The select
@@ -38,7 +38,7 @@ const globalSettings: GlobalSettings = {
   updates: { check_enabled: true },
 };
 
-const appConfigFor = (appearance: AppearancePrefs): AppConfig => ({ active_repo: "/r", known_repos: ["/r"], mcp_enabled: true, appearance });
+const appConfigFor = (appearance: AppearancePrefs): AppConfig => ({ active_repo: "/r", known_repos: ["/r"], appearance });
 
 vi.mock("../ipc", () =>
   mockIpc({
@@ -51,19 +51,7 @@ vi.mock("../ipc", () =>
 import * as ipc from "../ipc";
 import { Settings } from "./Settings";
 
-const mcp: McpStatusHandle = {
-  enabled: false,
-  running: false,
-  clients: 0,
-  socket_reachable: false,
-  binary_found: false,
-  binary_path: "",
-  host_args: [],
-  repo: "",
-  socket_path: "",
-  error: "",
-  refresh: () => {},
-};
+const mcp: McpStatus = { binary_path: "", host_args: [] };
 
 function renderAppearanceSection(onAppearanceChange = vi.fn(), appearance: AppearancePrefs = DEFAULT_APPEARANCE) {
   render(

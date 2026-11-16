@@ -43,7 +43,7 @@ const host: RemoteHostView = {
   erased_sign_ins: [],
 };
 const idle: RemoteHostView = { ...host, state: "idle" };
-const config = (over: Partial<AppConfig> = {}): AppConfig => ({ active_repo: "", known_repos: [], mcp_enabled: true, appearance: {} as AppConfig["appearance"], ...over });
+const config = (over: Partial<AppConfig> = {}): AppConfig => ({ active_repo: "", known_repos: [], appearance: {} as AppConfig["appearance"], ...over });
 const sharing = (over: Partial<RemoteSharingView> = {}): RemoteSharingView => ({
   reviewed: false,
   shared: [],

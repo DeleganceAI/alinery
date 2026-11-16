@@ -416,7 +416,8 @@ export type RemoteHostView = {
   erased_sign_ins: string[];
 };
 /** The Settings Runtime panel's rows (`runtime_status`), read from the shell's memory and the bundled manifest. */
-export type RuntimeStatus = { hosts: HostRuntime[]; repos: RepoRuntime[]; local_link: LinkTraffic };
+/** `protocol` is the wire protocol this app speaks. */
+export type RuntimeStatus = { hosts: HostRuntime[]; repos: RepoRuntime[]; protocol: number; local_link: LinkTraffic };
 /** Calls and bytes the shell's bridge has carried to one host's daemons since the app started. */
 export type LinkTraffic = { calls: number; bytes_up: number; bytes_down: number };
 /** `running` is the host's runtime while connected; `bundled` is what this app carries for it. They differ when the host is stale. */
@@ -437,6 +438,12 @@ export type RepoRuntime = {
   repo: string;
   state: "current" | "build_drift" | "joined" | "conflict" | "not_attached";
   issues: string[];
+  /** A conflict's owners by lane; absent otherwise. */
+  owner_lanes?: string[];
+  /** The conflict is sessions from an older Alinery, which only Back up and reset clears; absent otherwise. */
+  outdated?: boolean;
+  /** The wire protocol its daemon speaks; null when nothing said. */
+  protocol: number | null;
   host: string;
   version: string | null;
   started_by: string;
@@ -481,7 +488,6 @@ export type AppConfig = {
   /** Whether the onboarding steps have run on this computer. */
   local_onboarded?: boolean;
   remote_hosts?: Record<string, RemoteHost>;
-  mcp_enabled: boolean;
   appearance: AppearancePrefs;
   settings_version?: number;
   global?: GlobalSettings;
@@ -1266,18 +1272,8 @@ export type DaemonStatus = {
   host_guard_warning: boolean;
 };
 
-export type McpStatus = {
-  enabled: boolean;
-  running: boolean;
-  clients: number;
-  socket_reachable: boolean;
-  binary_found: boolean;
-  binary_path: string;
-  host_args: string[];
-  repo: string;
-  socket_path: string;
-  error: string;
-};
+/** What a host's stdio config runs: the daemon binary beside the app, and the bridge arguments after it. */
+export type McpStatus = { binary_path: string; host_args: string[] };
 
 export type CreationError = { stage: string; code: string; message: string };
 export type CreateTaskResult = {

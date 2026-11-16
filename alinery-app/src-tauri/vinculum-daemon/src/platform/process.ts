@@ -9,6 +9,12 @@ export function spawnDetached<const Opts extends Bun.SpawnOptions.OptionsObject<
   return Bun.spawn(cmd, { ...options, detached: true });
 }
 
+/** The command line that runs this binary again with `args`: the compiled executable alone, or Bun and the entry script in development. */
+export function selfCommand(...args: string[]): string[] {
+  const compiled = import.meta.url.includes("/$bunfs/");
+  return [process.execPath, ...(compiled ? [] : [Bun.main]), ...args];
+}
+
 /** Signal a child. A child that has already exited is not an error. */
 export function signalChild(child: Bun.Subprocess, signal: NodeJS.Signals | number, _reason: SignalReason): void {
   try {

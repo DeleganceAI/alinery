@@ -23,7 +23,6 @@ const appConfig: AppConfig = {
   active_repo: "/repo",
   known_repos: ["/repo", "/other"],
   local_onboarded: true,
-  mcp_enabled: true,
   appearance: DEFAULT_APPEARANCE,
 };
 

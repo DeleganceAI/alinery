@@ -1,0 +1,99 @@
+// proto/alinery/v1/mcp.proto
+syntax = "proto3";
+package alinery.v1;
+
+// The machine MCP this daemon registers with (docs/machine-mcp-plan.md 4.4). Every RPC is ADMIN and none is in AGENT_RPCS:
+// the app reads and restarts the MCP through any daemon on that machine, so a remote host needs no host op. Nothing here signals
+// a process; Force restart is the shell's, local only (M3).
+service McpService {
+  rpc Status(StatusRequest) returns (StatusResponse);
+  // Connect-or-spawn.
+  rpc Ensure(EnsureRequest) returns (EnsureResponse);
+  // The frozen `exit` over the socket, wait for it to go quiet, then Ensure. A timeout answers STUCK.
+  rpc Restart(RestartRequest) returns (RestartResponse);
+  // The optional token (M2, M5): read, rotate (create when none is set; the previous one stays good for an overlap) or clear.
+  rpc Token(TokenRequest) returns (TokenResponse);
+  // The optional HTTP listener (M4): writes its settings beside the key and restarts the MCP. Turning it on needs the token set.
+  rpc SetHttp(SetHttpRequest) returns (SetHttpResponse);
+}
+
+enum McpState {
+  MCP_STATE_UNSPECIFIED = 0;
+  // Nothing answers. Not a fault: the MCP starts on demand.
+  MCP_STATE_ABSENT = 1;
+  MCP_STATE_OK = 2;
+  // Its build or protocol is not this daemon's. A state, never an automatic stop.
+  MCP_STATE_BEHIND = 3;
+  // Its socket accepts but `status` does not answer in time.
+  MCP_STATE_STUCK = 4;
+}
+
+message McpDaemon {
+  string repo = 1;
+  uint32 protocol = 2;
+  // False for a daemon of another protocol, which the MCP lists and never calls (M7).
+  bool compatible = 3;
+}
+
+message StatusRequest {}
+message StatusResponse {
+  McpStatus status = 1;
+}
+message EnsureRequest {}
+message EnsureResponse {
+  McpStatus status = 1;
+}
+message RestartRequest {}
+message RestartResponse {
+  McpStatus status = 1;
+}
+
+message McpStatus {
+  McpState state = 1;
+  // The MCP's app version and protocol, empty and zero unless it answered.
+  string build = 2;
+  uint32 protocol = 3;
+  uint64 uptime_ms = 4;
+  uint32 clients = 5;
+  repeated McpDaemon daemons = 6;
+  string socket_path = 7;
+  bool token_required = 8;
+  McpHttp http = 9;
+}
+
+// The HTTP listener's settings, and whether the running MCP listens with them.
+message McpHttp {
+  bool enabled = 1;
+  // 127.0.0.1 (loopback), 0.0.0.0 (all interfaces) or one of `addresses`.
+  string bind = 2;
+  uint32 port = 3;
+  bool listening = 4;
+  // Why it does not listen while enabled, from the MCP; empty otherwise.
+  string error = 5;
+  // This machine's non-loopback addresses, for picking one.
+  repeated string addresses = 6;
+}
+
+message SetHttpRequest {
+  bool enabled = 1;
+  string bind = 2;
+  uint32 port = 3;
+}
+message SetHttpResponse {
+  McpStatus status = 1;
+}
+
+enum McpTokenAction {
+  MCP_TOKEN_ACTION_UNSPECIFIED = 0;
+  MCP_TOKEN_ACTION_READ = 1;
+  MCP_TOKEN_ACTION_ROTATE = 2;
+  MCP_TOKEN_ACTION_CLEAR = 3;
+}
+
+message TokenRequest {
+  McpTokenAction action = 1;
+}
+message TokenResponse {
+  // The current token, empty when none is set.
+  string token = 1;
+}

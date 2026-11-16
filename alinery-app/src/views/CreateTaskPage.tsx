@@ -25,7 +25,7 @@ import { taskSourceBranchesForRepo } from "../sync/git";
 import { importGithubIssue } from "../sync/imports";
 import { listPlaybookCatalog, readPlaybook, savePlaybookPickerPreferences } from "../sync/playbooks";
 import { readEffectiveConfig } from "../sync/settings";
-import { createTaskForRepo, deleteDraftForRepo, prepareTaskAttachments, readDraftAttachmentsForRepo, writeDraftForRepo } from "../sync/tasks";
+import { createTaskForRepo, deleteDraftForRepo, prepareTaskAttachments, readDraftAttachmentsForRepo, TaskRefused, writeDraftForRepo } from "../sync/tasks";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { toast } from "../toast";
 import type {
@@ -737,6 +737,11 @@ export function CreateTaskPage({
         if (resultReceived) {
           toast.error(`Couldn't open the task: ${e}`);
           setErr({ msg: "Couldn't open the task.", detail: String(e) });
+        } else if (e instanceof TaskRefused) {
+          creatingRef.current = false;
+          dirtyRef.current = true;
+          toast.error(`Couldn't create the task: ${e.message}`);
+          setErr({ msg: "Couldn't create the task. Nothing was created.", detail: e.message });
         } else if (provisioningRequested) {
           // A lost reply can follow durable provisioning. Never blindly retry it.
           toast.error(`Creation outcome is unknown. Inspect the repository before creating another task: ${e}`);

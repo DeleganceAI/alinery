@@ -360,17 +360,23 @@ fn classify_attached(hello: &HelloResponse, repo: &Path, app_config: &Path) -> R
     Ok(compat)
 }
 
-pub(crate) fn ensure_daemon(repo: &Path, app_config: &Path) -> Result<DaemonCompat, EnsureDaemonError> {
-    if let Ok(hello) = hello_current(repo, app_config, HELLO_OBSERVE) {
-        return classify_attached(&hello, repo, app_config);
-    }
+/// The gate before any start: nothing else may own the project, and it may not hold sessions from an older Alinery. Every
+/// start goes through it, the poller's included, so a held project stays down and shows why instead of running anyway.
+fn available(repo: &Path, app_config: &Path) -> Result<(), Box<DaemonConflict>> {
     alinery_core::repo_ownership::check_available(repo).map_err(|detail| {
         let mut conflict = daemon_conflicts(repo, app_config);
         if !conflict.issues.contains(&detail) {
             conflict.issues.push(detail);
         }
-        EnsureDaemonError::Mismatch(Box::new(conflict))
-    })?;
+        Box::new(conflict)
+    })
+}
+
+pub(crate) fn ensure_daemon(repo: &Path, app_config: &Path) -> Result<DaemonCompat, EnsureDaemonError> {
+    if let Ok(hello) = hello_current(repo, app_config, HELLO_OBSERVE) {
+        return classify_attached(&hello, repo, app_config);
+    }
+    available(repo, app_config).map_err(EnsureDaemonError::Mismatch)?;
     crate::pi_durable::start_daemon(repo, app_config).map_err(EnsureDaemonError::Failed)?;
     // About 5 s: the daemon takes the repository's ownership locks and adopts its tasks before it listens.
     for _ in 0..100 {
@@ -575,13 +581,7 @@ pub(crate) fn cancel_repo_takeover(state: State<'_, AppState>, confirmation_id: 
     Ok(())
 }
 
-pub(crate) fn confirm_repo_takeover_blocking(
-    state: &AppState,
-    app_config: &Path,
-    confirmation_id: &str,
-    known: impl Fn() -> Vec<String>,
-    attached: impl FnOnce(&Path),
-) -> Result<TakeoverOutcome, String> {
+pub(crate) fn confirm_repo_takeover_blocking(state: &AppState, app_config: &Path, confirmation_id: &str, known: impl Fn() -> Vec<String>) -> Result<TakeoverOutcome, String> {
     // Consume before any fallible operation, including lock waits. A failed attempt is not reusable consent.
     let preparation = state
         .prepared_takeovers
@@ -634,7 +634,6 @@ pub(crate) fn confirm_repo_takeover_blocking(
             takeover_allowed(state, repo)?;
             reservation.commit(state);
             state.set_daemon(repo, compat);
-            attached(repo);
             Ok(TakeoverOutcome::Attached)
         }
         Err(EnsureDaemonError::Mismatch(conflict)) => {
@@ -649,15 +648,7 @@ pub(crate) fn confirm_repo_takeover_blocking(
 pub(crate) async fn confirm_repo_takeover(app: AppHandle, confirmation_id: String) -> Result<TakeoverOutcome, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        confirm_repo_takeover_blocking(
-            &state,
-            &app_config_path(&app)?,
-            &confirmation_id,
-            || load_app_config(&app).known_repos,
-            |repo| {
-                ensure_mcp_server(&app, repo, true);
-            },
-        )
+        confirm_repo_takeover_blocking(&state, &app_config_path(&app)?, &confirmation_id, || load_app_config(&app).known_repos)
     })
     .await
     .map_err(|error| format!("confirm takeover task: {error}"))?
@@ -774,6 +765,14 @@ pub(crate) fn canonical_host_executable(current_exe: std::io::Result<PathBuf>) -
     fs::canonicalize(current_exe.ok()?).ok()
 }
 
+/// The repo `stop_daemon` acts on: the caller's key, or the active repo only when none was given.
+pub(crate) fn stop_target(path: Option<&str>, active: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
+    match path.map(str::trim) {
+        Some(p) if !p.is_empty() => Ok(p.to_string()),
+        _ => active(),
+    }
+}
+
 // DELIBERATE TEARDOWN ORIGIN (B1). Settings explicitly stops this daemon's sessions.
 //
 // Ends EVERY live session for the TARGET repo and stops its daemon, then brings a fresh
@@ -789,10 +788,7 @@ pub(crate) fn canonical_host_executable(current_exe: std::io::Result<PathBuf>) -
 pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let target = match path.as_deref().map(str::trim) {
-            Some(p) if !p.is_empty() => p.to_string(),
-            _ => active_repo_ref()?.uri(),
-        };
+        let target = stop_target(path.as_deref(), || Ok(active_repo_ref()?.uri()))?;
         let repo = match RepoRef::parse(&target)? {
             RepoRef::Remote { host_id, path } => {
                 crate::stop_remote_daemon(&app, &host_id, &path, |_, _| Ok(()))?;
@@ -819,12 +815,6 @@ pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<
         }
         reservation.commit(&state);
         let closing = state.mark_closing(&repo);
-        // The MCP child is bound to the active repo only; stopping another repo's sessions
-        // must not take it down with them.
-        let is_active = active_repo().ok().as_deref() == Some(repo.as_path());
-        if is_active {
-            state.kill_mcp_for_repo(&repo);
-        }
         let app_config = app_config_path(&app)?;
         shutdown_daemon(
             &repo.display().to_string(),
@@ -842,9 +832,6 @@ pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<
 
         // Restart what we just stopped, for this repo only.
         attach_repo_daemon_locked(&state, &repo, &app_config, &guard);
-        if is_active {
-            ensure_mcp_server(&app, &repo, false);
-        }
         emit(
             &app,
             alinery_core::TelemetryEvent::DaemonStop {
@@ -934,9 +921,6 @@ pub(crate) fn close_all_repos_blocking<R: tauri::Runtime>(app: &AppHandle<R>) ->
     // Latch FIRST: the poller ticks every 5s and the footer polls every 1.5s, and both
     // spawn a daemon for a repo that has none. Tearing down before shutting those off
     // would race them into resurrecting the processes the user just asked us to stop.
-    // Stop the app-managed session producer before freezing the plan. The quit latch
-    // already prevents the GUI pollers and commands from starting replacement work.
-    state.kill_mcp();
     // `sanitize_app_config` keeps a non-empty `active_repo` inside `known_repos`, so this
     // list is the complete set of repos this app has open.
     let known = load_app_config(app).known_repos;
@@ -1068,9 +1052,16 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
                         state.set_daemon(&repo, compat);
                     }
                 }
-                PollerAction::Spawn if !daemon_answers(&repo) => {
-                    let _ = crate::pi_durable::start_daemon(&repo, &app_config);
-                }
+                PollerAction::Spawn if !daemon_answers(&repo) => match available(&repo, &app_config) {
+                    Ok(()) => {
+                        let _ = crate::pi_durable::start_daemon(&repo, &app_config);
+                    }
+                    Err(conflict) => {
+                        if !state.is_quitting() && !state.is_closing(&repo) {
+                            state.set_daemon_conflict(&repo, *conflict);
+                        }
+                    }
+                },
                 PollerAction::Spawn => {}
                 PollerAction::SurfaceConflict => {
                     let conflict = daemon_conflicts(&repo, &app_config);

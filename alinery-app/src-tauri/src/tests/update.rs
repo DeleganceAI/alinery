@@ -4,6 +4,7 @@
 //! every production module already uses — tests/mod.rs's curated re-export list is not
 //! touched by this file.
 use crate::*;
+use std::io::Write;
 use std::net::TcpListener;
 
 // ---- is_newer ----------------------------------------------------------------------

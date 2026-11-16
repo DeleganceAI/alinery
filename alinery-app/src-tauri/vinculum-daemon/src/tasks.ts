@@ -11,6 +11,7 @@ import type { Playbook, Step } from "playbook-engine/src/playbook.ts";
 import { projectExecution, projectionContext, taskAutoApproveAll } from "./domain/executionProjection.ts";
 import { EMPTY_ENGINE, executionPath, loadEngineState, mergedRecords } from "./domain/executionStore.ts";
 import { createManagerSession } from "./domain/subtasks.ts";
+import { harnessKey } from "./domain/sessionOps.ts";
 
 type Request = Record<string, unknown>;
 
@@ -133,11 +134,8 @@ export function taskWorktree(repo: string, slug: string): string {
 
 // SessionMeta requires worktree and created. A patch keeps values already on the file.
 // A file that does not have them, including one this daemon is creating, gets them now.
-/** A session with no harness named runs the Vinculum agent. */
-export function recordedHarness(key: unknown): string {
-  const value = typeof key === "string" ? key.trim() : "";
-  return value || "vinculum";
-}
+/** The harness a new session's meta records: Vinculum for none, or for a playbook's old name for it. */
+export const recordedHarness = harnessKey;
 
 export function completeSessionMeta(current: Record<string, unknown>, patch: Record<string, unknown>, id: string, worktree: string, now: number): Record<string, unknown> {
   const next: Record<string, unknown> = { ...current, ...patch, id };

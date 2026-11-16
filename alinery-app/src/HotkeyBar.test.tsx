@@ -2,7 +2,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { HotkeyBar } from "./HotkeyBar";
 import type { DaemonStatus } from "./types";
-import type { McpStatus } from "./useMcpStatus";
 
 vi.mock("./ipc", async () => (await import("./test/mockIpc")).mockIpc());
 
@@ -26,44 +25,30 @@ const daemon: DaemonStatus = {
   host_guard_warning: false,
 };
 
-const mcp: McpStatus = {
-  enabled: false,
-  running: false,
-  clients: 0,
-  socket_reachable: false,
-  binary_found: true,
-  binary_path: "",
-  host_args: [],
-  repo: "",
-  socket_path: "",
-  error: "",
-};
-
 describe("HotkeyBar runtime status", () => {
   it("keeps the footer identity minimal and exposes power-user status", () => {
-    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} mcp={mcp} />);
+    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} />);
     expect(html).toContain(">Alinery</span>");
     expect(html).toContain('class="live down"');
     expect(html).toContain("Daemon");
-    expect(html).toContain("MCP server");
     expect(html).not.toContain("<details");
     expect(html).not.toContain("<summary");
     expect(html).not.toContain("Alinery Dev");
   });
 
   it("prints the running app version next to the identity", () => {
-    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} mcp={mcp} version="0.11.0" />);
+    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} version="0.11.0" />);
     expect(html).toContain('class="footer-version"');
     expect(html).toContain("v0.11.0");
   });
 
   it("omits the version block until the version has loaded", () => {
-    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} mcp={mcp} />);
+    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} />);
     expect(html).not.toContain("footer-version");
   });
 
   it("hides keyboard hints before a repository is selected", () => {
-    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} mcp={mcp} showHints={false} />);
+    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} showHints={false} />);
     expect(html).not.toContain('class="keys"');
     expect(html).not.toContain("Search");
   });
@@ -71,27 +56,27 @@ describe("HotkeyBar runtime status", () => {
 
 describe("HotkeyBar named Grid hints", () => {
   it("shows the active Grid view's assigned shortcut", () => {
-    const html = renderToStaticMarkup(<HotkeyBar view="grid" daemon={daemon} mcp={mcp} gridViewName="Triage" gridViewShortcut="⌘4" />);
+    const html = renderToStaticMarkup(<HotkeyBar view="grid" daemon={daemon} gridViewName="Triage" gridViewShortcut="⌘4" />);
     expect(html).toContain("⌘4");
     expect(html).toContain("Triage");
     expect(html).not.toContain("⌘3</b>Grid");
   });
 
   it("advertises only the assigned view shortcut ranges", () => {
-    const html = renderToStaticMarkup(<HotkeyBar view="settings" daemon={daemon} mcp={mcp} />);
+    const html = renderToStaticMarkup(<HotkeyBar view="settings" daemon={daemon} />);
     expect(html).toContain("⌘1–6, 8–9");
   });
 });
 
 describe("HotkeyBar duplicate task hints", () => {
   it.each(["list", "task"])("advertises Command+D in the %s context", (view) => {
-    const html = renderToStaticMarkup(<HotkeyBar view={view} daemon={daemon} mcp={mcp} />);
+    const html = renderToStaticMarkup(<HotkeyBar view={view} daemon={daemon} />);
     expect(html).toContain("⌘D");
     expect(html).toContain("Duplicate");
   });
 
   it.each(["settings", "sessions", "create", "createSession", "session", "reviewHandoff"])("does not advertise duplicate in the %s context", (view) => {
-    const html = renderToStaticMarkup(<HotkeyBar view={view} daemon={daemon} mcp={mcp} />);
+    const html = renderToStaticMarkup(<HotkeyBar view={view} daemon={daemon} />);
     expect(html).not.toContain("⌘D");
     expect(html).not.toContain("Duplicate");
   });

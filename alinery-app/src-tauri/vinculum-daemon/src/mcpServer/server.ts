@@ -1,12 +1,12 @@
-// The MCP server itself: JSON-RPC over stdio, or over a unix socket the app's managed child serves. It replaces the Rust
-// `alinery-mcp` binary's two modes; the tools are in `handlers.ts` and every one of them is a call on the daemon.
-import { existsSync, unlinkSync } from "node:fs";
-import { createServer, type Socket } from "node:net";
+// The MCP server itself: the JSON-RPC handling the machine MCP serves (`machine.ts`), and the stdio bridge every client runs to reach it.
+// The tools are in `handlers.ts` and every one of them is a call on a daemon.
+import { existsSync } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { writeAtomic } from "../platform/fs.ts";
 import { callTool, type Context } from "./handlers.ts";
-import { Endpoints } from "./endpoints.ts";
+import { appConfigDirOf } from "../domain/playbookLibrary.ts";
+import { ask, currentToken, ensureMachine, machinePaths, serveMachine, spawnMachine } from "./machine.ts";
 import { TOOLS } from "./tools.ts";
 
 type Json = Record<string, unknown>;
@@ -17,25 +17,6 @@ const PROCESS_SCOPED = "(MCP resource URIs are process-scoped)";
 function flagValue(args: string[], name: string): string | undefined {
   const at = args.indexOf(name);
   return at >= 0 ? args[at + 1] : undefined;
-}
-
-/** `mcp_socket_path` and `mcp_status_path`: `.alinery/mcp[-<namespace>].sock` and `.status.json`, the namespace cut to what a file name may hold. */
-export function mcpPaths(repo: string, namespace: string | undefined) {
-  const clean = (namespace ?? "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 48);
-  const stem = clean ? `mcp-${clean}` : "mcp";
-  return { socket: join(repo, ".alinery", `${stem}.sock`), status: join(repo, ".alinery", `${stem}.status.json`) };
-}
-
-export function contextFrom(args: string[], protocol: number, env: Record<string, string | undefined> = process.env): Context {
-  const repo = flagValue(args, "--repo");
-  const socket = env.ALINERY_RPC_SOCKET;
-  const token = env.ALINERY_RPC_TOKEN;
-  return {
-    protocol,
-    processRepo: repo,
-    appConfig: flagValue(args, "--app-config"),
-    endpoints: new Endpoints(repo && socket && token ? { repo, endpoint: { socket, token } } : undefined, flagValue(args, "--endpoints-file"), args.includes("--managed")),
-  };
 }
 
 async function resourceRead(ctx: Context, params: Json): Promise<Json> {
@@ -75,7 +56,7 @@ export async function handleRequest(ctx: Context, req: Json): Promise<Json | nul
       outcome = {
         result: {
           protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2024-11-05",
-          capabilities: { tools: {}, resources: {} },
+          capabilities: { tools: {}, ...(ctx.processRepo ? { resources: {} } : {}) },
           serverInfo: { name: "alinery-mcp", version: "0.1" },
         },
       };
@@ -98,7 +79,8 @@ export async function handleRequest(ctx: Context, req: Json): Promise<Json | nul
               ],
             },
           }
-        : { error: { code: -32602, message: `resources/list requires --repo at process launch ${PROCESS_SCOPED}` } };
+        : // The bridge and the machine MCP span repositories, so they have no process-scoped resources to list (and do not advertise them).
+          { result: { resources: [] } };
       break;
     }
     case "resources/read":
@@ -112,7 +94,7 @@ export async function handleRequest(ctx: Context, req: Json): Promise<Json | nul
 }
 
 /** Feeds every line of `input` to `handle` one after another and writes each answer, so tool calls on a connection never overlap. */
-function serveLines(input: NodeJS.ReadableStream, write: (line: string) => void, ctx: Context, onLine?: (req: Json) => boolean) {
+export function serveLines(input: NodeJS.ReadableStream, write: (line: string) => void, ctx: Context, onLine?: (req: Json) => boolean) {
   let chain: Promise<void> = Promise.resolve();
   const lines = createInterface({ input });
   lines.on("line", (line) => {
@@ -132,84 +114,78 @@ function serveLines(input: NodeJS.ReadableStream, write: (line: string) => void,
   return new Promise<void>((resolve) => lines.on("close", () => void chain.then(resolve)));
 }
 
-/** The lane's runtime sidecar (`mcp.status.json`), as the daemon's own socket and lock are: a process marker, not repository state. */
-function writeStatus(path: string, clients: number) {
+/**
+ * The stdio bridge: a client's `--mcp` becomes a pipe to the machine MCP's socket. It holds no daemon tokens, presents
+ * the optional token, starts the MCP when nothing answers, and refuses an MCP of another protocol (M7).
+ */
+async function bridge(appConfig: string, namespace: string | undefined, protocol: number): Promise<number> {
+  const paths = machinePaths(appConfigDirOf(appConfig), namespace);
+  if (!(await ensureMachine(paths, () => spawnMachine(appConfig, namespace)))) {
+    console.error(`alinery-mcp: the machine MCP did not start at ${paths.socket}`);
+    return 1;
+  }
+  const token = currentToken(paths.key);
+  let status: Record<string, unknown>;
   try {
-    writeAtomic(path, JSON.stringify({ pid: process.pid, clients }));
-  } catch {
-    /* the app reads the count best-effort */
+    status = await ask(paths.socket, { op: "status" }, token);
+  } catch (e) {
+    console.error(`alinery-mcp: the machine MCP at ${paths.socket} did not answer (${(e as Error).message}); use Restart MCP in Alinery's Settings → Updates → Runtime`);
+    return 1;
   }
-}
-
-const unlinkQuiet = (path: string) => {
-  try {
-    unlinkSync(path);
-  } catch {
-    /* already gone */
+  if (status.ok !== true) {
+    console.error(`alinery-mcp: the machine MCP refused this bridge: ${String(status.error)}`);
+    return 1;
   }
-};
-
-async function serveSocket(ctx: Context, args: string[]): Promise<number> {
-  const repo = ctx.processRepo;
-  if (!repo) {
-    console.error("Usage: alinery-vinculum-daemon --mcp --serve --repo /path/to/repo");
-    return 2;
+  if (status.protocol !== protocol) {
+    console.error(`alinery-mcp: the machine MCP speaks protocol ${String(status.protocol)}, this bridge ${protocol}; use Restart MCP in Alinery's Settings → Updates → Runtime`);
+    return 1;
   }
-  const { socket, status } = mcpPaths(repo, flagValue(args, "--socket-namespace"));
-  unlinkQuiet(socket);
-  unlinkQuiet(status);
-  let clients = 0;
-  const server = createServer((connection: Socket) => {
-    let counted = false;
-    const drop = () => {
-      if (counted) writeStatus(status, --clients);
-      counted = false;
-    };
-    connection.on("error", drop);
-    void serveLines(
-      connection,
-      (line) => connection.writable && connection.write(`${line}\n`),
-      ctx,
-      (req) => {
-        if (!counted) {
-          counted = true;
-          writeStatus(status, ++clients);
-        }
-        // Reap: an orphaned listener is asked to leave by the process that answers its socket, never killed by a pid read from a file.
-        if (req.op !== "exit") return false;
-        connection.write(`${JSON.stringify({ ok: true })}\n`, () => {
-          unlinkQuiet(socket);
-          unlinkQuiet(status);
-          process.exit(0);
-        });
-        return true;
-      },
-    ).then(drop);
-  });
+  const socket = connect(paths.socket);
   await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(socket, resolve);
+    socket.once("connect", resolve);
+    socket.once("error", reject);
   });
-  console.error(`serve: listening on ${socket}`);
-  writeStatus(status, 0);
-  if (args.includes("--managed")) {
-    // The app that started this child holds its stdin; when the app goes, so does the listener.
-    process.stdin.resume();
-    process.stdin.on("end", () => {
-      unlinkQuiet(socket);
-      unlinkQuiet(status);
-      process.exit(0);
+  // The auth answer is the bridge's, not the client's: swallow the first line, then pipe both ways.
+  if (token) {
+    socket.write(`${JSON.stringify({ op: "auth", token })}\n`);
+    await new Promise<void>((resolve) => {
+      let seen = "";
+      const first = (chunk: Buffer) => {
+        seen += chunk.toString("utf8");
+        const at = seen.indexOf("\n");
+        if (at < 0) return;
+        socket.off("data", first);
+        const rest = seen.slice(at + 1);
+        if (rest) process.stdout.write(rest);
+        resolve();
+      };
+      socket.on("data", first);
     });
   }
-  return new Promise<number>(() => {});
+  socket.pipe(process.stdout);
+  process.stdin.pipe(socket);
+  return new Promise<number>((resolve) => {
+    socket.on("close", () => resolve(0));
+    process.stdin.on("end", () => socket.end());
+  });
 }
 
 /** `alinery-vinculum-daemon --mcp`: the entry `main.ts` hands the command line to. Returns the exit code. */
-export async function runMcp(args: string[], protocol: number): Promise<number> {
-  const ctx = contextFrom(args, protocol);
-  if (args.includes("--serve")) return serveSocket(ctx, args);
-  console.error(`alinery-mcp starting (stdio); --repo=${ctx.processRepo ?? "none"} (repo is a per-call tool argument)`);
-  await serveLines(process.stdin, (line) => process.stdout.write(`${line}\n`), ctx);
-  return 0;
+export async function runMcp(args: string[], protocol: number, version = ""): Promise<number> {
+  const appConfig = flagValue(args, "--app-config");
+  const namespace = flagValue(args, "--socket-namespace");
+  if (args.includes("--machine")) {
+    if (!appConfig) {
+      console.error("Usage: alinery-vinculum-daemon --mcp --machine --app-config /path/to/app.toml");
+      return 2;
+    }
+    const idle = Number(flagValue(args, "--idle-ms"));
+    return serveMachine({ paths: machinePaths(appConfigDirOf(appConfig), namespace), protocol, build: version, appConfig, idleMs: idle > 0 ? idle : undefined });
+  }
+  // Every client, a harness's included, goes through the machine MCP (docs/machine-mcp-plan.md P6). A config pasted before the bridge
+  // (`--mcp --app-config … --endpoints-file …`) lands here too.
+  if (appConfig) return bridge(appConfig, namespace, protocol);
+  console.error("Usage: alinery-vinculum-daemon --mcp --bridge --app-config /path/to/app.toml [--socket-namespace NS]");
+  return 2;
 }
 

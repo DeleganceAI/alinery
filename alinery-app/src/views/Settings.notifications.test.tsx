@@ -5,7 +5,7 @@ import { mockIpc } from "../test/mockIpc";
 import { effectiveOf, fakeSettings, pickScope } from "../test/settingsHooks";
 import { Toast } from "../toast";
 import type { GlobalSettings, NotificationPrefs } from "../types";
-import type { McpStatusHandle } from "../useMcpStatus";
+import type { McpStatus } from "../useMcpStatus";
 
 const notifications: NotificationPrefs = {
   enabled: true,
@@ -50,19 +50,7 @@ vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHoo
 
 import { Settings } from "./Settings";
 
-const mcp: McpStatusHandle = {
-  enabled: false,
-  running: false,
-  clients: 0,
-  socket_reachable: false,
-  binary_found: false,
-  binary_path: "",
-  host_args: [],
-  repo: "",
-  socket_path: "",
-  error: "",
-  refresh: () => {},
-};
+const mcp: McpStatus = { binary_path: "", host_args: [] };
 
 const labels = ["Dock badge", "Input waits", "Approval waits", "Failures", "Unread playbook completions"];
 

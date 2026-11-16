@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { Type, type TSchema } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
-import { signalChild, spawnDetached } from "./platform/process.ts";
+import { selfCommand, signalChild, spawnDetached } from "./platform/process.ts";
 
 /** A stdio MCP child gets only these, then its own env: one exported key must not sign in a store the UI shows empty. */
 const ENV_ALLOWLIST = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TZ", "LANG", "LC_ALL", "LC_CTYPE", "SSH_AUTH_SOCK", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
@@ -38,8 +38,8 @@ type Live = { key: string; extension: InstalledExtension; endpoint: Endpoint; re
 /** The built-in `alinery` server is this binary run with `--mcp`. Under `bun run` the script comes first; in a
  * `bun build --compile` binary the entry is the binary itself, as for a job child. */
 export function selfMcpCommand(): { command: string; args: string[] } {
-  const compiled = import.meta.url.includes("/$bunfs/");
-  return { command: process.execPath, args: [...(compiled ? [] : [Bun.main]), "--mcp"] };
+  const [command, ...args] = selfCommand("--mcp");
+  return { command, args };
 }
 
 export class McpHub {
@@ -108,15 +108,16 @@ export class McpHub {
   }
 }
 
-/** `rpc` is how the built-in server reaches this daemon: the socket and the AGENT token minted for it. `resolveBuiltin` is the test seam for a stand-in server. */
-export type McpHubOptions = { repo: string; appConfig: string; agentDir: string; rpc?: { socket: string; token: string }; resolveBuiltin?: () => string | null };
+/** `namespace` is this daemon's lane, so its harnesses reach this lane's machine MCP. `builtin: false` leaves the built-in server out. `resolveBuiltin` is the test seam for a stand-in server. */
+export type McpHubOptions = { repo: string; appConfig: string; agentDir: string; namespace?: string; builtin?: boolean; resolveBuiltin?: () => string | null };
 
 function desiredServers(options: McpHubOptions): Desired[] {
   const stand = options.resolveBuiltin?.();
   const self = selfMcpCommand();
   const command = stand ?? self.command;
-  const args = [...(stand ? [] : self.args), "--app-config", options.appConfig, "--repo", options.repo];
-  const env = options.rpc ? { ALINERY_RPC_SOCKET: options.rpc.socket, ALINERY_RPC_TOKEN: options.rpc.token } : {};
+  // No token in its environment: the bridge holds none, and the machine MCP calls each daemon with the token that daemon registered.
+  const args = [...(stand ? [] : self.args), "--bridge", "--app-config", options.appConfig, ...(options.namespace ? ["--socket-namespace", options.namespace] : [])];
+  const env = {};
   const builtin: Desired = {
     name: "alinery",
     builtin: true,
@@ -124,7 +125,7 @@ function desiredServers(options: McpHubOptions): Desired[] {
     key: `builtin:${command}:${args.join(" ")}`,
     spec: { kind: "stdio", command, args, cwd: options.repo, env },
   };
-  return [builtin, ...readUserServers(options.agentDir, options.repo)];
+  return [...(options.builtin === false ? [] : [builtin]), ...readUserServers(options.agentDir, options.repo)];
 }
 
 function readUserServers(agentDir: string, repo: string): Desired[] {

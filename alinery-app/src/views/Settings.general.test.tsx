@@ -4,7 +4,7 @@ import { DEFAULT_APPEARANCE, normalizeAppearance } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
 import { effectiveOf, fakeSettings, pickScope } from "../test/settingsHooks";
 import type { AppearancePrefs, GlobalSettings } from "../types";
-import type { McpStatusHandle } from "../useMcpStatus";
+import type { McpStatus } from "../useMcpStatus";
 
 // No `power` key: the shape of an app config written before keep-awake existed.
 const globalSettings: GlobalSettings = {
@@ -39,7 +39,7 @@ vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: vi.fn(async () => globalSettings),
     writeGlobalSettings: vi.fn(async (next: GlobalSettings) => next),
-    writeAppearance: vi.fn(async (appearance: AppearancePrefs) => ({ active_repo: "/r", known_repos: ["/r"], mcp_enabled: true, appearance })),
+    writeAppearance: vi.fn(async (appearance: AppearancePrefs) => ({ active_repo: "/r", known_repos: ["/r"], appearance })),
     getVersion: async () => "0.0.0",
   }),
 );
@@ -54,19 +54,7 @@ vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHoo
 import * as ipc from "../ipc";
 import { SECTIONS, Settings } from "./Settings";
 
-const mcp: McpStatusHandle = {
-  enabled: false,
-  running: false,
-  clients: 0,
-  socket_reachable: false,
-  binary_found: false,
-  binary_path: "",
-  host_args: [],
-  repo: "",
-  socket_path: "",
-  error: "",
-  refresh: () => {},
-};
+const mcp: McpStatus = { binary_path: "", host_args: [] };
 
 const NOTE =
   "This keeps this computer from idling. It will not prevent closing the display from putting it to sleep. The screen can still turn off. It only does this while at least one session is not Idle.";

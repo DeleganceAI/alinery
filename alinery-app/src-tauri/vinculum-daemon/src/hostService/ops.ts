@@ -317,6 +317,8 @@ export function daemonArguments(p: SpawnDaemonParams): string[] {
   if (p.namespace !== "") args.push("--socket-namespace", p.namespace);
   if (p.rpcSecretFile !== "") args.push("--rpc-secret-file", p.rpcSecretFile);
   if (p.startedBy) args.push("--started-by", p.startedBy);
+  // A host's daemons start and register with the host's machine MCP (docs/machine-mcp-plan.md P4), in its own unit where the daemon has one.
+  args.push("--machine-mcp", "--machine-launch", p.launch);
   return args;
 }
 

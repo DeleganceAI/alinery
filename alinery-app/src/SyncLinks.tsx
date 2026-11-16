@@ -1,9 +1,9 @@
 import { ArrowRight, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { confirmDanger } from "./confirm";
-import { confirmRestartingOthers, otherStarter } from "./DaemonConflictBanner";
+import { confirmRestartingOthers, otherStarter, takeOverEveryOwner } from "./DaemonConflictBanner";
 import { runtimeStatus, stopDaemon } from "./ipc";
-import { parseRemoteRepo } from "./remoteRepo";
+import { isRemoteRepo, parseRemoteRepo } from "./remoteRepo";
 import { repoName } from "./shared";
 import { toast } from "./toast";
 import type { LinkTraffic, RepoRuntime, RuntimeStatus } from "./types";
@@ -51,18 +51,38 @@ function links(status: RuntimeStatus): Link[] {
 export const starterNote = (repo: Pick<RepoRuntime, "started_by" | "os_user" | "mine">) =>
   repo.mine || !repo.started_by ? "" : `${repo.started_by}${repo.os_user ? ` (as ${repo.os_user})` : ""}`;
 
-async function updateDaemon(repo: RepoRuntime) {
+/** Asks, then restarts a repo's daemon on this app's build. `live` is its session count when known. Returns whether it ran. */
+export async function updateDaemon(repo: RepoRuntime, live?: number): Promise<boolean> {
   const name = repoName(repo.repo);
+  // A conflicted daemon here may be another build's, which only a takeover stops; it asks per owner, with the real session count.
+  if (repo.owner_lanes?.length && !isRemoteRepo(repo.repo)) {
+    try {
+      if (!(await takeOverEveryOwner(repo.repo, repo.owner_lanes))) return false;
+      toast.success(`Restarted the daemon for ${name}`);
+    } catch (cause) {
+      toast.error(`Couldn't restart the daemon for ${name}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+    return true;
+  }
+  const plural = (n: number) => `${n} live session${n === 1 ? "" : "s"}`;
   const ok = await confirmDanger(
     `Restart the daemon for ${name}?`,
-    <p className="confirm-loss">It is replaced with this app's build. Any live sessions in this repository are stopped, and their in-flight work is lost.</p>,
-    "Restart daemon",
+    <p className="confirm-loss">
+      It is replaced with this app's build.{" "}
+      {live === undefined
+        ? "Any live sessions in this repository are stopped, and their in-flight work is lost."
+        : live === 0
+          ? "No sessions are live."
+          : `Its ${plural(live)} ${live === 1 ? "is" : "are"} stopped, and their in-flight work is lost.`}
+    </p>,
+    live ? `Stop ${plural(live).replace(" live", "")} and restart` : "Restart daemon",
   );
-  if (!ok || !(await confirmRestartingOthers(otherStarter(repo), name))) return;
+  if (!ok || !(await confirmRestartingOthers(otherStarter(repo), name))) return false;
   await stopDaemon(repo.repo).then(
-    () => toast.success(`Restarted the daemon for ${repoName(repo.repo)}`),
-    (cause) => toast.error(`Couldn't restart the daemon for ${repoName(repo.repo)}: ${String(cause)}`),
+    () => toast.success(`Restarted the daemon for ${name}`),
+    (cause) => toast.error(`Couldn't restart the daemon for ${name}: ${String(cause)}`),
   );
+  return true;
 }
 
 /**

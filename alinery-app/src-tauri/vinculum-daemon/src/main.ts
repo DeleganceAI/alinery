@@ -54,6 +54,8 @@ import { hasPty, isPty, killPty, startShell } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
 import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
 import { McpHub } from "./mcp.ts";
+import { MachineLink } from "./domain/machineMcp.ts";
+import { machinePaths, spawnMachine } from "./mcpServer/machine.ts";
 import { canvasTools } from "./canvasTools.ts";
 import { renderPage } from "./domain/rendered.ts";
 import { canvasEnabled } from "./domain/canvas.ts";
@@ -64,7 +66,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 49;
+const PROTOCOL = 50;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -112,7 +114,7 @@ if (args.includes("--protocol-version")) {
 // A job child is this binary run with --job <kind>; it does nothing a daemon does.
 if (args.includes("--job")) process.exit(await runJobChild(args[args.indexOf("--job") + 1] ?? ""));
 // The MCP server is this binary run with --mcp: a client of a daemon, never one itself.
-if (args.includes("--mcp")) process.exit(await runMcp(args, PROTOCOL));
+if (args.includes("--mcp")) process.exit(await runMcp(args, PROTOCOL, appPackage.version));
 // The host service is this binary run with --host-service: the work a host needs while no daemon runs.
 if (args.includes("--host-service")) process.exit(await runHostService(args));
 // The restore of a backup is run by the shell after it has stopped the daemon: `--restore-backup <repo> <archive>`.
@@ -339,9 +341,24 @@ const agentEnv = agentShellEnv({
   path: process.env.PATH,
   libreOffice: libreOfficeDir(),
 });
-// The AGENT tokens this daemon mints: one for the built-in MCP it runs for its harnesses, and the ones the shell asks for.
+// The AGENT tokens this daemon mints: the one it registers with the machine MCP, and the ones the shell asks for.
 const agentTokens = new TokenRegistry();
-const mcpHub = new McpHub(registry, { repo, appConfig, agentDir, rpc: { socket: rpcSocket, token: agentTokens.mint("harness-mcp") } });
+// The harnesses' built-in MCP is the stdio bridge to the machine MCP, like any other client (docs/machine-mcp-plan.md P6).
+// Only with --machine-mcp, like the registration: the bridge starts a machine MCP, and a test daemon must not leave one behind.
+const mcpHub = new McpHub(registry, { repo, appConfig, agentDir, namespace, builtin: args.includes("--machine-mcp") });
+// The machine MCP (docs/machine-mcp-plan.md): McpService reads and restarts it from any daemon; only a daemon started with
+// --machine-mcp registers on its own, so test daemons never start one.
+const machine = machinePaths(appConfigDirOf(appConfig), namespace);
+const machineLink = new MachineLink({
+  paths: machine,
+  repo,
+  rpcSocket,
+  protocol: PROTOCOL,
+  build: appPackage.version,
+  mint: () => agentTokens.mint("machine-mcp"),
+  spawn: () => spawnMachine(appConfig, namespace, flag("--machine-launch") === "systemd_run" ? "systemd_run" : "direct", machine),
+  log: (line) => console.error(line),
+});
 void mcpHub.refresh();
 
 function sqlitePath(taskSlug: string, id: string): string {
@@ -968,6 +985,7 @@ async function resumeInterrupted() {
 function stopEverything(): number {
   jobs.stopAll();
   mcpHub.close();
+  machineLink.stop();
   releaseKeepAwake();
   const now = Math.floor(Date.now() / 1000);
   let stopped = 0;
@@ -1124,6 +1142,7 @@ await serveRpc({
   playbooks: { repo, appConfig, projector: playbookProjector, blobs: taskDeps.blobs },
   agent: { appConfig, blobs: taskDeps.blobs, mcp: mcpHub, shell: { path: agentEnv.PATH ?? "", python }, includedSkills: includedSkillsDir },
   providers: { providers, repo, appConfig },
+  mcp: { link: machineLink, paths: machine },
   artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
   transcripts: async (taskSlug, id) => {
     const row = live.get(id);
@@ -1139,6 +1158,7 @@ await serveRpc({
     };
   },
 });
+if (args.includes("--machine-mcp")) machineLink.start();
 writeBoxRecord({ repo, lane, pid: process.pid, osUser: userInfo().username, startedBy, startedAtMs, version: appPackage.version, protocol: PROTOCOL });
 // The installer and the updater hold no token for the wire, so a user's yes to "stop everything and install" reaches the daemon as
 // SIGTERM (scripts/lib/preflight.sh). It runs the teardown `Shutdown` runs, so sessions are recorded ended rather than interrupted.

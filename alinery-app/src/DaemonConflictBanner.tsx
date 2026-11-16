@@ -133,6 +133,64 @@ function takeoverPrompt(owner: DaemonOwnerConflict): { sentence: string; accept:
   };
 }
 
+/** Takes over every daemon that owns `repo` on this computer, one confirmed owner at a time; the last one's takeover starts this
+ *  build's daemon. Each dialog names what that owner's takeover stops, since a conflicted daemon's sessions are counted only here.
+ *  A reconfirm (its sessions changed after the dialog) asks again. False once a dialog is declined. Throws when the owners are gone
+ *  and this build's daemon still may not start (the conflict's issues say why, such as sessions from an older Alinery). */
+export async function takeOverEveryOwner(repo: string, lanes: string[]): Promise<boolean> {
+  const name = repoName(repo);
+  let blocked: DaemonConflict | null = null;
+  for (const lane of lanes) {
+    let preview = await ipc.prepareRepoTakeover(repo, lane);
+    for (;;) {
+      const { sentence, accept } = takeoverPrompt(preview.owner);
+      if (!(await confirmDanger(`Take over ${name}?`, <p>{sentence}</p>, accept))) {
+        await ipc.cancelRepoTakeover(preview.confirmation_id);
+        return false;
+      }
+      const outcome = await ipc.confirmRepoTakeover(preview.confirmation_id);
+      if (outcome.status !== "reconfirm") {
+        blocked = outcome.status === "blocked" ? outcome.conflict : null;
+        break;
+      }
+      preview = outcome.preview;
+    }
+  }
+  if (blocked) throw new Error(`${conflictEvidence(blocked).issues[0] ?? "another owner still holds it"}. Open ${name} to resolve it.`);
+  return true;
+}
+
+/** Back up and reset, from the repo's banner or its Runtime row: zips every task and its sessions next to the repository, then
+ *  clears them, once the user confirms. The shell refuses while any daemon answers. False when declined. */
+export async function backUpAndReset(repo: string, outdated: boolean): Promise<boolean> {
+  const name = repoName(repo);
+  const accepted = await confirmDanger(
+    `Back up and reset ${name}?`,
+    <>
+      {outdated && (
+        <p>
+          {name} has sessions from an older version of Alinery, which this version can't open. After the reset, the older agent named in this project's settings and playbooks, in
+          your own playbooks, and in your model favorites and default model is changed to Vinculum.
+        </p>
+      )}
+      <p>
+        Every task and its sessions are saved to a zip next to the repository folder, then cleared, so {name} opens with no tasks. Settings and playbooks stay, and so do worktrees
+        and their branches, with any uncommitted work.
+      </p>
+      <p>The zip is a regular Alinery backup of this repository. Nothing is cleared unless it is written and reads back whole.</p>
+    </>,
+    "Back up and reset",
+  );
+  if (!accepted) return false;
+  try {
+    const archive = await ipc.resetRepoState(repo);
+    toast.success(`Reset ${name}. Backup saved to ${archive}`);
+  } catch (cause) {
+    toast.error(`Couldn't reset ${name}: ${String(cause)}`);
+  }
+  return true;
+}
+
 // A conflict prompts once per owner process for the life of the app: polling may drop
 // and re-raise the same conflict, and a cancelled dialog must not keep coming back.
 const prompted = new Set<string>();
@@ -445,30 +503,9 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
   };
 
   const reset = async () => {
-    const accepted = await confirmDanger(
-      `Back up and reset ${name}?`,
-      <>
-        {conflict.outdated && (
-          <p>
-            {name} has sessions from an older version of Alinery, which this version can't open. After the reset, the older agent named in this project's settings and playbooks, in
-            your own playbooks, and in your model favorites and default model is changed to Vinculum.
-          </p>
-        )}
-        <p>
-          Every task and its sessions are saved to a zip next to the repository folder, then cleared, so {name} opens with no tasks. Settings and playbooks stay, and so do
-          worktrees and their branches, with any uncommitted work.
-        </p>
-        <p>The zip is a regular Alinery backup of this repository. Nothing is cleared unless it is written and reads back whole.</p>
-      </>,
-      "Back up and reset",
-    );
-    if (!accepted) return;
     setPending(true);
     try {
-      const archive = await ipc.resetRepoState(conflict.repo);
-      toast.success(`Reset ${name}. Backup saved to ${archive}`);
-    } catch (cause) {
-      toast.error(`Couldn't reset ${name}: ${String(cause)}`);
+      await backUpAndReset(conflict.repo, conflict.outdated);
     } finally {
       setPending(false);
       onRefresh();

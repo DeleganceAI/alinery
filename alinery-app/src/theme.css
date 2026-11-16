@@ -9063,61 +9063,6 @@ header:has(~ main .task-info-panel) nav.tabs {
   gap: 20px;
   font-size: calc(13px * var(--ui-scale));
 }
-.mcp-hero {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px 16px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
-}
-.mcp-hero .opt {
-  flex: 0 0 auto;
-  padding: 0;
-  white-space: nowrap;
-}
-.mcp-hero-status {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-.mcp-chips {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.mcp-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 16em;
-  min-height: 22px;
-  padding: 0 8px 0 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-subtle);
-  color: var(--text-muted);
-  font-size: calc(11px * var(--ui-scale));
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mcp-chip svg {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-}
-.mcp-chip.ok {
-  color: var(--text);
-}
-.mcp-chip.ok svg {
-  color: var(--success);
-}
 .mcp-section {
   min-width: 0;
 }

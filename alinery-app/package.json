@@ -1,7 +1,7 @@
 {
   "name": "alinery-app",
   "private": true,
-  "version": "0.600.0",
+  "version": "0.601.0",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
@@ -31,7 +31,7 @@
     "alinery-proto": "file:../proto",
     "highlight.js": "11.12.0",
     "lucide-react": "^1.31.0",
-    "mermaid": "^11.16.1",
+    "mermaid": "^12.3.0",
     "pdfjs-dist": "6.4.299",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

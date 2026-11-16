@@ -87,3 +87,17 @@ for (const name of readdirSync(CASES)) {
     expect(actual).toEqual(expected);
   });
 }
+
+test("a playbook an older Alinery wrote, naming the harness omp, creates its task and runs Vinculum", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "alinery-create-omp-"));
+  dirs.push(dir);
+  const repo = join(dir, "repo");
+  mkdirSync(repo);
+  git(repo, "init", "-q", "-b", "main");
+  git(repo, "commit", "-q", "--allow-empty", "-m", "init");
+  const omp = PLAYBOOK.replace(/^default_harness = "vinculum"$/m, 'default_harness = "omp"');
+  expect(omp).not.toBe(PLAYBOOK);
+  const reply = await provisionTask({ repo, lane: "", identity: "fixture" }, { name: "Old playbook", playbook: { reference: { scope: "repo", key: "one-shot" }, source: omp }, start: false });
+  expect(reply.creation).toBe("ready");
+  expect(reply.errors).toEqual([]);
+});

@@ -37,7 +37,8 @@ pub(crate) fn start_daemon(repo: &Path, app_config: &Path) -> Result<(), String>
         &binary,
         repo,
         app_config,
-        binary.file_name().unwrap_or_default(),
+        // The id `classify_hello` compares against (the binary's content), so a daemon this app starts reads Current, not BuildDrift.
+        std::ffi::OsStr::new(&alinery_core::daemon_binary_build_id()),
         namespace.as_deref(),
         host_executable.as_deref(),
         Some(&handoff),
@@ -45,6 +46,8 @@ pub(crate) fn start_daemon(repo: &Path, app_config: &Path) -> Result<(), String>
     if let Some(runtime) = local_runtime_home(app_config) {
         command.env("ALINERY_RUNTIME_HOME", runtime);
     }
+    // Registers with this lane's machine MCP and starts it when nothing answers (docs/machine-mcp-plan.md M6, M8).
+    command.arg("--machine-mcp");
     let spawned = command.spawn();
     match spawned {
         Ok(_) => Ok(()),

@@ -170,8 +170,9 @@ export const importLinearForRepo = (repoPath: string, reference: string) => invo
 
 // ── mcp.rs ────────────────────────────────────────────────────────────
 export const mcpStatus = () => invoke<McpStatus>("mcp_status");
-export const startMcpServer = () => invoke<McpStatus>("start_mcp_server");
-export const stopMcpServer = () => invoke<McpStatus>("stop_mcp_server");
+/** The process incarnation answering this lane's machine MCP socket, for Force restart's confirmation to bind to (M3). */
+export const machineMcpPeer = () => invoke<string>("machine_mcp_peer");
+export const forceRestartMachineMcp = (incarnation: string) => invoke<void>("force_restart_machine_mcp", { incarnation });
 
 // ── notify.rs ─────────────────────────────────────────────────────────
 /** Shows an OS notification. The text is the caller's: it comes from the session entity, so the shell reads no file. */

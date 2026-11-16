@@ -34,12 +34,21 @@ export class TaskConflict extends Error {
   }
 }
 
+/** The daemon refused the request's arguments. A create validates them all before it reserves anything, so nothing was created. */
+export class TaskRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TaskRefused";
+  }
+}
+
 async function call<T>(f: () => Promise<T>): Promise<T> {
   try {
     return await f();
   } catch (e) {
     const err = ConnectError.from(e);
     if (err.code === Code.Aborted) throw new TaskConflict(err.rawMessage);
+    if (err.code === Code.InvalidArgument) throw new TaskRefused(err.rawMessage);
     throw new Error(err.rawMessage);
   }
 }

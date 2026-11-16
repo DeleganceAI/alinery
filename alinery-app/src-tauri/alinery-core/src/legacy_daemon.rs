@@ -34,6 +34,19 @@ impl PeerProcessIdentity {
     pub fn pid(&self) -> i32 {
         self.pid
     }
+
+    /// An opaque name for this process incarnation (pid and start time), for a confirmation to bind to and compare.
+    pub fn incarnation(&self) -> String {
+        format!("{}:{}.{:06}", self.pid, self.start.0, self.start.1)
+    }
+
+    /// SIGTERM to this process. Only the machine MCP's confirmed Force restart calls it (`src/mcp.rs`, check-no-auto-session-kill.sh).
+    pub fn terminate(&self) -> Result<(), String> {
+        if unsafe { libc::kill(self.pid, libc::SIGTERM) } != 0 {
+            return Err(format!("could not signal process {}: {}", self.pid, std::io::Error::last_os_error()));
+        }
+        Ok(())
+    }
 }
 
 pub fn peer_process_id(stream: &UnixStream) -> Result<i32, String> {

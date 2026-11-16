@@ -306,6 +306,20 @@
   }
 }
 
+/* Runtime: two lists, daemons grouped under their host and one machine MCP per host. */
+.runtime-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 18px;
+}
+.runtime-host > td {
+  padding-top: 10px;
+  font-weight: 600;
+}
+.runtime-indent {
+  padding-left: 16px;
+}
+
 /* Repo requirements: three files, each an editor with its own status. */
 .specs-slot { margin-top: 16px; }
 .specs-slot-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }

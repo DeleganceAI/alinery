@@ -42,30 +42,6 @@ pub fn alineryd_lock_path(repo: &Path, namespace: Option<&str>) -> PathBuf {
     alinery_dir(repo).join(format!(".{}.lock", alineryd_stem(namespace)))
 }
 
-/// MCP stdio bridge socket: `.alinery/mcp.sock` or `.alinery/mcp-<ns>.sock`.
-pub fn mcp_socket_path(repo: &Path, namespace: Option<&str>) -> PathBuf {
-    alinery_dir(repo).join(format!("{}.sock", mcp_stem(namespace)))
-}
-
-/// MCP status sidecar: `.alinery/mcp.status.json` or `.alinery/mcp-<ns>.status.json`.
-pub fn mcp_status_path(repo: &Path, namespace: Option<&str>) -> PathBuf {
-    alinery_dir(repo).join(format!("{}.status.json", mcp_stem(namespace)))
-}
-
-fn mcp_stem(namespace: Option<&str>) -> String {
-    let clean = namespace
-        .unwrap_or("")
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .take(48)
-        .collect::<String>();
-    if clean.is_empty() {
-        "mcp".to_string()
-    } else {
-        format!("mcp-{clean}")
-    }
-}
-
 /// The daemon's gRPC socket: `.alinery/rpc.sock` or `.alinery/rpc-<ns>.sock`, the lane naming of `alineryd[-ns].sock`.
 pub fn rpc_socket_path(repo: &Path, namespace: Option<&str>) -> PathBuf {
     let clean = namespace

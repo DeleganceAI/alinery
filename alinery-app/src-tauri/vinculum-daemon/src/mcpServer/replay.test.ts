@@ -2,11 +2,13 @@
 // through this module. Each reply must equal the recorded one once the values that differ by construction (ids, times, the temp
 // directory) are normalised, except the calls in EXCEPTIONS, which are the deliberate changes, each with what it checks instead.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { fromJson } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { daemonProtocol, type RunningDaemon, startDaemon } from "./daemonFixture.testutil.ts";
 import { Endpoints } from "./endpoints.ts";
-import { callTool } from "./handlers.ts";
+import { callTool, itemJson } from "./handlers.ts";
 
 type Recorded = { name: string; arguments: Record<string, unknown>; reply: { content: { text: string }[] } };
 const recorded = (JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "rust-replies.json"), "utf8")) as { calls: Recorded[] }).calls;
@@ -43,6 +45,14 @@ function paths(want: unknown, got: unknown, at = "$", out: string[] = []): strin
 
 /** The recorded calls whose reply differs on purpose, each with the check that stands in for equality. */
 const EXCEPTIONS: { when: (call: Recorded) => boolean; why: string; check: (actual: string, want: string, root: string) => void }[] = [
+  {
+    when: (c) => c.name === "alinery_read_config" && c.reply.content[0].text === "",
+    why: "a repository with no settings answers a TOML comment saying the defaults apply, not an empty string",
+    check: (actual) => {
+      expect(actual.startsWith("# ")).toBe(true);
+      expect(Bun.TOML.parse(actual)).toEqual({});
+    },
+  },
   {
     when: (c) => c.name === "alinery_get_task",
     why: "get_task answers Bun.TOML.stringify of the task entity, not the file's text: the same fields, normalised",
@@ -89,12 +99,12 @@ afterAll(async () => {
   if (daemon) rmSync(daemon.fixture.root, { recursive: true, force: true });
 });
 
+const registered = () => new Endpoints(undefined, () => ({ [daemon.fixture.repo]: { socket: daemon.socket, token: daemon.token } }));
+
 test("every recorded call gets its recorded reply, except the deliberate changes", async () => {
   const { root, repo } = daemon.fixture;
-  const endpointsFile = join(daemon.fixture.root, "endpoints.json");
-  writeFileSync(endpointsFile, JSON.stringify({ version: 1, repos: { [repo]: { socket: daemon.socket, token: daemon.token } } }));
-  // The shell's managed MCP, the only one `alinery_send_review_handoff` is offered to: one token per daemon, in a file.
-  const ctx = daemon.context({ endpoints: new Endpoints(undefined, endpointsFile) });
+  // The machine MCP, the only one `alinery_send_review_handoff` is offered to: the daemons that registered with it.
+  const ctx = daemon.context({ endpoints: registered() });
   let sid = "";
   const differences: string[] = [];
   for (const [index, call] of recorded.entries()) {
@@ -122,8 +132,7 @@ test("every recorded call gets its recorded reply, except the deliberate changes
 
 test("an archived task is left out of alinery_list_tasks while it still exists (the recorded list runs after the purge)", async () => {
   const { repo } = daemon.fixture;
-  const endpointsFile = join(daemon.fixture.root, "endpoints.json");
-  const ctx = daemon.context({ endpoints: new Endpoints(undefined, endpointsFile) });
+  const ctx = daemon.context({ endpoints: registered() });
   const list = async () => JSON.parse((await callTool(ctx, "alinery_list_tasks", { repo })).content[0].text) as string[];
   const made = await callTool(ctx, "alinery_create_task", { repo, name: "Third task", description: "to archive", playbook: { scope: "bundled", key: "one-shot" } });
   expect(made.content[0].text.startsWith("{")).toBe(true);
@@ -136,7 +145,7 @@ test("an archived task is left out of alinery_list_tasks while it still exists (
 
 test("a refused call is marked isError and content is not, even content that reads like an error (#169)", async () => {
   const { repo } = daemon.fixture;
-  const ctx = daemon.context({ endpoints: new Endpoints(undefined, join(daemon.fixture.root, "endpoints.json")) });
+  const ctx = daemon.context({ endpoints: registered() });
   const missing = await callTool(ctx, "alinery_get_task", { repo, slug: "no-such-task" });
   expect(missing).toEqual({ content: [{ type: "text", text: "error: missing task 'no-such-task'" }], isError: true });
   expect((await callTool(ctx, "alinery_get_task", { repo, slug: "bad/slug" })).isError).toBe(true);
@@ -145,4 +154,41 @@ test("a refused call is marked isError and content is not, even content that rea
   const found = await callTool(ctx, "alinery_get_task", { repo, slug: "first-task" });
   expect(found.isError).toBeUndefined();
   expect(found.content[0].text).toContain("first-task");
+});
+
+test("task tools take task_slug or the older slug, session_status takes id, and a history window needs only offset or limit", async () => {
+  const { repo } = daemon.fixture;
+  const ctx = daemon.context({ endpoints: registered() });
+  const bySlug = await callTool(ctx, "alinery_get_task", { repo, slug: "first-task" });
+  expect((await callTool(ctx, "alinery_get_task", { repo, task_slug: "first-task" })).content[0].text).toBe(bySlug.content[0].text);
+  expect((await callTool(ctx, "alinery_get_task_execution", { repo, slug: "first-task" })).isError).toBeUndefined();
+  const sessions = JSON.parse((await callTool(ctx, "alinery_list_sessions", { repo, task_slug: "first-task" })).content[0].text) as { id: string; harness: string }[];
+  // An agent session answers its transcript while it runs, and says it is not running otherwise: never an empty scrollback.
+  const agent = sessions.find((s) => s.harness === "vinculum");
+  if (agent) expect((await callTool(ctx, "alinery_read_session_history", { repo, task_slug: "first-task", session_id: agent.id })).content[0].text).toMatch(/"mode":"transcript"|is not running/);
+  const sid = sessions.find((s) => s.harness === "no-harness")?.id ?? "";
+  expect(JSON.parse((await callTool(ctx, "alinery_session_status", { repo, slug: "first-task", id: sid })).content[0].text).session_id).toBe(sid);
+  const window = JSON.parse((await callTool(ctx, "alinery_read_session_history", { repo, task_slug: "first-task", session_id: sid, limit: 5 })).content[0].text);
+  expect(window).toMatchObject({ mode: "raw", offset: 0, limit: 5 });
+});
+
+test("a transcript item reads as strings: text, thinking and tool calls, long text clipped, absent fields left out", () => {
+  const item = {
+    id: "1",
+    role: "assistant",
+    streaming: false,
+    toolName: "",
+    toolCallId: "",
+    isError: false,
+    runningToolIds: [],
+    content: [
+      { kind: { case: "text", value: "x".repeat(5000) } },
+      { kind: { case: "toolCall", value: { name: "read", arguments: fromJson(ValueSchema, { path: "a.ts" }) } } },
+    ],
+  } as unknown as Parameters<typeof itemJson>[0];
+  const out = itemJson(item);
+  expect(out.role).toBe("assistant");
+  expect(String(out.text).endsWith("… [1000 more characters]")).toBe(true);
+  expect(out.tool_calls).toEqual([{ name: "read", arguments: '{"path":"a.ts"}' }]);
+  expect(Object.keys(out).sort()).toEqual(["role", "text", "tool_calls"]);
 });

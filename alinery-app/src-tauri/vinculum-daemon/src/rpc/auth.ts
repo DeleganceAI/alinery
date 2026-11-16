@@ -87,6 +87,8 @@ export const AGENT_RPCS: ReadonlyMap<string, Capability> = new Map([
   [rpc("BlobService", "UploadChunk"), Capability.ACT],
   [rpc("BlobService", "CommitUpload"), Capability.ACT],
   [rpc("SessionService", "ReadHistory"), Capability.VIEW],
+  // `alinery_read_session_history` reads a live agent session's conversation from the first frame of its transcript.
+  [rpc("SessionService", "WatchTranscript"), Capability.VIEW],
   [rpc("SessionService", "CreateSession"), Capability.ACT],
   [rpc("SessionService", "StartSession"), Capability.ACT],
   [rpc("TaskService", "CreateTask"), Capability.ACT],

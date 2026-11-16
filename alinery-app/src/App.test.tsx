@@ -145,7 +145,6 @@ const appConfig: AppConfig = {
   active_repo: task.repo_path,
   known_repos: [task.repo_path],
   local_onboarded: true,
-  mcp_enabled: true,
   appearance: DEFAULT_APPEARANCE,
   global: {
     notifications: notificationPrefs,
@@ -301,22 +300,7 @@ vi.mock("./useDaemonStatus", () => ({
     refresh: () => {},
   }),
 }));
-vi.mock("./useMcpStatus", () => ({
-  useMcpStatus: () => ({
-    enabled: true,
-    running: false,
-    clients: 0,
-    socket_reachable: false,
-    binary_found: true,
-    binary_path: "",
-    host_args: [],
-    repo: "/repo",
-    socket_path: "",
-    error: "",
-    refresh: () => {},
-  }),
-  mcpFooterLabel: () => "",
-}));
+vi.mock("./useMcpStatus", () => ({ useMcpStatus: () => ({ binary_path: "", host_args: [] }) }));
 const telemetryScenario = vi.hoisted(() => ({ ask: false }));
 vi.mock("./telemetry-consent", () => ({
   shouldAskTelemetryConsent: () => telemetryScenario.ask,

@@ -150,20 +150,31 @@ The first launch compiles Rust. Native notification banners appear only from a r
 
 ## MCP Server
 
-The MCP server is the daemon binary run with `--mcp`. Any MCP host that takes a command and args can use it. In the app, **Settings → MCP server** has **Copy config**, which fills in the binary path and its arguments. One process serves every repository; `repo` is an argument to each tool call (a path from `alinery_list_repos`), not a launch flag. Every tool is a call on that repository's daemon.
+The MCP server is the daemon binary run with `--mcp`. Each computer runs one machine MCP per user, and every Alinery daemon running there registers with it, so it serves all of those repositories whether or not the app is open. It stops 10 minutes after the last daemon goes away and starts again when something calls it.
+
+In the app, **Settings → MCP server** has **Copy config**, which gives any MCP host that runs a command and args a stdio bridge to the machine MCP. The bridge starts the MCP when nothing answers. `repo` is an argument to each tool call (a path from `alinery_list_repos`), not a launch flag, and every tool is a call on that repository's daemon. Merge the `alinery` entry into a host config that already has other servers, and restart the host after editing it.
 
 ```json
 {
   "mcpServers": {
     "alinery": {
       "command": "/absolute/path/to/alinery-vinculum-daemon",
-      "args": ["--mcp", "--app-config", "...", "--endpoints-file", "..."]
+      "args": ["--mcp", "--bridge", "--app-config", "..."]
     }
   }
 }
 ```
 
-Agent sessions Alinery starts get these tools automatically.
+| Host | Config file (macOS) |
+| --- | --- |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Cursor | `~/.cursor/mcp.json`, or `.cursor/mcp.json` in a project |
+
+Agent sessions Alinery starts reach the same MCP through the bridge, with nothing to set up.
+
+Tools are whatever the binary reports through `tools/list`; do not rely on a fixed count. Session tools can create playbook-step or auxiliary rows with extra instructions, start them, watch their state, and read their history, and a session an MCP client starts outlives the client, because the daemon owns it. Local repositories are read and write; remote ones are discovery only. No tool offers interactive session control: no attach, input, resize, detach, kill, resume, takeover, or bulk orchestration.
+
+**Settings → Updates → Runtime** shows the machine MCP for this computer and for each connected SSH host, and can restart it, require a token, or turn on HTTP. Once a token is set, every caller has to present it; the bridge reads it for you. Rotating the token keeps the old one working for 10 minutes. HTTP serves Streamable HTTP POSTs on `/mcp` (default `127.0.0.1:39470`), only while a token is set, with the token sent as `Authorization: Bearer <token>`. It refuses a Host or Origin that does not match. The traffic is plain HTTP, so put TLS in front before serving it beyond this machine.
 
 ### Authoring playbooks through MCP
 

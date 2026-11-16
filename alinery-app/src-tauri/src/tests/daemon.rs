@@ -278,7 +278,7 @@ fn read_socket_line_distinguishes_timeout_from_closed() {
     });
     let mut client_stream = std::os::unix::net::UnixStream::connect(&closed_sock).unwrap();
     server.join().unwrap();
-    assert_eq!(crate::read_socket_line(&mut client_stream), Err(crate::SocketReadError::Closed));
+    assert_eq!(alinery_core::legacy_daemon::read_socket_line(&mut client_stream), Err(crate::SocketReadError::Closed));
     let _ = fs::remove_file(&closed_sock);
 
     // Sub-case 2: peer accepts and never writes, with a short read timeout — not the real
@@ -292,7 +292,7 @@ fn read_socket_line_distinguishes_timeout_from_closed() {
     });
     let mut client_stream = std::os::unix::net::UnixStream::connect(&hang_sock).unwrap();
     client_stream.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
-    assert_eq!(crate::read_socket_line(&mut client_stream), Err(crate::SocketReadError::TimedOut));
+    assert_eq!(alinery_core::legacy_daemon::read_socket_line(&mut client_stream), Err(crate::SocketReadError::TimedOut));
     server.join().unwrap();
     let _ = fs::remove_file(&hang_sock);
 }
@@ -508,43 +508,6 @@ fn t8_list_alineryd_lane_sockets_counts() {
 
     drop(_listener);
     drop(_prod);
-    let _ = fs::remove_dir_all(&root);
-}
-
-/// Namespaced cleanup must delete only that lane's status+socket.
-#[test]
-fn remove_mcp_lane_runtime_files_own_lane_only() {
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let root = std::env::temp_dir().join(format!("alinery-t0-4-mcp-{n}"));
-    let alinery = root.join(".alinery");
-    fs::create_dir_all(&alinery).unwrap();
-
-    let prod_status = alinery.join("mcp.status.json");
-    let prod_sock = alinery.join("mcp.sock");
-    let dev_status = alinery.join("mcp-dabc.status.json");
-    let dev_sock = alinery.join("mcp-dabc.sock");
-    for p in [&prod_status, &prod_sock, &dev_status, &dev_sock] {
-        fs::write(p, b"x").unwrap();
-    }
-
-    let (got_status, got_sock) = remove_mcp_lane_runtime_files(&root, Some("dabc"));
-    assert!(got_status.ends_with("mcp-dabc.status.json"), "status path {:?}", got_status);
-    assert!(got_sock.ends_with("mcp-dabc.sock"), "sock path {:?}", got_sock);
-
-    assert!(!dev_status.exists(), "namespaced status must be removed");
-    assert!(!dev_sock.exists(), "namespaced socket must be removed");
-    assert!(prod_status.exists(), "prod status must be left untouched");
-    assert!(prod_sock.exists(), "prod socket must be left untouched");
-
-    // Prod lane targets only the un-namespaced pair.
-    fs::write(&dev_status, b"x").unwrap();
-    fs::write(&dev_sock, b"x").unwrap();
-    let _ = remove_mcp_lane_runtime_files(&root, None);
-    assert!(!prod_status.exists(), "prod status removed when ns=None");
-    assert!(!prod_sock.exists(), "prod socket removed when ns=None");
-    assert!(dev_status.exists(), "dev status preserved on prod cleanup");
-    assert!(dev_sock.exists(), "dev socket preserved on prod cleanup");
-
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -1060,7 +1023,7 @@ impl TakeoverRepo {
         crate::prepare_repo_takeover_blocking(state, &self.0.join("app.toml"), &self.0.display().to_string(), lane, || self.known()).unwrap()
     }
     fn confirm(&self, state: &AppState, id: &str) -> Result<crate::TakeoverOutcome, String> {
-        crate::confirm_repo_takeover_blocking(state, &self.0.join("app.toml"), id, || self.known(), |_| {})
+        crate::confirm_repo_takeover_blocking(state, &self.0.join("app.toml"), id, || self.known())
     }
 }
 impl Drop for TakeoverRepo {
@@ -1092,7 +1055,7 @@ fn takeover_consent_is_passive_single_use_and_revalidates_gui() {
     assert!(repo.confirm(&state, &fresh.confirmation_id).is_err());
     drop(closing);
     let fresh = repo.prepare(&state, &peer.lane);
-    assert!(crate::confirm_repo_takeover_blocking(&state, &repo.0.join("app.toml"), &fresh.confirmation_id, Vec::new, |_| {}).is_err());
+    assert!(crate::confirm_repo_takeover_blocking(&state, &repo.0.join("app.toml"), &fresh.confirmation_id, Vec::new).is_err());
     assert_eq!(peer.shutdowns(), 0, "none of these attempts authorizes a shutdown");
 }
 
@@ -1298,40 +1261,6 @@ fn attach_rechecks_membership_after_lifecycle_wait() {
 }
 
 #[test]
-fn nonactive_takeover_refresh_preserves_selected_repository_mcp() {
-    use tauri::Manager;
-    let _active_lock = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    let app = tauri::test::mock_builder()
-        .manage(AppState::default())
-        .build(tauri::test::mock_context(tauri::test::noop_assets()))
-        .unwrap();
-    let state = app.state::<AppState>();
-    struct Cleanup<'a>(&'a AppState);
-    impl Drop for Cleanup<'_> {
-        fn drop(&mut self) {
-            self.0.kill_mcp();
-            set_active_repo_global(None).unwrap();
-        }
-    }
-    let _cleanup = Cleanup(&state);
-    let selected = PathBuf::from("/tmp/selected-mcp-fixture");
-    set_active_repo_global(Some(selected.clone())).unwrap();
-    let child = Command::new("/bin/cat")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let pid = child.id();
-    *state.mcp_child.lock().unwrap_or_else(|error| error.into_inner()) = Some(crate::ManagedMcpChild { repo: selected, child });
-    crate::ensure_mcp_server(app.handle(), Path::new("/tmp/old-takeover-fixture"), true);
-    state.kill_mcp_for_repo(Path::new("/tmp/old-takeover-fixture"));
-    let mut guard = state.mcp_child.lock().unwrap_or_else(|error| error.into_inner());
-    let managed = guard.as_mut().expect("selected repository's connection must remain available");
-    assert_eq!(managed.child.id(), pid);
-    assert!(managed.child.try_wait().unwrap().is_none(), "nonactive refresh must not kill or replace the selected child");
-}
-
-#[test]
 fn takeover_rejects_invalid_and_compatible_targets_before_shutdown() {
     let repo = TakeoverRepo::new();
     let lane = crate::alineryd_socket_namespace().unwrap_or_default();
@@ -1465,32 +1394,35 @@ fn rpc_secrets_are_random_hex_kept_per_repo_and_lane_and_handed_off_owner_only()
     fs::remove_dir_all(dir).unwrap();
 }
 
-/// The managed MCP reads its AGENT tokens from this file, so it is owner-only and has the shape `mcpServer/endpoints.ts` parses.
+/// The stdio config a host runs is the bridge to the machine MCP, whose socket sits in the app-config directory, one per lane.
 #[test]
-fn mcp_endpoints_file_is_owner_only_and_holds_the_shape_the_daemon_binary_reads() {
-    use std::os::unix::fs::PermissionsExt;
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let root = std::env::temp_dir().join(format!("alinery-s5-1-endpoints-{n}"));
+fn host_config_is_the_bridge_and_the_machine_socket_is_per_lane() {
+    let root = std::env::temp_dir().join("alinery-host-args");
     let app_config = root.join("config").join("app.toml");
-    let path = crate::mcp::mcp_endpoints_path(&app_config, None).unwrap();
-    assert_eq!(path, root.join("config").join("mcp-endpoints.json"));
-    assert!(crate::mcp::mcp_endpoints_path(&app_config, Some("dabc")).unwrap().ends_with("mcp-endpoints-dabc.json"));
-
-    let mut repos = std::collections::BTreeMap::new();
-    repos.insert("/work/a".to_string(), (PathBuf::from("/work/a/.alinery/rpc.sock"), "token-a".to_string()));
-    crate::mcp::write_mcp_endpoints(&path, &repos).unwrap();
-    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
-    let parsed: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let config = app_config.to_string_lossy().into_owned();
+    assert_eq!(crate::mcp::mcp_host_args(&app_config, None), ["--mcp", "--bridge", "--app-config", &config]);
     assert_eq!(
-        parsed,
-        serde_json::json!({"version": 1, "repos": {"/work/a": {"socket": "/work/a/.alinery/rpc.sock", "token": "token-a"}}})
+        crate::mcp::mcp_host_args(&app_config, Some("dabc")),
+        ["--mcp", "--bridge", "--app-config", &config, "--socket-namespace", "dabc"]
     );
-
-    let args = crate::mcp::mcp_host_args(&app_config, None);
-    assert_eq!(args[0], "--mcp");
-    assert_eq!(args[args.len() - 2], "--endpoints-file");
-    assert_eq!(args[args.len() - 1], path.to_string_lossy());
+    assert_eq!(crate::mcp::machine_mcp_socket(&app_config, None).unwrap(), root.join("config").join("machine-mcp.sock"));
+    assert!(crate::mcp::machine_mcp_socket(&app_config, Some("da/bc")).unwrap().ends_with("machine-mcp-dabc.sock"));
     let _ = fs::remove_dir_all(&root);
+}
+
+// M3: Force restart signals only the incarnation the user confirmed, read from the socket's kernel-reported peer.
+#[test]
+fn force_restart_refuses_when_the_socket_peer_is_not_the_confirmed_incarnation() {
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let socket = std::env::temp_dir().join(format!("mmcp-{n}.sock"));
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let peer = crate::mcp::socket_peer(&socket).unwrap();
+    assert_eq!(peer.pid(), std::process::id() as i32);
+    assert!(peer.incarnation().starts_with(&format!("{}:", std::process::id())));
+    let refused = crate::mcp::force_restart_peer(&socket, "1:1.000000").unwrap_err();
+    assert!(refused.contains("changed since you confirmed"), "{refused}");
+    let _ = fs::remove_file(&socket);
+    assert!(crate::mcp::force_restart_peer(&socket, &peer.incarnation()).unwrap_err().contains("nothing answers"));
 }
 
 // A repository that cannot open (damaged task state) must still close: no daemon answers for it, so there is nothing to stop.
@@ -1532,4 +1464,14 @@ fn a_repo_that_cannot_open_can_still_be_closed() {
     );
     assert!(crate::require_repo_closable(&owned_elsewhere, &repo).is_err());
     let _ = fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn an_explicit_stop_target_never_asks_for_the_active_repo() {
+    use crate::stop_target;
+    let never = || -> Result<String, String> { panic!("the active repo was read") };
+    assert_eq!(stop_target(Some("alinery+ssh://h1/home/me/svc"), never).unwrap(), "alinery+ssh://h1/home/me/svc");
+    assert_eq!(stop_target(Some(" /Users/me/app "), never).unwrap(), "/Users/me/app");
+    assert_eq!(stop_target(Some("  "), || Ok("/active".into())).unwrap(), "/active");
+    assert_eq!(stop_target(None, || Ok("/active".into())).unwrap(), "/active");
 }
