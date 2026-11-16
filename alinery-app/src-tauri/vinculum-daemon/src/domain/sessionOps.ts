@@ -14,6 +14,14 @@ export type NameSource = "auto" | "user";
 export type SessionName = { name: string; source: NameSource };
 
 export const isVinculumSession = (harness: unknown) => harness === "vinculum";
+/**
+ * The harness a playbook or launch names. Empty means Vinculum, and so does `omp`, which every playbook an older Alinery wrote
+ * (and published) names: the same agent under its old name, so those playbooks keep working unchanged.
+ */
+export function harnessKey(name: unknown): string {
+  const value = typeof name === "string" ? name.trim() : "";
+  return value === "" || value === "omp" ? "vinculum" : value;
+}
 
 const MAX_NAME_BYTES = 4096;
 const MAX_META_BYTES = 1024 * 1024;

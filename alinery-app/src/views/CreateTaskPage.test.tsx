@@ -1729,6 +1729,19 @@ describe("v2 task creation", () => {
     expect(taskWrites.createTaskForRepo).toHaveBeenCalledTimes(1);
   });
 
+  it("says nothing was created when the daemon refuses the request, and lets the person try again", async () => {
+    const { TaskRefused } = await import("../sync/tasks");
+    vi.mocked(taskWrites.createTaskForRepo).mockRejectedValue(new TaskRefused("unsupported graph harness 'omp'"));
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: /workflow preview$/ });
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await screen.findByText("Couldn't create the task. Nothing was created.");
+    expect(screen.queryByText(/Creation outcome is unknown/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledTimes(2));
+  });
+
   it("freezes creation and autosave after a lost provisioning reply", async () => {
     vi.mocked(taskWrites.createTaskForRepo).mockRejectedValue(new Error("Connection closed"));
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
