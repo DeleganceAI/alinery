@@ -5,14 +5,15 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { create, toJson } from "@bufbuild/protobuf";
-import { ConnectError } from "@connectrpc/connect";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
+import { Code, ConnectError } from "@connectrpc/connect";
 import { parse as tomlParse } from "smol-toml";
 import { ArtifactService } from "alinery-proto/alinery/v1/artifacts_pb";
 import { BlobService } from "alinery-proto/alinery/v1/blobs_pb";
 import { type Entity, ExecutionSchema, HandoffRecordSchema, JobState, PickerEntrySchema, PlaybookSchema, type RepoOverrides, RepoOverridesSchema } from "alinery-proto/alinery/v1/entities_pb";
 import { JobService } from "alinery-proto/alinery/v1/jobs_pb";
 import { PlaybookService, ReadPlaybookResponseSchema } from "alinery-proto/alinery/v1/playbooks_pb";
-import { SessionService, SessionStartedSchema } from "alinery-proto/alinery/v1/sessions_pb";
+import { SessionService, SessionStartedSchema, type TranscriptItem } from "alinery-proto/alinery/v1/sessions_pb";
 import { SettingsService } from "alinery-proto/alinery/v1/settings_pb";
 import { SubtaskService } from "alinery-proto/alinery/v1/subtasks_pb";
 import { TaskService } from "alinery-proto/alinery/v1/tasks_pb";
@@ -387,9 +388,61 @@ async function sendReviewHandoff(ctx: Context, source: { repo: string; conn: Dae
   });
 }
 
+// What read_config answers for a repository with no settings of its own: a TOML comment, so it still parses, rather than nothing.
+const NO_SETTINGS = "# This repository sets nothing in .alinery/config.toml, so the defaults apply.\n";
+
+const TRANSCRIPT_DEFAULT = 50;
+const TRANSCRIPT_MAX = 200;
+const PART_MAX = 4000;
+
+const clip = (value: string) => (value.length > PART_MAX ? `${value.slice(0, PART_MAX)}… [${value.length - PART_MAX} more characters]` : value);
+
+/** One transcript item for a model to read: its text, thinking and tool calls as strings, each clipped, and only the fields it has. */
+export function itemJson(item: TranscriptItem): Args {
+  const of = (kind: "text" | "thinking") => item.content.flatMap((p) => (p.kind.case === kind ? [p.kind.value] : [])).join("\n");
+  const calls = item.content.flatMap((p) =>
+    p.kind.case === "toolCall" ? [{ name: p.kind.value.name ?? "", arguments: p.kind.value.arguments ? clip(JSON.stringify(toJson(ValueSchema, p.kind.value.arguments))) : "" }] : [],
+  );
+  const text = of("text");
+  const thinking = of("thinking");
+  return {
+    role: item.role,
+    ...(text ? { text: clip(text) } : {}),
+    ...(thinking ? { thinking: clip(thinking) } : {}),
+    ...(calls.length ? { tool_calls: calls } : {}),
+    ...(item.toolName ? { tool_name: item.toolName } : {}),
+    ...(item.isError ? { is_error: true } : {}),
+    ...(item.streaming ? { streaming: true } : {}),
+  };
+}
+
+/** A running agent session's conversation, a page of items, from the first frame of its transcript watch. */
+async function transcriptHistory(conn: DaemonConnection, slug: string, id: string, offset: number | undefined, limit: number | undefined): Promise<Reply> {
+  const abort = new AbortController();
+  let items: TranscriptItem[] = [];
+  try {
+    for await (const frame of conn.api(SessionService).watchTranscript({ session: sessionRef(slug, id), fromItem: 0n }, { signal: abort.signal })) {
+      items = frame.items;
+      break;
+    }
+  } catch (e) {
+    // The daemon serves a transcript only for a session it has open.
+    if (e instanceof ConnectError && e.code === Code.NotFound) return failure(`session '${id}' is not running; only a running agent session's conversation can be read (resume it in Alinery first)`);
+    // A daemon built before this tool read transcripts does not grant WatchTranscript to an agent token.
+    if (e instanceof ConnectError && e.code === Code.PermissionDenied) return failure("this repository's daemon is older than this MCP and cannot serve a conversation; restart it from Settings → System → Runtime");
+    throw e;
+  } finally {
+    abort.abort();
+  }
+  const count = Math.min(limit ?? TRANSCRIPT_DEFAULT, TRANSCRIPT_MAX);
+  const start = offset ?? Math.max(0, items.length - count);
+  const page = items.slice(start, start + count);
+  return json({ task_slug: slug, session_id: id, mode: "transcript", items: page.map(itemJson), offset: start, total: items.length, next_offset: start + page.length, eof: start + page.length >= items.length });
+}
+
 /** One `tools/call`. A failure the caller must read as text is a `ToolError`; anything else the RPC refused is `error: <its reason>`. */
 export async function callTool(ctx: Context, name: string, argsRaw: unknown): Promise<Reply> {
-  const args = (argsRaw && typeof argsRaw === "object" && !Array.isArray(argsRaw) ? argsRaw : {}) as Args;
+  const args = aliased(name, (argsRaw && typeof argsRaw === "object" && !Array.isArray(argsRaw) ? argsRaw : {}) as Args);
   try {
     if (name === "alinery_list_repos") return listRepos(ctx);
     if (name === "alinery_read_playbook" || name === "alinery_save_playbook") return await playbookTool(ctx, name, args);
@@ -397,7 +450,7 @@ export async function callTool(ctx: Context, name: string, argsRaw: unknown): Pr
     const { repo, discoveryOnly } = await resolveRepo(ctx, name, args.repo);
     if (discoveryOnly) {
       if (name === "alinery_list_tasks") return json([]);
-      component(args, "slug");
+      component(args, "task_slug");
       return text("");
     }
     if (name === "alinery_send_review_handoff" && !ctx.endpoints.spansRepos) return failure(NEEDS_APP_MCP);
@@ -409,6 +462,25 @@ export async function callTool(ctx: Context, name: string, argsRaw: unknown): Pr
     if (e instanceof Error) return failure(e.message);
     throw e;
   }
+}
+
+// Every tool that names a task calls it `task_slug`, and session_status names its session `session_id`. Five recorded schemas said
+// `slug`, and session_status also listed `id`, so a client written against them keeps working.
+const TASK_ARG_TOOLS = new Set([
+  "alinery_get_task", "alinery_list_sessions", "alinery_list_artifacts", "alinery_read_artifact", "alinery_archive_task", "alinery_session_status",
+  "alinery_create_session", "alinery_start_session", "alinery_list_playbook_steps", "alinery_get_task_execution", "alinery_read_session_history",
+]);
+
+export function aliased(name: string, args: Args): Args {
+  if (!TASK_ARG_TOOLS.has(name)) return args;
+  const out = { ...args };
+  if (out.task_slug === undefined && out.slug !== undefined) out.task_slug = out.slug;
+  delete out.slug;
+  if (name === "alinery_session_status") {
+    if (out.session_id === undefined && out.id !== undefined) out.session_id = out.id;
+    delete out.id;
+  }
+  return out;
 }
 
 const TOOL_NAMES = new Set([
@@ -457,7 +529,7 @@ async function dispatch(ctx: Context, name: string, args: Args, repo: string, co
       return json(tasks.map((t) => t.slug));
     }
     case "alinery_get_task": {
-      const slug = component(args, "slug");
+      const slug = component(args, "task_slug");
       const task = (await reads(conn, slug)).task;
       if (!task) return failure(`missing task '${slug}'`);
       return text(Bun.TOML.stringify(taskJson(task) as never));
@@ -465,7 +537,7 @@ async function dispatch(ctx: Context, name: string, args: Args, repo: string, co
     case "alinery_create_task":
       return createTask(conn, args);
     case "alinery_list_sessions": {
-      const slug = component(args, "slug");
+      const slug = component(args, "task_slug");
       const sessions = row((await reads(conn, slug)).entities, "session").sort(newest);
       return json(sessions.map(sessionMeta));
     }
@@ -514,20 +586,25 @@ async function dispatch(ctx: Context, name: string, args: Args, repo: string, co
       };
       const offset = number("offset");
       const limit = number("limit");
-      if ((offset === undefined) !== (limit === undefined)) return failure("offset and limit must be provided together");
-      const read = await conn.api(SessionService).readHistory({ session: sessionRef(slug, id), offset: offset === undefined ? undefined : BigInt(offset), limit: limit === undefined ? undefined : BigInt(limit) });
-      const data = Array.from(read.data);
-      if (offset === undefined || limit === undefined) return json({ task_slug: slug, session_id: id, mode: "screen", data });
-      return json({ task_slug: slug, session_id: id, mode: "raw", data, offset, limit: Math.min(limit, HISTORY_WINDOW_MAX), length: Number(read.length), next_offset: Number(read.nextOffset), eof: read.eof });
+      // An agent session writes no scrollback: its conversation is in its database, and the daemon serves it as a transcript.
+      const session = row((await reads(conn, slug)).entities, "session").find((s) => s.id === id);
+      if (session?.harness === "vinculum") return transcriptHistory(conn, slug, id, offset, limit);
+      if (offset === undefined && limit === undefined) {
+        const read = await conn.api(SessionService).readHistory({ session: sessionRef(slug, id) });
+        return json({ task_slug: slug, session_id: id, mode: "screen", data: Array.from(read.data) });
+      }
+      const window = { offset: offset ?? 0, limit: Math.min(limit ?? HISTORY_WINDOW_MAX, HISTORY_WINDOW_MAX) };
+      const read = await conn.api(SessionService).readHistory({ session: sessionRef(slug, id), offset: BigInt(window.offset), limit: BigInt(window.limit) });
+      return json({ task_slug: slug, session_id: id, mode: "raw", data: Array.from(read.data), ...window, length: Number(read.length), next_offset: Number(read.nextOffset), eof: read.eof });
     }
     case "alinery_list_artifacts": {
-      const slug = component(args, "slug");
+      const slug = component(args, "task_slug");
       const { entities, task } = await reads(conn, slug);
       const artifacts = row(entities, "artifact").sort((a, b) => a.position - b.position);
       return json(task?.engineVersion === 2 ? artifacts.map(artifactRow) : artifacts.map((a) => a.name));
     }
     case "alinery_read_artifact": {
-      const slug = component(args, "slug");
+      const slug = component(args, "task_slug");
       const filename = typeof args.filename === "string" ? args.filename : "";
       try {
         validateArtifactFilename(filename);
@@ -539,7 +616,7 @@ async function dispatch(ctx: Context, name: string, args: Args, repo: string, co
     case "alinery_read_config": {
       const settings = row(await conn.read(repoScope), "settings")[0];
       const overrides = settings && !settings.error ? settings.overrides : undefined;
-      return text(overrides && !overridesEmpty(overrides) ? settingTables(overrides) : "");
+      return text(overrides && !overridesEmpty(overrides) ? settingTables(overrides) : NO_SETTINGS);
     }
     case "alinery_write_config": {
       const content = typeof args.content === "string" ? args.content : "";
@@ -602,7 +679,7 @@ async function dispatch(ctx: Context, name: string, args: Args, repo: string, co
       return json(reply.result ?? null);
     }
     case "alinery_archive_task": {
-      const slug = component(args, "slug");
+      const slug = component(args, "task_slug");
       if (!(await reads(conn, slug)).task) return failure("no such task");
       await conn.api(TaskService).archiveTask({ meta: newMeta(), slug });
       return text("archived");

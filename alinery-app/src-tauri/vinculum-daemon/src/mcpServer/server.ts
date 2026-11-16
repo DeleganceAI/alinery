@@ -56,7 +56,7 @@ export async function handleRequest(ctx: Context, req: Json): Promise<Json | nul
       outcome = {
         result: {
           protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2024-11-05",
-          capabilities: { tools: {}, resources: {} },
+          capabilities: { tools: {}, ...(ctx.processRepo ? { resources: {} } : {}) },
           serverInfo: { name: "alinery-mcp", version: "0.1" },
         },
       };
@@ -79,7 +79,8 @@ export async function handleRequest(ctx: Context, req: Json): Promise<Json | nul
               ],
             },
           }
-        : { error: { code: -32602, message: `resources/list requires --repo at process launch ${PROCESS_SCOPED}` } };
+        : // The bridge and the machine MCP span repositories, so they have no process-scoped resources to list (and do not advertise them).
+          { result: { resources: [] } };
       break;
     }
     case "resources/read":

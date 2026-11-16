@@ -32,6 +32,10 @@ test("tools/list answers the 26 tools, initialize names the server, and a notifi
   expect(init.result).toMatchObject({ serverInfo: { name: "alinery-mcp" }, protocolVersion: "2025-03-26" });
   expect(await handleRequest(ctx, { jsonrpc: "2.0", method: "notifications/initialized" })).toBeNull();
   expect(await handleRequest(ctx, { jsonrpc: "2.0", id: 3, method: "nope" })).toMatchObject({ error: { code: -32601 } });
+  // Spanning repositories, the bridge and the machine MCP list no resources and do not advertise them.
+  const spanning = { ...ctx, processRepo: undefined };
+  expect(await handleRequest(spanning, { jsonrpc: "2.0", id: 4, method: "resources/list" })).toMatchObject({ result: { resources: [] } });
+  expect(((await handleRequest(spanning, { jsonrpc: "2.0", id: 5, method: "initialize", params: {} })) as { result: { capabilities: object } }).result.capabilities).toEqual({ tools: {} });
 });
 
 test("a daemon of another protocol is named and left alone: the call fails, the daemon keeps its pid and still answers", async () => {
