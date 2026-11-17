@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CUSTOM_ENDPOINT_REFERENCE, CUSTOM_ENDPOINT_STARTER } from "../../../src/customEndpointExample.ts";
+import { OpenAICompletionsCompatSchema, OpenAIResponsesCompatSchema } from "@earendil-works/pi-ai/providers/compat-schema";
+import { CUSTOM_ENDPOINT_AGENT_INSTRUCTIONS, CUSTOM_ENDPOINT_REFERENCE, CUSTOM_ENDPOINT_STARTER } from "../../../src/customEndpointExample.ts";
 import { checkCustom, openCustomProviders, testCustom } from "./customProviders.ts";
 
 const noop = { setProvider() {}, deleteProvider() {} };
@@ -57,6 +58,16 @@ test("an OMP provider block reads with no problem, slashes in model ids included
 test("the editor's reference reads with no problem once its key is filled in, and the starter's only problem is the key", () => {
   expect(checkCustom(CUSTOM_ENDPOINT_REFERENCE.replace("<your key>", "sk-x"), new Set()).problems).toEqual([]);
   expect(checkCustom(CUSTOM_ENDPOINT_STARTER, new Set()).problems).toEqual([{ path: "my-endpoint.apiKey", message: "replace <your key> with your key", error: true }]);
+});
+
+test("the agent instructions name every compat key pi reads, and every thinking format", () => {
+  const listed = new Set([...CUSTOM_ENDPOINT_AGENT_INSTRUCTIONS.matchAll(/^- (\w+) \(/gm)].map((match) => match[1]));
+  const responsesOnly = /only these apply: ([^\n]*)/.exec(CUSTOM_ENDPOINT_AGENT_INSTRUCTIONS)?.[1] ?? "";
+  for (const key of Object.keys(OpenAICompletionsCompatSchema.properties)) expect(listed.has(key) ? key : `missing ${key}`).toBe(key);
+  for (const key of Object.keys(OpenAIResponsesCompatSchema.properties)) expect(listed.has(key) || responsesOnly.includes(key) ? key : `missing ${key}`).toBe(key);
+  const formats = (OpenAICompletionsCompatSchema.properties.thinkingFormat as { anyOf: { const: string }[] }).anyOf.map((option) => option.const);
+  for (const format of formats) expect(CUSTOM_ENDPOINT_AGENT_INSTRUCTIONS).toContain(`\`${format}\``);
+  expect(CUSTOM_ENDPOINT_AGENT_INSTRUCTIONS).toContain(CUSTOM_ENDPOINT_REFERENCE);
 });
 
 test("each problem names its field, errors apart from warnings", () => {

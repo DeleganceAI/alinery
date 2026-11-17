@@ -11082,6 +11082,11 @@ button.chat-path-link:focus-visible {
   font-size: calc(12px * var(--ui-scale));
   line-height: 1.5;
 }
+.custom-endpoint-reference-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .custom-endpoint-foot {
   justify-content: flex-end;
 }

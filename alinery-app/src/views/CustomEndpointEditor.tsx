@@ -1,8 +1,10 @@
 import { CircleAlert, CircleCheck, TriangleAlert, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { copyTextToClipboard } from "../chat/CopyMessage";
 import type { CustomCheck } from "../chat/providers";
-import { CUSTOM_ENDPOINT_REFERENCE, CUSTOM_ENDPOINT_STARTER } from "../customEndpointExample";
+import { CUSTOM_ENDPOINT_AGENT_INSTRUCTIONS, CUSTOM_ENDPOINT_REFERENCE, CUSTOM_ENDPOINT_STARTER } from "../customEndpointExample";
 import { Dialog, InlineStatus } from "../shared";
+import { toast } from "../toast";
 
 type Props = {
   /** The saved provider being edited, or null for a new one. */
@@ -168,9 +170,24 @@ export function CustomEndpointEditor({ editing, check, save, onClose }: Props) {
         <details className="custom-endpoint-reference">
           <summary>Every supported field</summary>
           <pre>{CUSTOM_ENDPOINT_REFERENCE}</pre>
-          <button type="button" className="btn ghost small" onClick={() => edit(CUSTOM_ENDPOINT_REFERENCE)} disabled={busy}>
-            Start from this example
-          </button>
+          <div className="custom-endpoint-reference-actions">
+            <button type="button" className="btn ghost small" onClick={() => edit(CUSTOM_ENDPOINT_REFERENCE)} disabled={busy}>
+              Start from this example
+            </button>
+            <button
+              type="button"
+              className="btn ghost small"
+              title="Every field, compat option and thinking format, with how to find the values: paste it to your own AI to write this config"
+              onClick={() =>
+                void copyTextToClipboard(CUSTOM_ENDPOINT_AGENT_INSTRUCTIONS).then(
+                  () => toast.success("Agent instructions copied", "short"),
+                  () => toast.error("Couldn't copy the instructions"),
+                )
+              }
+            >
+              Copy agent instructions
+            </button>
+          </div>
         </details>
       </div>
       <div className="mfoot custom-endpoint-foot">
