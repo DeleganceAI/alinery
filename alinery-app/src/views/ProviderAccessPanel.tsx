@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { CopyTextButton } from "../chat/CopyMessage";
 import type { useProviderAccess } from "../chat/providerAccess";
 import type { ProviderLoginStatus } from "../chat/providers";
+import { confirmDanger } from "../confirm";
+import { CustomEndpointEditor } from "./CustomEndpointEditor";
 
 type Access = ReturnType<typeof useProviderAccess>;
 type LoginEvent = ProviderLoginStatus["events"][number];
@@ -163,73 +165,59 @@ function PromptForm({
   );
 }
 
+/** The saved custom endpoints, each with Edit and Remove, and Add, which opens the editor. */
 export function CustomEndpointForm({ access }: { access: Access }) {
-  const [name, setName] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [models, setModels] = useState("");
-  const [apiKey, setApiKey] = useState("");
+  const [editing, setEditing] = useState<Access["custom"][number] | "new" | null>(null);
+  const remove = async (row: Access["custom"][number]) => {
+    const what = `${row.models.length === 1 ? "Its model" : `Its ${row.models.length} models`}${row.hasKey ? " and saved key" : ""}`;
+    if (await confirmDanger(`Remove ${row.name}?`, `${what} are deleted from this machine. Sessions using them stop working.`, "Remove")) {
+      await access.deleteCustom(row.id);
+    }
+  };
   return (
-    <form
-      className="chat-ui-prompt"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const id = name
-          .trim()
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-|-$/g, "")
-          .slice(0, 32);
-        void access
-          .saveCustom({
-            id,
-            name: name.trim(),
-            baseUrl: baseUrl.trim(),
-            apiKey: apiKey.trim(),
-            keepKey: false,
-            models: models.split(/[,\s]+/).filter(Boolean),
-          })
-          .then(() => {
-            setName("");
-            setBaseUrl("");
-            setModels("");
-            setApiKey("");
-          })
-          .catch(() => undefined);
-      }}
-    >
-      <p className="chat-msg-title">OpenAI-compatible endpoint</p>
+    <div className="chat-ui-prompt">
+      <p className="chat-msg-title">OpenAI-compatible endpoints</p>
       {access.custom.length > 0 ? (
-        <ul className="chat-model-list">
+        <ul className="chat-model-list chat-provider-cards">
           {access.custom.map((row) => (
             <li key={row.id}>
               <div className="chat-model-item">
                 <span>
-                  {row.name} · {row.models.join(", ")}
+                  {row.name}
+                  <span className="chat-provider-detail">
+                    {row.models.length === 1 ? row.models[0] : `${row.models.length} models`} · {hostOf(row.baseUrl)}
+                    {row.hasKey ? "" : " · no key"}
+                  </span>
                 </span>
-                <button type="button" className="btn ghost small" onClick={() => void access.deleteCustom(row.id)}>
-                  Remove
-                </button>
+                <span className="chat-model-item-side">
+                  <button type="button" className="btn ghost small" onClick={() => setEditing(row)}>
+                    Edit
+                  </button>
+                  <button type="button" className="btn ghost small" onClick={() => void remove(row)}>
+                    Remove
+                  </button>
+                </span>
               </div>
             </li>
           ))}
         </ul>
-      ) : null}
-      <input className="field-input" aria-label="Endpoint name" placeholder="Name" value={name} onChange={(event) => setName(event.currentTarget.value)} />
-      <input className="field-input" aria-label="Endpoint URL" placeholder="https://host/v1" value={baseUrl} onChange={(event) => setBaseUrl(event.currentTarget.value)} />
-      <input className="field-input" aria-label="Model ids" placeholder="model ids, comma separated" value={models} onChange={(event) => setModels(event.currentTarget.value)} />
-      <input
-        className="field-input"
-        type="password"
-        aria-label="Endpoint API key"
-        placeholder="API key, blank if the server has none"
-        value={apiKey}
-        onChange={(event) => setApiKey(event.currentTarget.value)}
-      />
+      ) : (
+        <p className="dsc">Any API that speaks OpenAI's chat completions or responses: DeepInfra, Together, OpenRouter, vLLM, Ollama.</p>
+      )}
       <div className="chat-ui-prompt-options">
-        <button type="submit" className="btn small" disabled={!name.trim() || !baseUrl.trim() || !models.trim()}>
+        <button type="button" className="btn small" onClick={() => setEditing("new")}>
           Add endpoint
         </button>
       </div>
-    </form>
+      {editing ? <CustomEndpointEditor editing={editing === "new" ? null : editing} check={access.checkCustom} save={access.saveCustom} onClose={() => setEditing(null)} /> : null}
+    </div>
   );
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }

@@ -11,6 +11,8 @@ export type TranscriptSource = {
   toolName?: string;
   toolCallId?: string;
   isError?: boolean;
+  /** When the message was complete, ms since the epoch. */
+  at?: number;
 };
 
 export type TranscriptToolSlot = {
@@ -35,6 +37,7 @@ export type TranscriptReply = {
   toolCallId?: string;
   isError?: boolean;
   runningToolIds?: string[];
+  at?: number;
 };
 
 export function transcriptSource(id: string, message: object, streaming = false): TranscriptSource {
@@ -45,7 +48,11 @@ export function transcriptSource(id: string, message: object, streaming = false)
     toolName?: unknown;
     toolCallId?: unknown;
     isError?: unknown;
+    timestamp?: unknown;
+    durationMs?: unknown;
   };
+  // Pi stamps a reply when its request starts; the turn footer wants when it ended.
+  const at = typeof record.timestamp === "number" ? record.timestamp + (typeof record.durationMs === "number" ? record.durationMs : 0) : undefined;
   return {
     id,
     ...(streaming ? { streaming: true } : {}),
@@ -55,6 +62,7 @@ export function transcriptSource(id: string, message: object, streaming = false)
     ...(typeof record.toolName === "string" ? { toolName: record.toolName } : {}),
     ...(typeof record.toolCallId === "string" ? { toolCallId: record.toolCallId } : {}),
     ...(record.isError === true ? { isError: true } : {}),
+    ...(at !== undefined ? { at } : {}),
   };
 }
 
@@ -139,6 +147,8 @@ function runningResult(slot: TranscriptToolSlot): TranscriptReply {
   };
 }
 
+const stamp = (message: TranscriptSource) => (message.at !== undefined ? { at: message.at } : {});
+
 export function formatTranscript(messages: readonly TranscriptSource[], tools: readonly TranscriptToolSlot[] = []): TranscriptReply[] {
   const running = tools.filter((slot) => slot.status === "pending" || slot.status === "running");
   const runningIds = new Set(running.map((slot) => slot.callId));
@@ -149,7 +159,7 @@ export function formatTranscript(messages: readonly TranscriptSource[], tools: r
     if (message.role === "user") {
       const content = textParts(message.content).filter((part) => part.text.trim().length > 0);
       if (content.length === 0) continue;
-      out.push({ id: message.id, role: "user", content });
+      out.push({ id: message.id, role: "user", content, ...stamp(message) });
       continue;
     }
     if (message.role === "toolResult") {
@@ -161,6 +171,7 @@ export function formatTranscript(messages: readonly TranscriptSource[], tools: r
         ...(message.toolName ? { toolName: message.toolName } : {}),
         ...(message.toolCallId ? { toolCallId: message.toolCallId } : {}),
         ...(message.isError ? { isError: true } : {}),
+        ...stamp(message),
         content: textParts(message.content),
       });
       continue;
@@ -175,6 +186,7 @@ export function formatTranscript(messages: readonly TranscriptSource[], tools: r
       role: "assistant",
       ...(message.streaming ? { streaming: true } : {}),
       ...(callIds.length > 0 ? { runningToolIds: callIds } : {}),
+      ...stamp(message),
       content,
     });
     for (const slot of running) {

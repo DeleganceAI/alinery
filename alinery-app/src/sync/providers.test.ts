@@ -21,7 +21,7 @@ function serve(providers: Partial<ServiceImpl<typeof ProviderService>>) {
 const wireCatalog = {
   providers: [{ id: "groq", name: "Groq", authenticated: true, stored: true, apiKey: true, oauth: false, apiKeyName: "API key", oauthName: "" }],
   models: [{ provider: "groq", id: "llama" }],
-  custom: [{ id: "mine", name: "Mine", baseUrl: "https://x.example/v1", hasKey: true, models: ["m1"] }],
+  custom: [{ id: "mine", name: "Mine", baseUrl: "https://x.example/v1", hasKey: true, models: ["m1"], config: "mine:\n  baseUrl: https://x.example/v1\n" }],
 };
 
 it("reads the catalog from the active repository's daemon in the shape the sign-in UI uses", async () => {
@@ -89,19 +89,19 @@ it("sends a reply, a cancel, a logout and the custom provider calls with a fresh
   serve({
     loginReply: (r) => (calls.push(["reply", { value: r.value, cancel: r.cancel }, meta(r.meta)]), {} as never),
     logout: (r) => (calls.push(["logout", r.provider, meta(r.meta)]), { catalog: wireCatalog } as never),
-    saveCustom: (r) => (calls.push(["save", { id: r.id, apiKey: r.apiKey, keepKey: r.keepKey, models: [...r.models] }, meta(r.meta)]), { catalog: wireCatalog } as never),
+    saveCustom: (r) => (calls.push(["save", { config: r.config, replaces: r.replaces }, meta(r.meta)]), { catalog: wireCatalog } as never),
     deleteCustom: (r) => (calls.push(["delete", r.id, meta(r.meta)]), { catalog: { providers: [], models: [], custom: [] } } as never),
   });
   await providerLoginReply("l1", "secret", false, "/b");
   await providerLoginReply("l1", "", true, "/b");
   await providerLogout("groq", "/b");
-  await customProviderSave({ id: "mine", name: "Mine", baseUrl: "https://x.example/v1", apiKey: "", keepKey: true, models: ["m1"] }, "/b");
+  await customProviderSave("mine:\n  baseUrl: https://x.example/v1\n", "old", "/b");
   expect(await customProviderDelete("mine", "/b")).toEqual({ providers: [], models: [], custom: [] });
   expect(calls.map(([name, body]) => [name, body])).toEqual([
     ["reply", { value: "secret", cancel: false }],
     ["reply", { value: "", cancel: true }],
     ["logout", "groq"],
-    ["save", { id: "mine", apiKey: "", keepKey: true, models: ["m1"] }],
+    ["save", { config: "mine:\n  baseUrl: https://x.example/v1\n", replaces: "old" }],
     ["delete", "mine"],
   ]);
   expect(new Set(calls.map(([, , id]) => id)).size).toBe(5);

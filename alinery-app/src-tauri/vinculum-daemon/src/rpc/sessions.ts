@@ -51,6 +51,7 @@ export function toItem(item: TranscriptReply): Item {
     toolCallId: item.toolCallId ?? "",
     isError: item.isError === true,
     runningToolIds: item.runningToolIds ?? [],
+    at: BigInt(Math.trunc(item.at ?? 0)),
   };
 }
 

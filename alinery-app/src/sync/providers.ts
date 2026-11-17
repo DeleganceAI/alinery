@@ -4,7 +4,7 @@
 // stays here: the page opens an `auth_url` event with the shell's `open_url`, the daemon holds the poll.
 import { createClient } from "@connectrpc/connect";
 import { type LoginEvent, LoginMethod, type LoginStatus, ProviderService, type ProviderCatalog as WireCatalog } from "alinery-proto/alinery/v1/providers_pb";
-import type { ProviderCatalog, ProviderLoginStatus } from "../chat/providers";
+import type { CustomCheck, ProviderCatalog, ProviderLoginStatus } from "../chat/providers";
 import { daemonTransport } from "../daemon/transport";
 import { agentHost, call } from "./hostCall";
 import { newMutationMeta } from "./mutation";
@@ -24,7 +24,7 @@ function catalogOf(c: WireCatalog | undefined): ProviderCatalog {
       oauthName: p.oauthName,
     })),
     models: (c?.models ?? []).map((m) => ({ provider: m.provider, id: m.id })),
-    custom: (c?.custom ?? []).map((p) => ({ id: p.id, name: p.name, baseUrl: p.baseUrl, hasKey: p.hasKey, models: [...p.models] })),
+    custom: (c?.custom ?? []).map((p) => ({ id: p.id, name: p.name, baseUrl: p.baseUrl, hasKey: p.hasKey, models: [...p.models], config: p.config })),
   };
 }
 
@@ -100,12 +100,19 @@ export async function providerLoginReply(loginId: string, value: string, cancel:
   await call(() => provider(host).loginReply({ meta: newMutationMeta(), loginId, value, cancel }));
 }
 
-export async function customProviderSave(
-  input: { id: string; name: string; baseUrl: string; apiKey: string; keepKey: boolean; models: string[] },
-  repo?: string,
-): Promise<ProviderCatalog> {
+/** Upsert every provider in `config` (YAML or JSON); `replaces` is the id being edited, removed if the config renames it. */
+export async function customProviderSave(config: string, replaces?: string, repo?: string): Promise<ProviderCatalog> {
   const host = await agentHost(repo);
-  return catalogOf((await call(() => provider(host).saveCustom({ meta: newMutationMeta(), ...input }))).catalog);
+  return catalogOf((await call(() => provider(host).saveCustom({ meta: newMutationMeta(), config, replaces: replaces ?? "" }))).catalog);
+}
+
+export async function customProviderCheck(config: string, live: boolean, repo?: string): Promise<CustomCheck> {
+  const host = await agentHost(repo);
+  const r = await call(() => provider(host).checkCustom({ config, live }));
+  return {
+    problems: r.problems.map((p) => ({ path: p.path, message: p.message, error: p.error })),
+    tests: r.tests.map((t) => ({ provider: t.provider, model: t.model, ok: t.ok, detail: t.detail })),
+  };
 }
 
 export async function customProviderDelete(id: string, repo?: string): Promise<ProviderCatalog> {

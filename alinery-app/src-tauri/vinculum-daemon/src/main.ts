@@ -51,7 +51,8 @@ import { acquireRepoOwnership } from "./domain/ownership.ts";
 import { KeepAwake } from "./platform/keepawake.ts";
 import type { SessionControl, TurnControl } from "./rpc/sessions.ts";
 import { hasPty, isPty, killPty, startShell } from "./terminal.ts";
-import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
+import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchModel, readLaunchThinking, roleModel, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
+import { readModelRoles } from "./domain/agentDir.ts";
 import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
 import { McpHub } from "./mcp.ts";
 import { MachineLink } from "./domain/machineMcp.ts";
@@ -66,7 +67,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 50;
+const PROTOCOL = 51;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -319,6 +320,8 @@ registry.install(renderExtension());
 const canvas = canvasTools({ repo, threadOf: (env, conversationId) => { const row = sessionForCall(env, conversationId); return row && !row.taskSlug ? row.id : undefined; }, refresh: (rel) => feed.refresh(rel) });
 registry.install(canvas.extension);
 const agentDir = vinculumAgentDir(appConfig);
+/** A `role:` model is resolved when a session opens or is switched to it; the session's meta then names the model it runs on. */
+const launchModel = (requested: string) => roleModel(requested, readModelRoles(agentDir), readLaunchModel(repo, appConfig));
 const includedSkillsDir = runtimePart("skills", process.execPath, process.env);
 registry.install(
   defineExtension({
@@ -519,7 +522,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     context,
   );
   row.harness = harness;
-  const resolved = resolveModel(appConfig, model);
+  const resolved = resolveModel(appConfig, launchModel(model));
   if (!resolved) throw new Error("no model is configured");
   const root = await harness.root(context, exists ? undefined : { agent: { model: resolved } });
   row.conversationId = root.id;
@@ -529,7 +532,8 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
   agentDoc?.dispose();
   const registered = models.getModel(resolved.provider, resolved.modelId);
   await seedUnsetThinking(storedThinking, root, seedLevel(readLaunchThinking(repo, appConfig), registered), context);
-  if (!String(readMeta(taskSlug, id).model ?? "").trim()) writeMeta(taskSlug, id, { model: `${resolved.provider}/${resolved.modelId}` });
+  const recorded = String(readMeta(taskSlug, id).model ?? "").trim();
+  if (!recorded || recorded.startsWith("role:")) writeMeta(taskSlug, id, { model: `${resolved.provider}/${resolved.modelId}` });
   // Resumed conversations were created before this hook existed. tx.doc loads an existing doc and creates a missing one.
   await root.commit(async (tx) => {
     await tx.doc(Attention, root.id);
@@ -914,7 +918,7 @@ const rawTurns: TurnControl = {
     const refusal = setModelRefusal(live.has(id), requested);
     if (refusal) throw new DomainError(refusal === "unknown-session" ? "not_found" : "invalid_argument", refusal);
     const { row, conversation } = await harnessSession(id);
-    const resolved = resolveModel(appConfig, requested);
+    const resolved = resolveModel(appConfig, launchModel(requested));
     if (!resolved) throw new DomainError("failed_precondition", "no model is configured");
     await changeSessionModel(conversation, resolved, context, (patch) => writeMeta(row.taskSlug, row.id, patch));
     return sessionControls(conversation);
@@ -1140,7 +1144,7 @@ await serveRpc({
   tasks: taskDeps,
   sessions: sessionControl,
   playbooks: { repo, appConfig, projector: playbookProjector, blobs: taskDeps.blobs },
-  agent: { appConfig, blobs: taskDeps.blobs, mcp: mcpHub, shell: { path: agentEnv.PATH ?? "", python }, includedSkills: includedSkillsDir },
+  agent: { appConfig, repo, blobs: taskDeps.blobs, mcp: mcpHub, shell: { path: agentEnv.PATH ?? "", python }, includedSkills: includedSkillsDir },
   providers: { providers, repo, appConfig },
   mcp: { link: machineLink, paths: machine },
   artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },

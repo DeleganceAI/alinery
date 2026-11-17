@@ -105,19 +105,12 @@ export function providerService(d: ProviderDeps, dedupe: Dedupe): ServiceImpl<ty
     saveCustom: (req, ctx) => {
       requireCapability(ctx, Capability.ADMIN);
       return dedupe.once(metaOf(req.meta), () =>
-        refuse(async () => {
-          const typedKey = req.apiKey.trim();
-          const saved = await providers.saveCustom({
-            id: req.id,
-            name: req.name,
-            baseUrl: req.baseUrl,
-            apiKey: typedKey || undefined,
-            clearKey: !typedKey && !req.keepKey,
-            models: req.models,
-          });
-          return { catalog: catalogToWire(saved) };
-        }),
+        refuse(async () => ({ catalog: catalogToWire(await providers.saveCustom(req.config, req.replaces || undefined)) })),
       );
+    },
+    checkCustom: (req, ctx) => {
+      requireCapability(ctx, Capability.ADMIN);
+      return refuse(() => providers.checkCustom(req.config, req.live));
     },
     deleteCustom: (req, ctx) => {
       requireCapability(ctx, Capability.ADMIN);

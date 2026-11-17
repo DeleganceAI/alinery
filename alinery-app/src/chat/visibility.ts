@@ -94,15 +94,17 @@ export function chatVisibilityFromAppearance(input: AppearancePrefs | Record<str
   };
 }
 
+export function isChatEntryVisible(entry: ChatEntry, prefs: ChatPrefs): boolean {
+  if (entry.type === "thinking" || entry.type === "redacted_thinking") return prefs.showThinking;
+  if (entry.type === "tool_call" || entry.type === "tool_result") return prefs.showTools;
+  if (entry.type === "harness") return prefs.showHarness;
+  if (entry.type === "turn_marker") return prefs.showTurnMarkers;
+  if (entry.type === "subagent_status" || entry.actor.kind === "subagent") return prefs.showSubagentRows;
+  return true;
+}
+
 export function visibleChatEntries(entries: ChatEntry[], prefs: ChatPrefs): ChatEntry[] {
-  return entries.filter((entry) => {
-    if (entry.type === "thinking" || entry.type === "redacted_thinking") return prefs.showThinking;
-    if (entry.type === "tool_call" || entry.type === "tool_result") return prefs.showTools;
-    if (entry.type === "harness") return prefs.showHarness;
-    if (entry.type === "turn_marker") return prefs.showTurnMarkers;
-    if (entry.type === "subagent_status" || entry.actor.kind === "subagent") return prefs.showSubagentRows;
-    return true;
-  });
+  return entries.filter((entry) => isChatEntryVisible(entry, prefs));
 }
 
 /** Whether a work rail should start expanded (live streaming still forces open in the row). */

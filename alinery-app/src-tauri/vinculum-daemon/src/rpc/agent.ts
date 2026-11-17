@@ -17,6 +17,7 @@ import {
 } from "../domain/agentDir.ts";
 import type { BlobStore } from "../domain/blobs.ts";
 import { OFFICE_TOOLS, whichOn } from "../agentShell.ts";
+import { readLaunchModel } from "../sessionControls.ts";
 import { vinculumAgentDir } from "../skills.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
@@ -25,6 +26,8 @@ import { domain, fail, metaOf } from "./errors.ts";
 
 export type AgentDeps = {
   appConfig: string;
+  /** The repository this daemon serves: the `default` role is its Settings default model. */
+  repo?: string;
   blobs: BlobStore;
   /** The live MCP-hub state: the built-in tools and each server connection (`McpHub.refresh`). */
   mcp?: { refresh(): Promise<{ tools: string[]; servers: { name: string; builtin: boolean; state: string; error?: string }[] }> };
@@ -37,6 +40,8 @@ export type AgentDeps = {
 export function agentService(d: AgentDeps, dedupe: Dedupe, store: Store): ServiceImpl<typeof AgentService> {
   const agentDir = () => vinculumAgentDir(d.appConfig);
   const applied = () => ({ cursor: store.cursor() });
+  // `default` is never stored as a role: it is the Settings default model, shown read-only beside the roles.
+  const shownRoles = ({ default: _stored, ...roles }: Record<string, string>) => ({ ...roles, default: d.repo ? readLaunchModel(d.repo, d.appConfig) : "" });
   let tail: Promise<unknown> = Promise.resolve();
   const serialized = <T>(f: () => Promise<T> | T): Promise<T> => {
     const run = tail.catch(() => {}).then(f);
@@ -46,15 +51,16 @@ export function agentService(d: AgentDeps, dedupe: Dedupe, store: Store): Servic
   return {
     readModelRoles: (_req, ctx) => {
       requireCapability(ctx, Capability.VIEW);
-      return domain(() => ({ roles: readModelRoles(agentDir()), agentDir: agentDir() }));
+      return domain(() => ({ roles: shownRoles(readModelRoles(agentDir())), agentDir: agentDir() }));
     },
     writeModelRoles: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return dedupe.once(metaOf(req.meta), () =>
         domain(() =>
           serialized(() => {
-            writeModelRoles(agentDir(), req.roles);
-            return { applied: applied(), roles: req.roles };
+            const { default: _settings, ...roles } = req.roles;
+            writeModelRoles(agentDir(), roles);
+            return { applied: applied(), roles: shownRoles(roles) };
           }),
         ),
       );

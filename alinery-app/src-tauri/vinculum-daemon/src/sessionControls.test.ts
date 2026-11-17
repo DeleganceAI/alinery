@@ -13,6 +13,7 @@ import {
   ensureModel,
   launchModelFromFiles,
   launchThinkingFromFiles,
+  roleModel,
   offeredThinkingLevels,
   seedLevel,
   seedUnsetThinking,
@@ -27,6 +28,16 @@ test("settings model follows the task, and a leftover harness drops it", () => {
   expect(launchModelFromFiles("[global.defaults]\nharness = \"claude\"\nmodel = \"settings/model\"\n", null)).toBe("");
   expect(launchModelFromFiles("[global.defaults]\nharness = \"vinculum\"\nmodel = \"settings/model\"\n", "[defaults]\nharness = \"claude\"\nmodel = \"repo/model\"\n")).toBe("");
   expect(launchModelFromFiles("[global.defaults]\nharness = \"vinculum\"\nmodel = \"settings/model\"\n", "[defaults]\nmodel = \"\"\n")).toBe("");
+});
+
+test("a role: model is the role's assigned model, and an unassigned role or role:default is the Settings default", () => {
+  const roles = { planner: "p/plan", tiny: " " };
+  expect(roleModel("role:planner", roles, "s/default")).toBe("p/plan");
+  expect(roleModel("role:tiny", roles, "s/default")).toBe("s/default");
+  expect(roleModel("role:vision", roles, "s/default")).toBe("s/default");
+  expect(roleModel("role:default", { default: "x/y" }, "s/default")).toBe("s/default");
+  expect(roleModel("role:vision", roles, "")).toBe("");
+  expect(roleModel(" org/model ", roles, "s/default")).toBe("org/model");
 });
 
 test("a blank or unknown thinking default is high, and a repo override wins", () => {

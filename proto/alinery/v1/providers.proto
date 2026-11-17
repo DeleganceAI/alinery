@@ -17,6 +17,7 @@ service ProviderService {
   rpc Logout(LogoutRequest) returns (LogoutResponse);              // ADMIN
   rpc SaveCustom(SaveCustomRequest) returns (SaveCustomResponse);      // ADMIN
   rpc DeleteCustom(DeleteCustomRequest) returns (DeleteCustomResponse);  // ADMIN
+  rpc CheckCustom(CheckCustomRequest) returns (CheckCustomResponse);     // ADMIN: the config carries a key
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);   // VIEW
 }
 
@@ -45,6 +46,7 @@ message CustomProvider {
   string base_url = 3;
   bool has_key = 4;  // the key itself never leaves the daemon
   repeated string models = 5;
+  string config = 6;  // the provider as YAML for the editor, its key shown as `<saved>`
 }
 message ProviderCatalog {
   repeated LoginProvider providers = 1;
@@ -136,14 +138,13 @@ message LogoutResponse {
   ProviderCatalog catalog = 1;
 }
 
+// A custom provider is the provider block of an OMP `models.yml` or a pi `models.json`, as YAML or JSON. Saving upserts
+// every provider in it; `apiKey: <saved>` keeps the stored key. A config with an error is INVALID_ARGUMENT.
 message SaveCustomRequest {
   MutationMeta meta = 1;
-  string id = 2;
-  string name = 3;
-  string base_url = 4;
-  string api_key = 5;   // blank with keep_key keeps the stored key; blank without it clears the key
-  bool keep_key = 6;
-  repeated string models = 7;
+  reserved 2 to 7;
+  string config = 8;
+  string replaces = 9;  // the id being edited: removed when the config renames it
 }
 message SaveCustomResponse {
   ProviderCatalog catalog = 1;
@@ -154,6 +155,26 @@ message DeleteCustomRequest {
 }
 message DeleteCustomResponse {
   ProviderCatalog catalog = 1;
+}
+message CheckCustomRequest {
+  string config = 1;
+  bool live = 2;  // also send one short request per model, when the config has no error
+}
+message CustomProblem {
+  string path = 1;  // `<provider>.models[0].maxTokens`; empty for a syntax error
+  string message = 2;
+  bool error = 3;   // false: a warning (a default filled in, a field ignored)
+}
+message CustomModelTest {
+  string provider = 1;
+  string model = 2;
+  bool ok = 3;
+  string detail = 4;
+  uint32 millis = 5;
+}
+message CheckCustomResponse {
+  repeated CustomProblem problems = 1;
+  repeated CustomModelTest tests = 2;
 }
 
 // The model suggestions for a harness's picker: the harness row's own `models`, then `provider/id` for every model of a

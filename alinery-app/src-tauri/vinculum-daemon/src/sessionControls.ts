@@ -158,3 +158,14 @@ export async function seedUnsetThinking(stored: string | undefined, conversation
   if (typeof stored === "string") return;
   await conversation.configure({ thinkingLevel: level }, context);
 }
+
+/**
+ * A model named `role:<name>` (a playbook step's or playbook's model) is the model this machine assigned to that role in
+ * Role defaults. An unassigned role, and `role:default`, is the Settings default; a blank there falls to `resolveModel`.
+ */
+export function roleModel(requested: string, roles: Record<string, string>, settingsModel: string): string {
+  const value = requested.trim();
+  if (!value.startsWith("role:")) return value;
+  const name = value.slice("role:".length).trim();
+  return (name === "default" ? "" : (roles[name]?.trim() ?? "")) || settingsModel.trim();
+}

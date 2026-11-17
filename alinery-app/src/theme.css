@@ -6159,7 +6159,7 @@ header:has(~ main .task-info-panel) nav.tabs {
 }
 .chat-turn-end .chat-turn-copy {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
@@ -6855,6 +6855,61 @@ header:has(~ main .task-info-panel) nav.tabs {
 }
 .chat-providers-advanced {
   margin-top: 12px;
+}
+/* Accounts: each provider is a card, so a row reads as one provider with its action, not a line of text. */
+.chat-model-list.chat-provider-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px;
+}
+.chat-provider-cards > li.dim {
+  grid-column: 1 / -1;
+}
+.chat-provider-cards .chat-model-item {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 56px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  cursor: default;
+}
+.chat-provider-cards button.chat-model-item:enabled {
+  cursor: pointer;
+}
+.chat-provider-cards .chat-model-item.active,
+.chat-provider-cards .chat-model-item:hover {
+  background: var(--surface-raised);
+}
+.chat-provider-cards button.chat-model-item:enabled:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-subtle);
+}
+.chat-provider-cards .chat-model-item > span:first-child {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.chat-provider-cards button.chat-model-item:enabled .chat-provider-status {
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+.chat-provider-detail {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+  font-size: calc(12px * var(--ui-scale));
+  color: var(--text-muted);
+}
+/* In the providers dialog the endpoint section sits on the panel like the cards above it, not in a box of its own. */
+.chat-providers-panel .chat-ui-prompt {
+  margin: 20px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
 }
 /* Providers / Models dialog: a fixed frame so filtering never resizes it. The tabs, search and
    footer stay put; only the panel scrolls, so the lists inside it are not capped. */
@@ -10930,4 +10985,120 @@ button.chat-path-link:focus-visible {
 }
 .git-diff-file-head > .diff-del {
   color: var(--danger);
+}
+
+/* Custom OpenAI-compatible endpoint editor (views/CustomEndpointEditor.tsx): the config, then its problems and test results. */
+.custom-endpoint-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+.custom-endpoint-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.custom-endpoint-body .dsc {
+  margin: 0;
+}
+.custom-endpoint-source {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 240px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(12.5px * var(--ui-scale));
+  line-height: 1.5;
+  tab-size: 2;
+}
+.custom-endpoint-source:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.custom-endpoint-check {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.custom-endpoint-summary {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(12.5px * var(--ui-scale));
+}
+.custom-endpoint-summary.bad {
+  color: var(--danger);
+}
+.custom-endpoint-problems {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: calc(12.5px * var(--ui-scale));
+}
+.custom-endpoint-problems li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.45;
+}
+.custom-endpoint-problems li > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.custom-endpoint-problems li.error > svg {
+  color: var(--danger);
+}
+.custom-endpoint-problems li.warning > svg {
+  color: var(--warning);
+}
+.custom-endpoint-problems li.ok > svg {
+  color: var(--success);
+}
+.custom-endpoint-problems code {
+  font-family: var(--font-mono);
+  color: var(--text-strong);
+}
+.custom-endpoint-reference summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: calc(12.5px * var(--ui-scale));
+}
+.custom-endpoint-reference pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+}
+.custom-endpoint-reference-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+}
+.custom-endpoint-copy {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.custom-endpoint-copy-hint {
+  padding-left: 8px;
+  color: var(--text-muted);
+  font-size: calc(11.5px * var(--ui-scale));
+}
+.custom-endpoint-foot {
+  justify-content: flex-end;
 }

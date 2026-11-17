@@ -94,7 +94,7 @@ A repo can live on another Linux machine or Mac. Its key is `alinery+ssh://<host
 
 ## Playbooks
 
-Bundled playbooks live in `alinery-app/src-tauri/playbooks/` with the registry in `playbooks.default.toml`. Default playbook is **superdevelop** (clarify → investigate → decide → plan → define-tests → build → prepare-review). `{{ARTIFACTS_DIR}}` and related tokens are substituted at spawn. Custom overlays go in the target repo's `playbooks.toml`. This is **not** the old compiled-in RPI six-prompt set. The playbook library is the daemon's `PlaybookService` (the `playbook/*` entities; one TypeScript parser in `vinculum-daemon/src/domain/playbookLibrary.ts`, held equal to the Rust parser by the conformance cases). Execution is the standalone `playbook-engine/` package (TypeScript, `bun test` there), which the daemon embeds (`domain/executions.ts`).
+Bundled playbooks live in `alinery-app/src-tauri/playbooks/` with the registry in `playbooks.default.toml`. Default playbook is **superdevelop** (clarify → investigate → decide → plan → define-tests → build → prepare-review). `{{ARTIFACTS_DIR}}` and related tokens are substituted at spawn. Custom overlays go in the target repo's `playbooks.toml`. A step's (or playbook's) `model` may be `role:<name>` (`default`, `tiny`, `advisor`, `planner`, `vision`): the daemon resolves it when the session opens (`roleModel` in `sessionControls.ts`) to the model assigned in Role defaults, stored as `modelRoles` in the host's agent `config.yml`; an unassigned role, and `default`, is the Settings default model. This is **not** the old compiled-in RPI six-prompt set. The playbook library is the daemon's `PlaybookService` (the `playbook/*` entities; one TypeScript parser in `vinculum-daemon/src/domain/playbookLibrary.ts`, held equal to the Rust parser by the conformance cases). Execution is the standalone `playbook-engine/` package (TypeScript, `bun test` there), which the daemon embeds (`domain/executions.ts`).
 
 ## App crate layout (`alinery-app/src-tauri/src/`)
 
@@ -125,7 +125,6 @@ Bundled playbooks live in `alinery-app/src-tauri/playbooks/` with the registry i
 | `imports.rs` | Linear and GitHub issue fetch (the page passes the repo's origin URL and token override) |
 | `account.rs` | pairing / account chip |
 | `update.rs` | CDN manifest poll, download+sha256 verify, detached swap helper |
-| `vinculum_update.rs` | the hosted default model role write into this machine's agent directory |
 | `telemetry.rs` | opt-in usage events (fire-and-forget wrapper over `alinery_core::record_event`) |
 
 A new command goes in the module that owns its data; `lib.rs` only gains a name in `generate_handler!`. Most new work is not a command at all: it is a daemon RPC (`proto/alinery/v1`, `vinculum-daemon/src/rpc/` and `domain/`) called from `src/sync/*.ts`.

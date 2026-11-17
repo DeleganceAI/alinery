@@ -504,6 +504,7 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
       ];
       entries.push({
         id: alloc(),
+        at: message.at,
         actor: ACTOR.you,
         type: "prompt",
         text: parsed.caption,
@@ -514,7 +515,7 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
     // Tool output used to vanish here: the loop only branched on user and assistant, so every
     // toolResult message fell through with no entry pushed. They are the bulk of a real journal.
     if (message.role === "toolResult") {
-      entries.push({ id: alloc(), ...toolResultEntry(message) });
+      entries.push({ id: alloc(), at: message.at, ...toolResultEntry(message) });
       continue;
     }
     if (message.role === "assistant") {
@@ -525,7 +526,7 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
           if (!keys[key]) keys[key] = alloc(key);
           return keys[key];
         },
-        undefined,
+        message.at,
         message.stopReason === "aborted",
       );
       entries.push(...exploded);
@@ -552,6 +553,8 @@ export type VinculumMessage = {
   toolCallId?: string;
   isError?: boolean;
   runningToolIds?: string[];
+  /** When the message was complete, ms since the epoch. */
+  at?: number;
 };
 
 /** Model and thinking level for the next turn, and the context it carries. Empty `thinking_levels` means no menu. */
@@ -574,6 +577,7 @@ function vinculumChatMessage(message: VinculumMessage, index: number): ChatMessa
   const mapped = mapHydratedMessage(raw, message.id && message.id.length > 0 ? message.id : `v${index}`);
   if (!mapped) return null;
   if (message.streaming && mapped.role === "toolResult") mapped.streaming = true;
+  if (message.at) mapped.at = message.at;
   const running = new Set(message.runningToolIds ?? []);
   if (!message.streaming && running.size === 0) return mapped;
   mapped.content = mapped.content.map((part) => {

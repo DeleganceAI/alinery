@@ -713,6 +713,8 @@ export type ChatMessage = {
   rowId?: string;
   /** Vinculum's per-message stamp. A streamed snapshot and the journal row Vinculum persists for it share it. */
   timestamp?: number;
+  /** When the message was complete (daemon transcript only); its entries' `at`. */
+  at?: number;
   /** toolResult rows carry these; assistant toolCall parts carry their own copies. */
   toolName?: string;
   toolCallId?: string;

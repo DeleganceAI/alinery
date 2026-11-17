@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/providers.proto.
  */
 export const file_alinery_v1_providers: GenFile = /*@__PURE__*/
-  fileDesc("ChphbGluZXJ5L3YxL3Byb3ZpZGVycy5wcm90bxIKYWxpbmVyeS52MSIQCg5DYXRhbG9nUmVxdWVzdCI/Cg9DYXRhbG9nUmVzcG9uc2USLAoHY2F0YWxvZxgBIAEoCzIbLmFsaW5lcnkudjEuUHJvdmlkZXJDYXRhbG9nIpoBCg1Mb2dpblByb3ZpZGVyEgoKAmlkGAEgASgJEgwKBG5hbWUYAiABKAkSFQoNYXV0aGVudGljYXRlZBgDIAEoCBIOCgZzdG9yZWQYBCABKAgSDwoHYXBpX2tleRgFIAEoCBINCgVvYXV0aBgGIAEoCBIUCgxhcGlfa2V5X25hbWUYByABKAkSEgoKb2F1dGhfbmFtZRgIIAEoCSIsCgxDYXRhbG9nTW9kZWwSEAoIcHJvdmlkZXIYASABKAkSCgoCaWQYAiABKAkiXQoOQ3VzdG9tUHJvdmlkZXISCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCRIQCghiYXNlX3VybBgDIAEoCRIPCgdoYXNfa2V5GAQgASgIEg4KBm1vZGVscxgFIAMoCSKVAQoPUHJvdmlkZXJDYXRhbG9nEiwKCXByb3ZpZGVycxgBIAMoCzIZLmFsaW5lcnkudjEuTG9naW5Qcm92aWRlchIoCgZtb2RlbHMYAiADKAsyGC5hbGluZXJ5LnYxLkNhdGFsb2dNb2RlbBIqCgZjdXN0b20YAyADKAsyGi5hbGluZXJ5LnYxLkN1c3RvbVByb3ZpZGVyInYKEUxvZ2luU3RhcnRSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIQCghwcm92aWRlchgCIAEoCRInCgZtZXRob2QYAyABKA4yFy5hbGluZXJ5LnYxLkxvZ2luTWV0aG9kIj0KEkxvZ2luU3RhcnRSZXNwb25zZRInCgZzdGF0dXMYASABKAsyFy5hbGluZXJ5LnYxLkxvZ2luU3RhdHVzIiQKEExvZ2luUG9sbFJlcXVlc3QSEAoIbG9naW5faWQYASABKAkiPAoRTG9naW5Qb2xsUmVzcG9uc2USJwoGc3RhdHVzGAEgASgLMhcuYWxpbmVyeS52MS5Mb2dpblN0YXR1cyJYChFMb2dpblByb21wdE9wdGlvbhIKCgJpZBgBIAEoCRINCgVsYWJlbBgCIAEoCRIYCgtkZXNjcmlwdGlvbhgDIAEoCUgAiAEBQg4KDF9kZXNjcmlwdGlvbiKGAQoLTG9naW5Qcm9tcHQSDAoEdHlwZRgBIAEoCRIPCgdtZXNzYWdlGAIgASgJEhgKC3BsYWNlaG9sZGVyGAMgASgJSACIAQESLgoHb3B0aW9ucxgEIAMoCzIdLmFsaW5lcnkudjEuTG9naW5Qcm9tcHRPcHRpb25CDgoMX3BsYWNlaG9sZGVyIjYKCUxvZ2luTGluaxILCgN1cmwYASABKAkSEgoFbGFiZWwYAiABKAlIAIgBAUIICgZfbGFiZWwiQgoJTG9naW5JbmZvEg8KB21lc3NhZ2UYASABKAkSJAoFbGlua3MYAiADKAsyFS5hbGluZXJ5LnYxLkxvZ2luTGluayJHCgxMb2dpbkF1dGhVcmwSCwoDdXJsGAEgASgJEhkKDGluc3RydWN0aW9ucxgCIAEoCUgAiAEBQg8KDV9pbnN0cnVjdGlvbnMiqgEKD0xvZ2luRGV2aWNlQ29kZRIRCgl1c2VyX2NvZGUYASABKAkSGAoQdmVyaWZpY2F0aW9uX3VyaRgCIAEoCRIdChBpbnRlcnZhbF9zZWNvbmRzGAMgASgNSACIAQESHwoSZXhwaXJlc19pbl9zZWNvbmRzGAQgASgNSAGIAQFCEwoRX2ludGVydmFsX3NlY29uZHNCFQoTX2V4cGlyZXNfaW5fc2Vjb25kcyIgCg1Mb2dpblByb2dyZXNzEg8KB21lc3NhZ2UYASABKAkizQEKCkxvZ2luRXZlbnQSJQoEaW5mbxgBIAEoCzIVLmFsaW5lcnkudjEuTG9naW5JbmZvSAASLAoIYXV0aF91cmwYAiABKAsyGC5hbGluZXJ5LnYxLkxvZ2luQXV0aFVybEgAEjIKC2RldmljZV9jb2RlGAMgASgLMhsuYWxpbmVyeS52MS5Mb2dpbkRldmljZUNvZGVIABItCghwcm9ncmVzcxgEIAEoCzIZLmFsaW5lcnkudjEuTG9naW5Qcm9ncmVzc0gAQgcKBWV2ZW50IqEBCgtMb2dpblN0YXR1cxIQCghsb2dpbl9pZBgBIAEoCRIOCgZzdGF0dXMYAiABKAkSLAoGcHJvbXB0GAMgASgLMhcuYWxpbmVyeS52MS5Mb2dpblByb21wdEgAiAEBEiYKBmV2ZW50cxgEIAMoCzIWLmFsaW5lcnkudjEuTG9naW5FdmVudBIPCgdmYWlsdXJlGAUgASgJQgkKB19wcm9tcHQibAoRTG9naW5SZXBseVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhAKCGxvZ2luX2lkGAIgASgJEg0KBXZhbHVlGAMgASgJEg4KBmNhbmNlbBgEIAEoCCIUChJMb2dpblJlcGx5UmVzcG9uc2UiSQoNTG9nb3V0UmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEAoIcHJvdmlkZXIYAiABKAkiPgoOTG9nb3V0UmVzcG9uc2USLAoHY2F0YWxvZxgBIAEoCzIbLmFsaW5lcnkudjEuUHJvdmlkZXJDYXRhbG9nIpoBChFTYXZlQ3VzdG9tUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESCgoCaWQYAiABKAkSDAoEbmFtZRgDIAEoCRIQCghiYXNlX3VybBgEIAEoCRIPCgdhcGlfa2V5GAUgASgJEhAKCGtlZXBfa2V5GAYgASgIEg4KBm1vZGVscxgHIAMoCSJCChJTYXZlQ3VzdG9tUmVzcG9uc2USLAoHY2F0YWxvZxgBIAEoCzIbLmFsaW5lcnkudjEuUHJvdmlkZXJDYXRhbG9nIkkKE0RlbGV0ZUN1c3RvbVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgoKAmlkGAIgASgJIkQKFERlbGV0ZUN1c3RvbVJlc3BvbnNlEiwKB2NhdGFsb2cYASABKAsyGy5hbGluZXJ5LnYxLlByb3ZpZGVyQ2F0YWxvZyIkChFMaXN0TW9kZWxzUmVxdWVzdBIPCgdoYXJuZXNzGAEgASgJIiQKEkxpc3RNb2RlbHNSZXNwb25zZRIOCgZtb2RlbHMYASADKAkqXQoLTG9naW5NZXRob2QSHAoYTE9HSU5fTUVUSE9EX1VOU1BFQ0lGSUVEEAASGAoUTE9HSU5fTUVUSE9EX0FQSV9LRVkQARIWChJMT0dJTl9NRVRIT0RfT0FVVEgQAjLnBAoPUHJvdmlkZXJTZXJ2aWNlEkIKB0NhdGFsb2cSGi5hbGluZXJ5LnYxLkNhdGFsb2dSZXF1ZXN0GhsuYWxpbmVyeS52MS5DYXRhbG9nUmVzcG9uc2USSwoKTG9naW5TdGFydBIdLmFsaW5lcnkudjEuTG9naW5TdGFydFJlcXVlc3QaHi5hbGluZXJ5LnYxLkxvZ2luU3RhcnRSZXNwb25zZRJICglMb2dpblBvbGwSHC5hbGluZXJ5LnYxLkxvZ2luUG9sbFJlcXVlc3QaHS5hbGluZXJ5LnYxLkxvZ2luUG9sbFJlc3BvbnNlEksKCkxvZ2luUmVwbHkSHS5hbGluZXJ5LnYxLkxvZ2luUmVwbHlSZXF1ZXN0Gh4uYWxpbmVyeS52MS5Mb2dpblJlcGx5UmVzcG9uc2USPwoGTG9nb3V0EhkuYWxpbmVyeS52MS5Mb2dvdXRSZXF1ZXN0GhouYWxpbmVyeS52MS5Mb2dvdXRSZXNwb25zZRJLCgpTYXZlQ3VzdG9tEh0uYWxpbmVyeS52MS5TYXZlQ3VzdG9tUmVxdWVzdBoeLmFsaW5lcnkudjEuU2F2ZUN1c3RvbVJlc3BvbnNlElEKDERlbGV0ZUN1c3RvbRIfLmFsaW5lcnkudjEuRGVsZXRlQ3VzdG9tUmVxdWVzdBogLmFsaW5lcnkudjEuRGVsZXRlQ3VzdG9tUmVzcG9uc2USSwoKTGlzdE1vZGVscxIdLmFsaW5lcnkudjEuTGlzdE1vZGVsc1JlcXVlc3QaHi5hbGluZXJ5LnYxLkxpc3RNb2RlbHNSZXNwb25zZWIGcHJvdG8z", [file_alinery_v1_common]);
+  fileDesc("ChphbGluZXJ5L3YxL3Byb3ZpZGVycy5wcm90bxIKYWxpbmVyeS52MSIQCg5DYXRhbG9nUmVxdWVzdCI/Cg9DYXRhbG9nUmVzcG9uc2USLAoHY2F0YWxvZxgBIAEoCzIbLmFsaW5lcnkudjEuUHJvdmlkZXJDYXRhbG9nIpoBCg1Mb2dpblByb3ZpZGVyEgoKAmlkGAEgASgJEgwKBG5hbWUYAiABKAkSFQoNYXV0aGVudGljYXRlZBgDIAEoCBIOCgZzdG9yZWQYBCABKAgSDwoHYXBpX2tleRgFIAEoCBINCgVvYXV0aBgGIAEoCBIUCgxhcGlfa2V5X25hbWUYByABKAkSEgoKb2F1dGhfbmFtZRgIIAEoCSIsCgxDYXRhbG9nTW9kZWwSEAoIcHJvdmlkZXIYASABKAkSCgoCaWQYAiABKAkibQoOQ3VzdG9tUHJvdmlkZXISCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCRIQCghiYXNlX3VybBgDIAEoCRIPCgdoYXNfa2V5GAQgASgIEg4KBm1vZGVscxgFIAMoCRIOCgZjb25maWcYBiABKAkilQEKD1Byb3ZpZGVyQ2F0YWxvZxIsCglwcm92aWRlcnMYASADKAsyGS5hbGluZXJ5LnYxLkxvZ2luUHJvdmlkZXISKAoGbW9kZWxzGAIgAygLMhguYWxpbmVyeS52MS5DYXRhbG9nTW9kZWwSKgoGY3VzdG9tGAMgAygLMhouYWxpbmVyeS52MS5DdXN0b21Qcm92aWRlciJ2ChFMb2dpblN0YXJ0UmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEAoIcHJvdmlkZXIYAiABKAkSJwoGbWV0aG9kGAMgASgOMhcuYWxpbmVyeS52MS5Mb2dpbk1ldGhvZCI9ChJMb2dpblN0YXJ0UmVzcG9uc2USJwoGc3RhdHVzGAEgASgLMhcuYWxpbmVyeS52MS5Mb2dpblN0YXR1cyIkChBMb2dpblBvbGxSZXF1ZXN0EhAKCGxvZ2luX2lkGAEgASgJIjwKEUxvZ2luUG9sbFJlc3BvbnNlEicKBnN0YXR1cxgBIAEoCzIXLmFsaW5lcnkudjEuTG9naW5TdGF0dXMiWAoRTG9naW5Qcm9tcHRPcHRpb24SCgoCaWQYASABKAkSDQoFbGFiZWwYAiABKAkSGAoLZGVzY3JpcHRpb24YAyABKAlIAIgBAUIOCgxfZGVzY3JpcHRpb24ihgEKC0xvZ2luUHJvbXB0EgwKBHR5cGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCRIYCgtwbGFjZWhvbGRlchgDIAEoCUgAiAEBEi4KB29wdGlvbnMYBCADKAsyHS5hbGluZXJ5LnYxLkxvZ2luUHJvbXB0T3B0aW9uQg4KDF9wbGFjZWhvbGRlciI2CglMb2dpbkxpbmsSCwoDdXJsGAEgASgJEhIKBWxhYmVsGAIgASgJSACIAQFCCAoGX2xhYmVsIkIKCUxvZ2luSW5mbxIPCgdtZXNzYWdlGAEgASgJEiQKBWxpbmtzGAIgAygLMhUuYWxpbmVyeS52MS5Mb2dpbkxpbmsiRwoMTG9naW5BdXRoVXJsEgsKA3VybBgBIAEoCRIZCgxpbnN0cnVjdGlvbnMYAiABKAlIAIgBAUIPCg1faW5zdHJ1Y3Rpb25zIqoBCg9Mb2dpbkRldmljZUNvZGUSEQoJdXNlcl9jb2RlGAEgASgJEhgKEHZlcmlmaWNhdGlvbl91cmkYAiABKAkSHQoQaW50ZXJ2YWxfc2Vjb25kcxgDIAEoDUgAiAEBEh8KEmV4cGlyZXNfaW5fc2Vjb25kcxgEIAEoDUgBiAEBQhMKEV9pbnRlcnZhbF9zZWNvbmRzQhUKE19leHBpcmVzX2luX3NlY29uZHMiIAoNTG9naW5Qcm9ncmVzcxIPCgdtZXNzYWdlGAEgASgJIs0BCgpMb2dpbkV2ZW50EiUKBGluZm8YASABKAsyFS5hbGluZXJ5LnYxLkxvZ2luSW5mb0gAEiwKCGF1dGhfdXJsGAIgASgLMhguYWxpbmVyeS52MS5Mb2dpbkF1dGhVcmxIABIyCgtkZXZpY2VfY29kZRgDIAEoCzIbLmFsaW5lcnkudjEuTG9naW5EZXZpY2VDb2RlSAASLQoIcHJvZ3Jlc3MYBCABKAsyGS5hbGluZXJ5LnYxLkxvZ2luUHJvZ3Jlc3NIAEIHCgVldmVudCKhAQoLTG9naW5TdGF0dXMSEAoIbG9naW5faWQYASABKAkSDgoGc3RhdHVzGAIgASgJEiwKBnByb21wdBgDIAEoCzIXLmFsaW5lcnkudjEuTG9naW5Qcm9tcHRIAIgBARImCgZldmVudHMYBCADKAsyFi5hbGluZXJ5LnYxLkxvZ2luRXZlbnQSDwoHZmFpbHVyZRgFIAEoCUIJCgdfcHJvbXB0ImwKEUxvZ2luUmVwbHlSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIQCghsb2dpbl9pZBgCIAEoCRINCgV2YWx1ZRgDIAEoCRIOCgZjYW5jZWwYBCABKAgiFAoSTG9naW5SZXBseVJlc3BvbnNlIkkKDUxvZ291dFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhAKCHByb3ZpZGVyGAIgASgJIj4KDkxvZ291dFJlc3BvbnNlEiwKB2NhdGFsb2cYASABKAsyGy5hbGluZXJ5LnYxLlByb3ZpZGVyQ2F0YWxvZyJjChFTYXZlQ3VzdG9tUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESDgoGY29uZmlnGAggASgJEhAKCHJlcGxhY2VzGAkgASgJSgQIAhAIIkIKElNhdmVDdXN0b21SZXNwb25zZRIsCgdjYXRhbG9nGAEgASgLMhsuYWxpbmVyeS52MS5Qcm92aWRlckNhdGFsb2ciSQoTRGVsZXRlQ3VzdG9tUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESCgoCaWQYAiABKAkiRAoURGVsZXRlQ3VzdG9tUmVzcG9uc2USLAoHY2F0YWxvZxgBIAEoCzIbLmFsaW5lcnkudjEuUHJvdmlkZXJDYXRhbG9nIjIKEkNoZWNrQ3VzdG9tUmVxdWVzdBIOCgZjb25maWcYASABKAkSDAoEbGl2ZRgCIAEoCCI9Cg1DdXN0b21Qcm9ibGVtEgwKBHBhdGgYASABKAkSDwoHbWVzc2FnZRgCIAEoCRINCgVlcnJvchgDIAEoCCJeCg9DdXN0b21Nb2RlbFRlc3QSEAoIcHJvdmlkZXIYASABKAkSDQoFbW9kZWwYAiABKAkSCgoCb2sYAyABKAgSDgoGZGV0YWlsGAQgASgJEg4KBm1pbGxpcxgFIAEoDSJuChNDaGVja0N1c3RvbVJlc3BvbnNlEisKCHByb2JsZW1zGAEgAygLMhkuYWxpbmVyeS52MS5DdXN0b21Qcm9ibGVtEioKBXRlc3RzGAIgAygLMhsuYWxpbmVyeS52MS5DdXN0b21Nb2RlbFRlc3QiJAoRTGlzdE1vZGVsc1JlcXVlc3QSDwoHaGFybmVzcxgBIAEoCSIkChJMaXN0TW9kZWxzUmVzcG9uc2USDgoGbW9kZWxzGAEgAygJKl0KC0xvZ2luTWV0aG9kEhwKGExPR0lOX01FVEhPRF9VTlNQRUNJRklFRBAAEhgKFExPR0lOX01FVEhPRF9BUElfS0VZEAESFgoSTE9HSU5fTUVUSE9EX09BVVRIEAIytwUKD1Byb3ZpZGVyU2VydmljZRJCCgdDYXRhbG9nEhouYWxpbmVyeS52MS5DYXRhbG9nUmVxdWVzdBobLmFsaW5lcnkudjEuQ2F0YWxvZ1Jlc3BvbnNlEksKCkxvZ2luU3RhcnQSHS5hbGluZXJ5LnYxLkxvZ2luU3RhcnRSZXF1ZXN0Gh4uYWxpbmVyeS52MS5Mb2dpblN0YXJ0UmVzcG9uc2USSAoJTG9naW5Qb2xsEhwuYWxpbmVyeS52MS5Mb2dpblBvbGxSZXF1ZXN0Gh0uYWxpbmVyeS52MS5Mb2dpblBvbGxSZXNwb25zZRJLCgpMb2dpblJlcGx5Eh0uYWxpbmVyeS52MS5Mb2dpblJlcGx5UmVxdWVzdBoeLmFsaW5lcnkudjEuTG9naW5SZXBseVJlc3BvbnNlEj8KBkxvZ291dBIZLmFsaW5lcnkudjEuTG9nb3V0UmVxdWVzdBoaLmFsaW5lcnkudjEuTG9nb3V0UmVzcG9uc2USSwoKU2F2ZUN1c3RvbRIdLmFsaW5lcnkudjEuU2F2ZUN1c3RvbVJlcXVlc3QaHi5hbGluZXJ5LnYxLlNhdmVDdXN0b21SZXNwb25zZRJRCgxEZWxldGVDdXN0b20SHy5hbGluZXJ5LnYxLkRlbGV0ZUN1c3RvbVJlcXVlc3QaIC5hbGluZXJ5LnYxLkRlbGV0ZUN1c3RvbVJlc3BvbnNlEk4KC0NoZWNrQ3VzdG9tEh4uYWxpbmVyeS52MS5DaGVja0N1c3RvbVJlcXVlc3QaHy5hbGluZXJ5LnYxLkNoZWNrQ3VzdG9tUmVzcG9uc2USSwoKTGlzdE1vZGVscxIdLmFsaW5lcnkudjEuTGlzdE1vZGVsc1JlcXVlc3QaHi5hbGluZXJ5LnYxLkxpc3RNb2RlbHNSZXNwb25zZWIGcHJvdG8z", [file_alinery_v1_common]);
 
 /**
  * @generated from message alinery.v1.CatalogRequest
@@ -152,6 +152,13 @@ export type CustomProvider = Message<"alinery.v1.CustomProvider"> & {
    * @generated from field: repeated string models = 5;
    */
   models: string[];
+
+  /**
+   * the provider as YAML for the editor, its key shown as `<saved>`
+   *
+   * @generated from field: string config = 6;
+   */
+  config: string;
 };
 
 /**
@@ -613,6 +620,9 @@ export const LogoutResponseSchema: GenMessage<LogoutResponse> = /*@__PURE__*/
   messageDesc(file_alinery_v1_providers, 22);
 
 /**
+ * A custom provider is the provider block of an OMP `models.yml` or a pi `models.json`, as YAML or JSON. Saving upserts
+ * every provider in it; `apiKey: <saved>` keeps the stored key. A config with an error is INVALID_ARGUMENT.
+ *
  * @generated from message alinery.v1.SaveCustomRequest
  */
 export type SaveCustomRequest = Message<"alinery.v1.SaveCustomRequest"> & {
@@ -622,36 +632,16 @@ export type SaveCustomRequest = Message<"alinery.v1.SaveCustomRequest"> & {
   meta?: MutationMeta | undefined;
 
   /**
-   * @generated from field: string id = 2;
+   * @generated from field: string config = 8;
    */
-  id: string;
+  config: string;
 
   /**
-   * @generated from field: string name = 3;
-   */
-  name: string;
-
-  /**
-   * @generated from field: string base_url = 4;
-   */
-  baseUrl: string;
-
-  /**
-   * blank with keep_key keeps the stored key; blank without it clears the key
+   * the id being edited: removed when the config renames it
    *
-   * @generated from field: string api_key = 5;
+   * @generated from field: string replaces = 9;
    */
-  apiKey: string;
-
-  /**
-   * @generated from field: bool keep_key = 6;
-   */
-  keepKey: boolean;
-
-  /**
-   * @generated from field: repeated string models = 7;
-   */
-  models: string[];
+  replaces: string;
 };
 
 /**
@@ -718,6 +708,120 @@ export const DeleteCustomResponseSchema: GenMessage<DeleteCustomResponse> = /*@_
   messageDesc(file_alinery_v1_providers, 26);
 
 /**
+ * @generated from message alinery.v1.CheckCustomRequest
+ */
+export type CheckCustomRequest = Message<"alinery.v1.CheckCustomRequest"> & {
+  /**
+   * @generated from field: string config = 1;
+   */
+  config: string;
+
+  /**
+   * also send one short request per model, when the config has no error
+   *
+   * @generated from field: bool live = 2;
+   */
+  live: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.CheckCustomRequest.
+ * Use `create(CheckCustomRequestSchema)` to create a new message.
+ */
+export const CheckCustomRequestSchema: GenMessage<CheckCustomRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_providers, 27);
+
+/**
+ * @generated from message alinery.v1.CustomProblem
+ */
+export type CustomProblem = Message<"alinery.v1.CustomProblem"> & {
+  /**
+   * `<provider>.models[0].maxTokens`; empty for a syntax error
+   *
+   * @generated from field: string path = 1;
+   */
+  path: string;
+
+  /**
+   * @generated from field: string message = 2;
+   */
+  message: string;
+
+  /**
+   * false: a warning (a default filled in, a field ignored)
+   *
+   * @generated from field: bool error = 3;
+   */
+  error: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.CustomProblem.
+ * Use `create(CustomProblemSchema)` to create a new message.
+ */
+export const CustomProblemSchema: GenMessage<CustomProblem> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_providers, 28);
+
+/**
+ * @generated from message alinery.v1.CustomModelTest
+ */
+export type CustomModelTest = Message<"alinery.v1.CustomModelTest"> & {
+  /**
+   * @generated from field: string provider = 1;
+   */
+  provider: string;
+
+  /**
+   * @generated from field: string model = 2;
+   */
+  model: string;
+
+  /**
+   * @generated from field: bool ok = 3;
+   */
+  ok: boolean;
+
+  /**
+   * @generated from field: string detail = 4;
+   */
+  detail: string;
+
+  /**
+   * @generated from field: uint32 millis = 5;
+   */
+  millis: number;
+};
+
+/**
+ * Describes the message alinery.v1.CustomModelTest.
+ * Use `create(CustomModelTestSchema)` to create a new message.
+ */
+export const CustomModelTestSchema: GenMessage<CustomModelTest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_providers, 29);
+
+/**
+ * @generated from message alinery.v1.CheckCustomResponse
+ */
+export type CheckCustomResponse = Message<"alinery.v1.CheckCustomResponse"> & {
+  /**
+   * @generated from field: repeated alinery.v1.CustomProblem problems = 1;
+   */
+  problems: CustomProblem[];
+
+  /**
+   * @generated from field: repeated alinery.v1.CustomModelTest tests = 2;
+   */
+  tests: CustomModelTest[];
+};
+
+/**
+ * Describes the message alinery.v1.CheckCustomResponse.
+ * Use `create(CheckCustomResponseSchema)` to create a new message.
+ */
+export const CheckCustomResponseSchema: GenMessage<CheckCustomResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_providers, 30);
+
+/**
  * The model suggestions for a harness's picker: the harness row's own `models`, then `provider/id` for every model of a
  * signed-in provider on this daemon's host. A harness the app cannot launch, and Terminal, have none.
  *
@@ -735,7 +839,7 @@ export type ListModelsRequest = Message<"alinery.v1.ListModelsRequest"> & {
  * Use `create(ListModelsRequestSchema)` to create a new message.
  */
 export const ListModelsRequestSchema: GenMessage<ListModelsRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_providers, 27);
+  messageDesc(file_alinery_v1_providers, 31);
 
 /**
  * @generated from message alinery.v1.ListModelsResponse
@@ -752,7 +856,7 @@ export type ListModelsResponse = Message<"alinery.v1.ListModelsResponse"> & {
  * Use `create(ListModelsResponseSchema)` to create a new message.
  */
 export const ListModelsResponseSchema: GenMessage<ListModelsResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_providers, 28);
+  messageDesc(file_alinery_v1_providers, 32);
 
 /**
  * @generated from enum alinery.v1.LoginMethod
@@ -859,6 +963,16 @@ export const ProviderService: GenService<{
     methodKind: "unary";
     input: typeof DeleteCustomRequestSchema;
     output: typeof DeleteCustomResponseSchema;
+  },
+  /**
+   * ADMIN: the config carries a key
+   *
+   * @generated from rpc alinery.v1.ProviderService.CheckCustom
+   */
+  checkCustom: {
+    methodKind: "unary";
+    input: typeof CheckCustomRequestSchema;
+    output: typeof CheckCustomResponseSchema;
   },
   /**
    * VIEW

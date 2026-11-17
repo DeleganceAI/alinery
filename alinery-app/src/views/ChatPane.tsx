@@ -4,7 +4,7 @@ import { formatDuration } from "../chat/format";
 import { type JournalItem, journalItems } from "../chat/journalRows";
 import { collectLiveSubagents } from "../chat/subagents";
 import type { ChatEntry, SessionChatStatus } from "../chat/types";
-import { type ChatPrefs, chatActivityLabel, DEFAULT_CHAT_VISIBILITY, visibleChatEntries, workRailDefaultExpanded } from "../chat/visibility";
+import { type ChatPrefs, chatActivityLabel, DEFAULT_CHAT_VISIBILITY, isChatEntryVisible, visibleChatEntries, workRailDefaultExpanded } from "../chat/visibility";
 import { RunningIndicator } from "../Indicators";
 import { ChatEntryRow } from "./ChatEntryRow";
 import { ChatWorkStrip } from "./ChatWorkStrip";
@@ -34,7 +34,7 @@ function ChatPaneImpl({
   const anchor = useRef<{ id: string; top: number } | null>(null);
   const shown = useMemo(() => visibleChatEntries(entries, visibility), [entries, visibility]);
   const activity = chatActivityLabel(status, shown);
-  const items = useMemo(() => journalItems(shown, status !== "idle"), [shown, status]);
+  const items = useMemo(() => journalItems(entries, status !== "idle", (entry) => isChatEntryVisible(entry, visibility)), [entries, status, visibility]);
   const stepOpen = useCallback((entry: ChatEntry) => workRailDefaultExpanded(entry, visibility), [visibility]);
 
   useEffect(() => {

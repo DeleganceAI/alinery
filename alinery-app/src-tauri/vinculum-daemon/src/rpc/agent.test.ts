@@ -40,7 +40,7 @@ async function start() {
     jobs: new JobRunner(store),
     storageScan: { mode: "error" } as never,
     transcripts: async () => undefined,
-    agent: { appConfig, blobs, mcp: { refresh: async () => ({ tools: ["read", "bash"], servers: [{ name: "docs", builtin: false, state: "error", error: "could not start" }, { name: "alinery", builtin: true, state: "connected" }] }) } },
+    agent: { appConfig, repo, blobs, mcp: { refresh: async () => ({ tools: ["read", "bash"], servers: [{ name: "docs", builtin: false, state: "error", error: "could not start" }, { name: "alinery", builtin: true, state: "connected" }] }) } },
   });
   cleanup.push(() => {
     net.close();
@@ -56,19 +56,20 @@ async function start() {
     await blobs.commit(begun.uploadId);
     return begun.uploadId;
   };
-  return { agentDir, blobs, svc: createClient(AgentService, transport), meta, stage };
+  return { agentDir, appConfig, blobs, svc: createClient(AgentService, transport), meta, stage };
 }
 
-test("model roles are written to and read from the host's agent directory", async () => {
+test("model roles are written to and read from the host's agent directory, and default is the Settings default, never stored", async () => {
   const t = await start();
-  expect((await t.svc.readModelRoles({})).roles).toEqual({});
-  const written = await t.svc.writeModelRoles({ meta: t.meta(), roles: { default: "p/m", smol: "q/n" } });
-  expect(written.roles).toEqual({ default: "p/m", smol: "q/n" });
-  expect(readFileSync(join(t.agentDir, "config.yml"), "utf8")).toBe("modelRoles:\n  default: p/m\n  smol: q/n\n");
+  expect((await t.svc.readModelRoles({})).roles).toEqual({ default: "" });
+  writeFileSync(t.appConfig, '[global.defaults]\nharness = "vinculum"\nmodel = "s/default"\n');
+  const written = await t.svc.writeModelRoles({ meta: t.meta(), roles: { default: "p/m", planner: "q/n" } });
+  expect(written.roles).toEqual({ planner: "q/n", default: "s/default" });
+  expect(readFileSync(join(t.agentDir, "config.yml"), "utf8")).toBe("modelRoles:\n  planner: q/n\n");
   const read = await t.svc.readModelRoles({});
-  expect([read.roles, read.agentDir]).toEqual([{ default: "p/m", smol: "q/n" }, t.agentDir]);
+  expect([read.roles, read.agentDir]).toEqual([{ planner: "q/n", default: "s/default" }, t.agentDir]);
   await t.svc.writeModelRoles({ meta: t.meta(), roles: {} });
-  expect((await t.svc.readModelRoles({})).roles).toEqual({});
+  expect((await t.svc.readModelRoles({})).roles).toEqual({ default: "s/default" });
 });
 
 test("a staged skill installs, shows in the inventory, asks before replacing, and deletes", async () => {
