@@ -77,7 +77,9 @@ static SIGN_IN_IN_FLIGHT: Mutex<Option<Arc<SignInAttempt>>> = Mutex::new(None);
 static CREDENTIALS: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
-pub(crate) static AFTER_CREDENTIAL_COMPARE: Mutex<Option<Box<dyn Fn() + Send>>> = Mutex::new(None);
+type CompareHook = (std::path::PathBuf, Box<dyn Fn() + Send>);
+#[cfg(test)]
+pub(crate) static AFTER_CREDENTIAL_COMPARE: Mutex<Option<CompareHook>> = Mutex::new(None);
 #[cfg(test)]
 pub(crate) static BEFORE_SIGN_IN_PERSIST: Mutex<Option<Box<dyn Fn() + Send>>> = Mutex::new(None);
 #[cfg(test)]
@@ -750,10 +752,18 @@ fn current_if(path: &Path, expect: Expect<'_>) -> Option<AccountTokens> {
 }
 
 #[cfg(test)]
-fn run_after_compare_hook() {
-    if let Some(hook) = AFTER_CREDENTIAL_COMPARE.lock().unwrap_or_else(|e| e.into_inner()).take() {
-        hook();
-    }
+fn run_after_compare_hook(path: &Path) {
+    let mut slot = AFTER_CREDENTIAL_COMPARE.lock().unwrap_or_else(|e| e.into_inner());
+    // Keyed by the credential file: tests run in parallel, and another test's credential call must not take this one's pause.
+    let hook = match slot.take() {
+        Some((at, hook)) if at == path => hook,
+        other => {
+            *slot = other;
+            return;
+        }
+    };
+    drop(slot);
+    hook();
 }
 
 /// Test helper: take the credential lock, compare, then wait on `resume` before mutating.
@@ -790,7 +800,7 @@ fn mutate_if_current<T>(path: &Path, expect: Expect<'_>, op: impl FnOnce(Account
         }
         // The hook is the two-window tests' window to install a replacement between the compare
         // and the mutation; the reload below is what has to notice it.
-        run_after_compare_hook();
+        run_after_compare_hook(path);
     }
     let Some(current) = current_if(path, expect) else {
         return Ok(None);
@@ -839,7 +849,7 @@ fn clear_if_still_invalid(path: &Path) -> Result<bool, String> {
     // Same window as `mutate_if_current`'s: the reload below is what has to notice a pairing
     // installed while we were taking the lock.
     #[cfg(test)]
-    run_after_compare_hook();
+    run_after_compare_hook(path);
     if matches!(load_tokens_from_path(path), Ok(Some(_))) {
         return Ok(false);
     }

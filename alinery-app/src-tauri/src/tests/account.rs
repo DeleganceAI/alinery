@@ -423,13 +423,16 @@ fn refresh_401_without_token_code_keeps_auth_json() {
     assert!(fs::read_to_string(&path).unwrap().contains("refresh-keep"));
 }
 
-fn pause_after_compare() -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+fn pause_after_compare(path: &Path) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
     let (gate_tx, gate_rx) = std::sync::mpsc::channel();
     let (resume_tx, resume_rx) = std::sync::mpsc::channel();
-    *crate::AFTER_CREDENTIAL_COMPARE.lock().unwrap() = Some(Box::new(move || {
-        let _ = gate_tx.send(());
-        let _ = resume_rx.recv();
-    }));
+    *crate::AFTER_CREDENTIAL_COMPARE.lock().unwrap() = Some((
+        path.to_path_buf(),
+        Box::new(move || {
+            let _ = gate_tx.send(());
+            let _ = resume_rx.recv();
+        }),
+    ));
     (gate_rx, resume_tx)
 }
 
@@ -439,7 +442,7 @@ fn stale_save_after_compare_does_not_clobber_a_newer_session() {
     let dir = unique_attachment_temp("account-cas-save");
     let path = dir.join("auth.json");
     write_tokens(&path, "access", "refresh-old", 1);
-    let (gate_rx, resume_tx) = pause_after_compare();
+    let (gate_rx, resume_tx) = pause_after_compare(&path);
     let (base, server) = serve_routes(vec![("/auth/v1/token".into(), 200, r#"{"access_token":"new","refresh_token":"r2","expires_in":3600}"#)]);
     let refresh_path = path.clone();
     let refresh = std::thread::spawn(move || refresh_account_at(&refresh_path, &base, DEAD_ENTITLEMENT));
@@ -459,7 +462,7 @@ fn stale_clear_after_compare_does_not_delete_a_newer_session() {
     let dir = unique_attachment_temp("account-cas-clear");
     let path = dir.join("auth.json");
     write_tokens(&path, "access", "refresh-old", 1);
-    let (gate_rx, resume_tx) = pause_after_compare();
+    let (gate_rx, resume_tx) = pause_after_compare(&path);
     let (base, server) = serve_routes(vec![("/auth/v1/token".into(), 400, r#"{"error":"invalid_grant"}"#)]);
     let refresh_path = path.clone();
     let refresh = std::thread::spawn(move || refresh_account_at(&refresh_path, &base, DEAD_ENTITLEMENT));
@@ -693,7 +696,7 @@ fn sign_out_clears_a_concurrent_rotation_of_the_same_session() {
     let path = dir.join("auth.json");
     write_tokens(&path, "live", "refresh-1", 4_000_000_000);
     let (base, server) = serve_routes(vec![("/auth/v1/logout".into(), 200, "")]);
-    let (gate_rx, resume_tx) = pause_after_compare();
+    let (gate_rx, resume_tx) = pause_after_compare(&path);
     let signout_path = path.clone();
     let signout = std::thread::spawn(move || sign_out_at(&signout_path, &base));
     gate_rx.recv().unwrap();
@@ -714,7 +717,7 @@ fn sign_out_preserves_a_newer_pairing_written_mid_flight() {
     let path = dir.join("auth.json");
     write_tokens(&path, "live", "refresh-1", 4_000_000_000);
     let (base, server) = serve_routes(vec![("/auth/v1/logout".into(), 200, "")]);
-    let (gate_rx, resume_tx) = pause_after_compare();
+    let (gate_rx, resume_tx) = pause_after_compare(&path);
     let signout_path = path.clone();
     let signout = std::thread::spawn(move || sign_out_at(&signout_path, &base));
     gate_rx.recv().unwrap();
@@ -961,7 +964,7 @@ fn plan_write_does_not_restore_a_token_the_same_session_already_rotated() {
     let dir = unique_attachment_temp("account-plan-rotation");
     let path = dir.join("auth.json");
     write_session_tokens(&path, "session-s", "access-1", "refresh-1", 4_000_000_000);
-    let (gate_rx, resume_tx) = pause_after_compare();
+    let (gate_rx, resume_tx) = pause_after_compare(&path);
     let (base, server) = serve_routes(vec![("/rest/v1/entitlements".into(), 200, r#"[{"plan":"teams"}]"#)]);
     let refresh_path = path.clone();
     let refresh = std::thread::spawn(move || refresh_account_at(&refresh_path, DEAD_ENTITLEMENT, &base));
@@ -986,7 +989,7 @@ fn refresh_save_does_not_clobber_a_newer_generation_of_the_same_session() {
     let dir = unique_attachment_temp("account-cas-save-same-session");
     let path = dir.join("auth.json");
     write_session_tokens(&path, "session-s", "access-1", "refresh-1", 1);
-    let (gate_rx, resume_tx) = pause_after_compare();
+    let (gate_rx, resume_tx) = pause_after_compare(&path);
     let (base, server) = serve_routes(vec![(
         "/auth/v1/token".into(),
         200,
@@ -1014,7 +1017,7 @@ fn invalid_refresh_does_not_delete_a_newer_generation_of_the_same_session() {
     let dir = unique_attachment_temp("account-cas-clear-same-session");
     let path = dir.join("auth.json");
     write_session_tokens(&path, "session-s", "access-1", "refresh-1", 1);
-    let (gate_rx, resume_tx) = pause_after_compare();
+    let (gate_rx, resume_tx) = pause_after_compare(&path);
     let (base, server) = serve_routes(vec![("/auth/v1/token".into(), 400, r#"{"error":"invalid_grant"}"#)]);
     let refresh_path = path.clone();
     let refresh = std::thread::spawn(move || refresh_account_at(&refresh_path, &base, DEAD_ENTITLEMENT));
@@ -1038,7 +1041,7 @@ fn corrupt_cleanup_leaves_a_valid_pairing_written_before_it_got_the_lock() {
     let path = dir.join("auth.json");
     fs::create_dir_all(&dir).unwrap();
     fs::write(&path, b"{ not json").unwrap();
-    let (gate_rx, resume_tx) = pause_after_compare();
+    let (gate_rx, resume_tx) = pause_after_compare(&path);
     let read_path = path.clone();
     let reader = std::thread::spawn(move || account_status_from_path(&read_path));
     gate_rx.recv().unwrap();
@@ -1059,7 +1062,7 @@ fn sign_out_reports_a_pairing_that_replaced_the_corrupt_bytes() {
     let path = dir.join("auth.json");
     fs::create_dir_all(&dir).unwrap();
     fs::write(&path, b"{ not json").unwrap();
-    let (gate_rx, resume_tx) = pause_after_compare();
+    let (gate_rx, resume_tx) = pause_after_compare(&path);
     let signout_path = path.clone();
     // The corrupt branch never reaches the network.
     let signout = std::thread::spawn(move || sign_out_at(&signout_path, DEAD_ENTITLEMENT));

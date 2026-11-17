@@ -1,6 +1,6 @@
 // The machine MCP on real sockets and real processes: the singleton, the idle exit, registration and re-registration, a daemon of
 // another protocol, the stdio bridge, the optional token with its rotation overlap, and McpService being the app's alone.
-import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,10 +11,6 @@ import { McpService, McpTokenAction } from "alinery-proto/alinery/v1/mcp_pb";
 import { MachineLink, rotateToken } from "../domain/machineMcp.ts";
 import { daemonProtocol, type RunningDaemon, SECRET, startDaemon } from "./daemonFixture.testutil.ts";
 import { acceptedTokens, answers, ask, machinePaths, machineUnit } from "./machine.ts";
-
-// These start real processes; a slow runner overruns bun's 5 s default, and a timed-out test has its processes killed, the shared daemon
-// among them, which then fails every test after it.
-setDefaultTimeout(30_000);
 
 const SERVE = join(import.meta.dir, "machineServe.testutil.ts");
 const MAIN = join(import.meta.dir, "..", "main.ts");

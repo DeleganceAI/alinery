@@ -67,7 +67,9 @@ step "proto: bun test"
 
 step "daemon: bun test"
 [ -d "$TAURI/vinculum-daemon/node_modules" ] || (cd "$TAURI/vinculum-daemon" && "$BUN" install --frozen-lockfile)
-(cd "$TAURI/vinculum-daemon" && "$BUN" test)
+# Many daemon tests start real processes; a slow runner overruns bun's 5 s default, and a timed-out test has its processes
+# killed, a shared fixture daemon among them, which fails every test after it. bunfig.toml's `timeout` is ignored (bun 1.4.3).
+(cd "$TAURI/vinculum-daemon" && "$BUN" test --timeout 30000)
 
 step "playbook engine: bun test"
 [ -d "$ROOT/playbook-engine/node_modules" ] || (cd "$ROOT/playbook-engine" && "$BUN" install --frozen-lockfile)
