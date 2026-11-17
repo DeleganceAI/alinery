@@ -178,13 +178,16 @@ export function CustomEndpointForm({ access }: { access: Access }) {
     <div className="chat-ui-prompt">
       <p className="chat-msg-title">OpenAI-compatible endpoints</p>
       {access.custom.length > 0 ? (
-        <ul className="chat-model-list">
+        <ul className="chat-model-list chat-provider-cards">
           {access.custom.map((row) => (
             <li key={row.id}>
               <div className="chat-model-item">
                 <span>
-                  {row.name} · {row.models.length === 1 ? row.models[0] : `${row.models.length} models`} · {hostOf(row.baseUrl)}
-                  {row.hasKey ? "" : " · no key"}
+                  {row.name}
+                  <span className="chat-provider-detail">
+                    {row.models.length === 1 ? row.models[0] : `${row.models.length} models`} · {hostOf(row.baseUrl)}
+                    {row.hasKey ? "" : " · no key"}
+                  </span>
                 </span>
                 <span className="chat-model-item-side">
                   <button type="button" className="btn ghost small" onClick={() => setEditing(row)}>

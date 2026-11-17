@@ -6856,6 +6856,61 @@ header:has(~ main .task-info-panel) nav.tabs {
 .chat-providers-advanced {
   margin-top: 12px;
 }
+/* Accounts: each provider is a card, so a row reads as one provider with its action, not a line of text. */
+.chat-model-list.chat-provider-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px;
+}
+.chat-provider-cards > li.dim {
+  grid-column: 1 / -1;
+}
+.chat-provider-cards .chat-model-item {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 56px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  cursor: default;
+}
+.chat-provider-cards button.chat-model-item:enabled {
+  cursor: pointer;
+}
+.chat-provider-cards .chat-model-item.active,
+.chat-provider-cards .chat-model-item:hover {
+  background: var(--surface-raised);
+}
+.chat-provider-cards button.chat-model-item:enabled:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-subtle);
+}
+.chat-provider-cards .chat-model-item > span:first-child {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.chat-provider-cards button.chat-model-item:enabled .chat-provider-status {
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+.chat-provider-detail {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+  font-size: calc(12px * var(--ui-scale));
+  color: var(--text-muted);
+}
+/* In the providers dialog the endpoint section sits on the panel like the cards above it, not in a box of its own. */
+.chat-providers-panel .chat-ui-prompt {
+  margin: 20px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
 /* Providers / Models dialog: a fixed frame so filtering never resizes it. The tabs, search and
    footer stay put; only the panel scrolls, so the lists inside it are not capped. */
 .modal.chat-model-dialog {
