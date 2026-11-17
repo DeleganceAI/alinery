@@ -33,7 +33,13 @@ export type ProviderCatalog = {
     oauthName: string;
   }>;
   models: Array<{ provider: string; id: string }>;
-  custom: Array<{ id: string; name: string; baseUrl: string; hasKey: boolean; models: string[] }>;
+  custom: Array<{ id: string; name: string; baseUrl: string; hasKey: boolean; models: string[]; config: string }>;
+};
+
+/** The daemon's reading of a custom endpoint config: problems by field, and with a live check, one result per model. */
+export type CustomCheck = {
+  problems: Array<{ path: string; message: string; error: boolean }>;
+  tests: Array<{ provider: string; model: string; ok: boolean; detail: string }>;
 };
 
 export type ProviderLoginStatus = {

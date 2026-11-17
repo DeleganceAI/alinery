@@ -10931,3 +10931,102 @@ button.chat-path-link:focus-visible {
 .git-diff-file-head > .diff-del {
   color: var(--danger);
 }
+
+/* Custom OpenAI-compatible endpoint editor (views/CustomEndpointEditor.tsx): the config, then its problems and test results. */
+.custom-endpoint-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+.custom-endpoint-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.custom-endpoint-body .dsc {
+  margin: 0;
+}
+.custom-endpoint-source {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 240px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(12.5px * var(--ui-scale));
+  line-height: 1.5;
+  tab-size: 2;
+}
+.custom-endpoint-source:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.custom-endpoint-check {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.custom-endpoint-summary {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(12.5px * var(--ui-scale));
+}
+.custom-endpoint-summary.bad {
+  color: var(--danger);
+}
+.custom-endpoint-problems {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: calc(12.5px * var(--ui-scale));
+}
+.custom-endpoint-problems li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.45;
+}
+.custom-endpoint-problems li > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.custom-endpoint-problems li.error > svg {
+  color: var(--danger);
+}
+.custom-endpoint-problems li.warning > svg {
+  color: var(--warning);
+}
+.custom-endpoint-problems li.ok > svg {
+  color: var(--success);
+}
+.custom-endpoint-problems code {
+  font-family: var(--font-mono);
+  color: var(--text-strong);
+}
+.custom-endpoint-reference summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: calc(12.5px * var(--ui-scale));
+}
+.custom-endpoint-reference pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+}
+.custom-endpoint-foot {
+  justify-content: flex-end;
+}

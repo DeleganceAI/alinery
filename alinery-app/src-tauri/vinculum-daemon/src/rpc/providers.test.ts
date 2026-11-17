@@ -140,19 +140,24 @@ test("a repeated mutation id starts one sign-in, not two", async () => {
   expect(await code(c.loginStart({ provider: "groq", method: LoginMethod.API_KEY }))).toBe(Code.InvalidArgument);
 });
 
-test("a custom provider is saved, listed with has_key and never its key, keeps the key on a blank save, and is deleted", async () => {
+test("a custom provider is saved from its config, listed with has_key and never its key, keeps the key behind <saved>, and is deleted", async () => {
   const { svc, meta, dir } = await start(process.execPath);
   const c = svc(SECRET);
-  const saved = (await c.saveCustom({ meta: meta(), id: "mine", name: "Mine", baseUrl: "https://llm.example.com/v1", apiKey: "k-1", keepKey: false, models: ["m1", "m2"] })).catalog!;
-  expect(saved.custom).toMatchObject([{ id: "mine", name: "Mine", hasKey: true, models: ["m1", "m2"] }]);
+  const config = (key: string) => `mine:\n  name: Mine\n  baseUrl: https://llm.example.com/v1\n  apiKey: ${key}\n  models:\n    - id: org/m1\n    - id: m2\n`;
+  const saved = (await c.saveCustom({ meta: meta(), config: config("k-1") })).catalog!;
+  expect(saved.custom).toMatchObject([{ id: "mine", name: "Mine", hasKey: true, models: ["org/m1", "m2"] }]);
   expect(JSON.stringify(saved)).not.toContain("k-1");
-  const kept = (await c.saveCustom({ meta: meta(), id: "mine", name: "Mine", baseUrl: "https://llm.example.com/v1", apiKey: "", keepKey: true, models: ["m1"] })).catalog!;
-  expect(kept.custom[0]).toMatchObject({ hasKey: true, models: ["m1"] });
-  const cleared = (await c.saveCustom({ meta: meta(), id: "mine", name: "Mine", baseUrl: "https://llm.example.com/v1", apiKey: "", keepKey: false, models: ["m1"] })).catalog!;
-  expect(cleared.custom[0]?.hasKey).toBe(false);
-  expect(readFileSync(join(dir, "config", "custom-providers.json"), "utf8")).toContain("mine");
-  expect(await code(c.saveCustom({ meta: meta(), id: "bad", name: "Bad", baseUrl: "not a url", apiKey: "", keepKey: false, models: ["m"] }))).toBe(Code.InvalidArgument);
-  expect((await c.deleteCustom({ meta: meta(), id: "mine" })).catalog?.custom).toEqual([]);
+  expect(saved.custom[0]?.config).toContain("apiKey: \"<saved>\"");
+  const kept = (await c.saveCustom({ meta: meta(), config: saved.custom[0]!.config })).catalog!;
+  expect(kept.custom[0]).toMatchObject({ hasKey: true, models: ["org/m1", "m2"] });
+  expect(readFileSync(join(dir, "config", "custom-providers.json"), "utf8")).toContain("k-1");
+  const renamed = (await c.saveCustom({ meta: meta(), config: config("k-2").replace("mine:", "yours:"), replaces: "mine" })).catalog!;
+  expect(renamed.custom.map((row) => row.id)).toEqual(["yours"]);
+  expect(await code(c.saveCustom({ meta: meta(), config: "bad:\n  baseUrl: not a url\n  models: [m]\n" }))).toBe(Code.InvalidArgument);
+  const checked = await c.checkCustom({ config: "bad:\n  baseUrl: not a url\n  models: [m]\n", live: true });
+  expect(checked.problems.find((p) => p.error)).toMatchObject({ path: "bad.baseUrl", message: "is not a URL" });
+  expect(checked.tests).toEqual([]);
+  expect((await c.deleteCustom({ meta: meta(), id: "yours" })).catalog?.custom).toEqual([]);
 });
 
 test("every credential call is ADMIN: a peer that is not the shell (VIEW and ACT), and no token, are refused; VIEW reads still work", async () => {
@@ -163,8 +168,9 @@ test("every credential call is ADMIN: a peer that is not the shell (VIEW and ACT
     () => other.loginPoll({ loginId: "x" }),
     () => other.loginReply({ meta: meta(), loginId: "x", value: "v", cancel: false }),
     () => other.logout({ meta: meta(), provider: "groq" }),
-    () => other.saveCustom({ meta: meta(), id: "a", name: "A", baseUrl: "https://a.example.com", apiKey: "", keepKey: false, models: [] }),
+    () => other.saveCustom({ meta: meta(), config: "a:\n  baseUrl: https://a.example.com\n  models: [m]\n" }),
     () => other.deleteCustom({ meta: meta(), id: "a" }),
+    () => other.checkCustom({ config: "a: {}", live: false }),
   ];
   for (const call of calls) expect(await code(call())).toBe(Code.PermissionDenied);
   await other.catalog({});

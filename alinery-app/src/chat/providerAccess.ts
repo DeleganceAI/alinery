@@ -152,15 +152,12 @@ export function useProviderAccess(enabled: boolean) {
     }
   }, []);
 
-  const saveCustom = useCallback(async (input: { id: string; name: string; baseUrl: string; apiKey: string; keepKey: boolean; models: string[] }) => {
-    setError(null);
-    try {
-      setCatalog(await providers.customProviderSave(input));
-    } catch (cause) {
-      setError(String(cause));
-      throw cause;
-    }
+  // The editor shows its own errors, so these leave the panel's error alone.
+  const saveCustom = useCallback(async (config: string, replaces?: string) => {
+    setCatalog(await providers.customProviderSave(config, replaces));
   }, []);
+
+  const checkCustom = useCallback((config: string, live: boolean) => providers.customProviderCheck(config, live), []);
 
   const deleteCustom = useCallback(async (id: string) => {
     setError(null);
@@ -188,6 +185,7 @@ export function useProviderAccess(enabled: boolean) {
     cancel,
     logout,
     saveCustom,
+    checkCustom,
     deleteCustom,
   };
 }

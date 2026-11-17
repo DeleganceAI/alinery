@@ -10,7 +10,7 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { CreateModelsOptions, MutableModels } from "@earendil-works/pi-ai/models";
 import { writeOwnerOnly } from "./platform/fs.ts";
 import { credentialPath, openCredentialStore } from "./credentials.ts";
-import { customProviderPath, openCustomProviders, type CustomProviderPublic } from "./customProviders.ts";
+import { checkCustom, type CustomModelTest, type CustomProblem, customProviderPath, openCustomProviders, type CustomProviderPublic, testCustom } from "./customProviders.ts";
 import { createLoginBroker, type LoginStatus } from "./login.ts";
 import { installAlineryProvider } from "./provider.ts";
 
@@ -147,6 +147,10 @@ export function openProviderRuntime(appConfig: string) {
   const login = createLoginBroker(models, { agentName: "Alinery", getDeviceId: () => deviceId(appConfig) });
 
   const catalog = () => providerCatalog(models, credentials, custom.publicList());
+  const builtIn = () => {
+    const own = new Set(custom.list().map((row) => row.id));
+    return new Set(models.getProviders().map((provider) => provider.id).filter((id) => !own.has(id)));
+  };
 
   return {
     models,
@@ -167,12 +171,15 @@ export function openProviderRuntime(appConfig: string) {
       await models.logout(provider);
       return catalog();
     },
-    async saveCustom(input: { id: string; name: string; baseUrl: string; apiKey?: string; clearKey?: boolean; models: string[] }): Promise<ProviderCatalog> {
-      const own = new Set(custom.list().map((row) => row.id));
-      const taken = new Set(models.getProviders().map((provider) => provider.id).filter((id) => !own.has(id)));
-      custom.save(input, taken);
-      custom.register(models);
+    async saveCustom(config: string, replaces?: string): Promise<ProviderCatalog> {
+      custom.save(config, builtIn(), models, replaces);
       return catalog();
+    },
+    /** The editor's check as the user types; with `live`, also one request per model when nothing is an error. */
+    async checkCustom(config: string, live: boolean): Promise<{ problems: CustomProblem[]; tests: CustomModelTest[] }> {
+      const { providers, problems } = checkCustom(config, builtIn(), custom.list());
+      const tests = live && !problems.some((problem) => problem.error) ? await testCustom(providers) : [];
+      return { problems, tests };
     },
     async deleteCustom(id: string): Promise<ProviderCatalog> {
       custom.remove(id, models);
