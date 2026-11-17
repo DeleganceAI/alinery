@@ -11085,7 +11085,19 @@ button.chat-path-link:focus-visible {
 .custom-endpoint-reference-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   gap: 6px;
+}
+.custom-endpoint-copy {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.custom-endpoint-copy-hint {
+  padding-left: 8px;
+  color: var(--text-muted);
+  font-size: calc(11.5px * var(--ui-scale));
 }
 .custom-endpoint-foot {
   justify-content: flex-end;

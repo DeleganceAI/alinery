@@ -167,13 +167,11 @@ export function CustomEndpointEditor({ editing, check, save, onClose }: Props) {
           ) : null}
           {saveError ? <InlineStatus tone="error">{saveError}</InlineStatus> : null}
         </div>
-        <details className="custom-endpoint-reference">
-          <summary>Every supported field</summary>
-          <pre>{CUSTOM_ENDPOINT_REFERENCE}</pre>
-          <div className="custom-endpoint-reference-actions">
-            <button type="button" className="btn ghost small" onClick={() => edit(CUSTOM_ENDPOINT_REFERENCE)} disabled={busy}>
-              Start from this example
-            </button>
+        <div className="custom-endpoint-reference-actions">
+          <button type="button" className="btn ghost small" onClick={() => edit(CUSTOM_ENDPOINT_REFERENCE)} disabled={busy}>
+            Start from this example
+          </button>
+          <span className="custom-endpoint-copy">
             <button
               type="button"
               className="btn ghost small"
@@ -187,7 +185,12 @@ export function CustomEndpointEditor({ editing, check, save, onClose }: Props) {
             >
               Copy agent instructions
             </button>
-          </div>
+            <span className="custom-endpoint-copy-hint">Need extra help? Ask your own agent</span>
+          </span>
+        </div>
+        <details className="custom-endpoint-reference">
+          <summary>Full example</summary>
+          <pre>{CUSTOM_ENDPOINT_REFERENCE}</pre>
         </details>
       </div>
       <div className="mfoot custom-endpoint-foot">
