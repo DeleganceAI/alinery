@@ -400,17 +400,23 @@ export function ChatModelDialog({
               </ul>
 
               <details className="chat-model-roles">
-                <summary>Role defaults</summary>
-                <p className="dim">Defaults for new agent sessions.</p>
+                <summary>Role defaults (for playbooks that support them)</summary>
+                <p className="dim">
+                  A playbook step whose model is <code>role:planner</code>, for example, runs on the model assigned here. A role left unassigned uses the default model.
+                </p>
                 <div className="chat-role-list">
-                  {BUILTIN_MODEL_ROLES.map((role) => {
+                  <div className="chat-role-row">
+                    <code>default</code>
+                    <span className="dim">{modelRoles.default || "Alinery's hosted model"} · set in Settings, Agents, Session defaults</span>
+                  </div>
+                  {BUILTIN_MODEL_ROLES.filter((role) => role !== "default").map((role) => {
                     const assigned = modelRoles[role] ?? "";
                     const missing = assigned !== "" && !roleModels.some((model) => `${model.provider}/${model.id}` === assigned);
                     return (
                       <label key={role} className="chat-role-row">
                         <code>{role}</code>
                         <select className="field-input" aria-label={`Model for ${role}`} value={assigned} onChange={(event) => onAssignRole(role, event.target.value || null)}>
-                          <option value="">Not assigned</option>
+                          <option value="">Default model</option>
                           {missing && (
                             <option value={assigned} disabled>
                               {assigned} (unavailable)

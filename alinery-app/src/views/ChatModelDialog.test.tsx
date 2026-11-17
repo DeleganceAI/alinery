@@ -290,28 +290,31 @@ describe("ChatModelDialog", () => {
       source: "live",
     };
     render(<ChatModelDialog {...base} hosted={hosted} />);
-    fireEvent.click(screen.getByText("Role defaults"));
-    const values = [...screen.getByLabelText("Model for default").querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
+    fireEvent.click(screen.getByText("Role defaults (for playbooks that support them)"));
+    const values = [...screen.getByLabelText("Model for planner").querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
     expect(values).toContain("xai/grok-4.6");
     expect(values.some((value) => value.startsWith("alinery/"))).toBe(false);
 
     cleanup();
     render(<ChatModelDialog {...base} hosted={{ ...hosted, ready: true, upsell: null, source: "live" }} />);
-    fireEvent.click(screen.getByText("Role defaults"));
-    const readyValues = [...screen.getByLabelText("Model for default").querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
+    fireEvent.click(screen.getByText("Role defaults (for playbooks that support them)"));
+    const readyValues = [...screen.getByLabelText("Model for planner").querySelectorAll("option")].map((option) => (option as HTMLOptionElement).value);
     expect(readyValues).toContain("alinery/Qwen3.6-35B-A3B");
   });
 
   it("preserves unavailable role assignments and permits replacing or clearing them", () => {
     const onAssignRole = vi.fn();
-    render(<ChatModelDialog {...base} modelRoles={{ default: "old/private" }} onAssignRole={onAssignRole} />);
-    fireEvent.click(screen.getByText("Role defaults"));
-    const select = screen.getByLabelText("Model for default") as HTMLSelectElement;
+    render(<ChatModelDialog {...base} modelRoles={{ default: "s/default", planner: "old/private" }} onAssignRole={onAssignRole} />);
+    fireEvent.click(screen.getByText("Role defaults (for playbooks that support them)"));
+    const select = screen.getByLabelText("Model for planner") as HTMLSelectElement;
     expect(select.value).toBe("old/private");
     fireEvent.change(select, { target: { value: "xai/grok-4.6" } });
-    expect(onAssignRole).toHaveBeenLastCalledWith("default", "xai/grok-4.6");
+    expect(onAssignRole).toHaveBeenLastCalledWith("planner", "xai/grok-4.6");
     fireEvent.change(select, { target: { value: "" } });
-    expect(onAssignRole).toHaveBeenLastCalledWith("default", null);
+    expect(onAssignRole).toHaveBeenLastCalledWith("planner", null);
+    // default is the Settings default: shown, not a select.
+    expect(screen.queryByLabelText("Model for default")).toBeNull();
+    expect(screen.getByText(/s\/default · set in Settings/)).toBeTruthy();
   });
 
   it("keeps diagnostics collapsed without blocking model selection", () => {

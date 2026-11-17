@@ -9,9 +9,7 @@ use crate::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub(crate) use alinery_core::{
-    inference_path, is_hosted_model, parse_hosted_catalog_body, parse_hosted_error, HostedApiError, HostedCatalog, HostedModel, HOSTED_MODEL_UNAVAILABLE,
-};
+pub(crate) use alinery_core::{is_hosted_model, parse_hosted_catalog_body, parse_hosted_error, HostedApiError, HostedCatalog, HostedModel, HOSTED_MODEL_UNAVAILABLE};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -279,30 +277,8 @@ fn fetch_live_catalog(accounts_url: &str) -> Result<HostedCatalog, HostedApiErro
     })
 }
 
-fn apply_default_role_after_sync(config_dir: &Path, app_config: &Path) {
-    let Ok(bytes) = fs::read(inference_path(config_dir)) else {
-        return;
-    };
-    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-        return;
-    };
-    let Some(default_model) = value.get("catalog").and_then(|catalog| catalog.get("default_model")).and_then(Value::as_str) else {
-        return;
-    };
-    apply_default_model_role(app_config, default_model);
-}
-
-fn apply_default_model_role(app_config: &Path, default_model: &str) {
-    let (agent_dir, _) = alinery_core::vinculum_home_dirs(app_config);
-    let _ = ensure_default_model_role(&agent_dir, default_model);
-}
-
 pub(crate) fn sync_hosted_inference(config_dir: &Path, app_config: &Path, accounts_url: &str, access_token: &str, session_id: &str, paid: bool) -> Result<(), String> {
-    alinery_core::sync_hosted_inference(config_dir, app_config, accounts_url, access_token, session_id, paid)?;
-    if paid {
-        apply_default_role_after_sync(config_dir, app_config);
-    }
-    Ok(())
+    alinery_core::sync_hosted_inference(config_dir, app_config, accounts_url, access_token, session_id, paid)
 }
 
 pub(crate) fn revoke_hosted_inference(config_dir: &Path, app_config: &Path, accounts_url: &str, access_token: Option<&str>, session_id: Option<&str>) {

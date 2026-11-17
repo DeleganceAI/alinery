@@ -95,7 +95,6 @@ mod state;
 mod task;
 mod telemetry;
 mod update;
-mod vinculum_update;
 
 use account::*;
 use agent_customizations::*;
@@ -119,7 +118,6 @@ use state::*;
 use task::*;
 use telemetry::*;
 use update::*;
-use vinculum_update::*;
 
 fn register_runtime_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
