@@ -1,6 +1,6 @@
 // The machine MCP on real sockets and real processes: the singleton, the idle exit, registration and re-registration, a daemon of
 // another protocol, the stdio bridge, the optional token with its rotation overlap, and McpService being the app's alone.
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,10 @@ import { McpService, McpTokenAction } from "alinery-proto/alinery/v1/mcp_pb";
 import { MachineLink, rotateToken } from "../domain/machineMcp.ts";
 import { daemonProtocol, type RunningDaemon, SECRET, startDaemon } from "./daemonFixture.testutil.ts";
 import { acceptedTokens, answers, ask, machinePaths, machineUnit } from "./machine.ts";
+
+// These start real processes; a slow runner overruns bun's 5 s default, and a timed-out test has its processes killed, the shared daemon
+// among them, which then fails every test after it.
+setDefaultTimeout(30_000);
 
 const SERVE = join(import.meta.dir, "machineServe.testutil.ts");
 const MAIN = join(import.meta.dir, "..", "main.ts");
@@ -83,12 +87,13 @@ test("with no daemon registered it exits after the idle time and removes its soc
   expect(await idle.exited).toBe(0);
   expect(await answers(paths.socket)).toBe(false);
 
-  const kept = serve(dir, daemonProtocol(), 300);
+  // Long enough for the registration to land on a slow runner before the idle exit would.
+  const kept = serve(dir, daemonProtocol(), 2_000);
   await until(() => answers(paths.socket), "it to listen");
   const l = link(paths, dir);
   l.start();
   await until(async () => ((await ask(paths.socket, { op: "status" })).daemons as unknown[]).length === 1, "the registration");
-  await Bun.sleep(600);
+  await Bun.sleep(2_500);
   expect(kept.exitCode).toBeNull();
 });
 
