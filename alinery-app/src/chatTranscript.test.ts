@@ -1595,6 +1595,15 @@ describe("applyVinculumTranscript", () => {
     expect(grown.entries[3]).toMatchObject({ id: "f:live:text:0", text: "Hello" });
   });
 
+  it("stamps each entry with when its message was complete", () => {
+    const state = applyVinculumTranscript([
+      { id: "u", role: "user", at: 1000, content: [{ type: "text", text: "go" }] },
+      { id: "a", role: "assistant", at: 5000, content: [{ type: "toolCall", id: "c", name: "read" }] },
+      { id: "r", role: "toolResult", at: 6000, toolCallId: "c", toolName: "read", content: [{ type: "text", text: "x" }] },
+    ]);
+    expect(state.entries.map((entry) => entry.at)).toEqual([1000, 5000, 6000]);
+  });
+
   it("keeps a committed tool call running while its slot has output", () => {
     const state = applyVinculumTranscript([
       {

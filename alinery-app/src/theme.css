@@ -6159,7 +6159,7 @@ header:has(~ main .task-info-panel) nav.tabs {
 }
 .chat-turn-end .chat-turn-copy {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }

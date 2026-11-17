@@ -36,10 +36,16 @@ function roleOf(entry: ChatEntry): JournalRole {
   return "meta";
 }
 
-/** `running`: the last turn is still going, so it gets no footer and its last text may yet become narration. */
-export function journalItems(entries: ChatEntry[], running: boolean): JournalItem[] {
+/**
+ * `running`: the last turn is still going, so it gets no footer and its last text may yet become narration.
+ * `shown`: the display filter. A hidden entry gets no row, but the footer still counts it and its time, so a
+ * turn whose tool calls are hidden reads "14 steps", not "0 steps".
+ */
+export function journalItems(entries: ChatEntry[], running: boolean, shown: (entry: ChatEntry) => boolean = () => true): JournalItem[] {
   const items: JournalItem[] = [];
   let turnStart = 0;
+  let hiddenSteps = 0;
+  let hiddenEnd = Number.NEGATIVE_INFINITY;
 
   const closeTurn = (final: boolean) => {
     const turn = items.slice(turnStart);
@@ -52,15 +58,20 @@ export function journalItems(entries: ChatEntry[], running: boolean): JournalIte
     const answered = turn.some((item) => item.kind === "entry" && item.role === "answer");
     if (final && running) return;
     if (first?.kind !== "entry" || first.entry.type !== "prompt" || !answered) return;
-    const steps = turn.reduce((n, item) => n + (item.kind === "work" ? item.entries.filter(countsAsStep).length : 0), 0);
+    const steps = turn.reduce((n, item) => n + (item.kind === "work" ? item.entries.filter(countsAsStep).length : 0), hiddenSteps);
     // A loop, not Math.max(...): spreading a long turn's timestamps overflows the call stack.
-    let end = Number.NEGATIVE_INFINITY;
+    let end = hiddenEnd;
     for (const item of turn) for (const e of item.kind === "work" ? item.entries : item.kind === "entry" ? [item.entry] : []) if (e.at != null && e.at > end) end = e.at;
     const start = first.entry.at;
     items.push({ kind: "turn", key: `turn:${first.entry.id}`, steps, durationMs: start != null && Number.isFinite(end) && end > start ? end - start : undefined });
   };
 
   for (const entry of entries) {
+    if (!shown(entry)) {
+      if (isWorkEntry(entry) && countsAsStep(entry)) hiddenSteps += 1;
+      if (entry.at != null && entry.at > hiddenEnd) hiddenEnd = entry.at;
+      continue;
+    }
     if (isWorkEntry(entry)) {
       const last = items[items.length - 1];
       if (last?.kind === "work") {
@@ -71,9 +82,11 @@ export function journalItems(entries: ChatEntry[], running: boolean): JournalIte
       }
       continue;
     }
-    if (entry.type === "prompt" && items.length > turnStart) {
-      closeTurn(false);
+    if (entry.type === "prompt") {
+      if (items.length > turnStart) closeTurn(false);
       turnStart = items.length;
+      hiddenSteps = 0;
+      hiddenEnd = Number.NEGATIVE_INFINITY;
     }
     items.push({ kind: "entry", key: entry.id, entry, role: roleOf(entry) });
   }

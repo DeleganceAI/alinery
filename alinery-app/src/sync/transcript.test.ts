@@ -145,6 +145,8 @@ describe("transcript frames", () => {
       isError: true,
     });
     expect("streaming" in messageOf(item("u", "x"))).toBe(false);
+    expect(messageOf(item("u", "x", { at: 1234n })).at).toBe(1234);
+    expect("at" in messageOf(item("u", "x"))).toBe(false);
   });
 
   it("applyFrame appends at the end, replaces from the start index, and refuses a gap", () => {

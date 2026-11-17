@@ -222,6 +222,7 @@ message TranscriptItem {
   string tool_call_id = 6;
   bool is_error = 7;
   repeated string running_tool_ids = 8;
+  int64 at = 9;  // ms since the epoch when the message was complete (a reply's start plus its duration); 0 when unknown
 }
 
 message TranscriptPart {

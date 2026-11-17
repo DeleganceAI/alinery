@@ -39,4 +39,13 @@ describe("journalItems", () => {
     const queued: ChatEntry = { id: "f", at: 3, actor: ACTOR.you, type: "follow_up", text: "then test" };
     expect(shape([ask("p", 0), call("c1", 1), approval, queued, call("c2", 4), say("a", 5)])).toEqual(["you:p", "work:c1", "wait:ap", "you:f", "work:c2", "answer:a", "turn:2:5"]);
   });
+
+  it("counts hidden work and its time in the footer without giving it a row", () => {
+    const entries = [ask("p", 0), think("t", 1000), call("c1", 2000), result("r1", 3000), say("n", 4000), call("c2", 5000), result("r2", 9000), say("a", 6000)];
+    const toolsHidden = (e: ChatEntry) => e.type !== "tool_call" && e.type !== "tool_result";
+    expect(journalItems(entries, false, toolsHidden).map((i) => (i.kind === "turn" ? `turn:${i.steps}:${i.durationMs}` : i.key))).toEqual(["p", "t", "n", "a", "turn:3:9000"]);
+    // Hidden work of one turn never leaks into the next.
+    const next = journalItems([ask("p", 0), call("c", 1), say("a", 2), ask("q", 3), say("b", 4)], false, (e) => e.type !== "tool_call");
+    expect(next.filter((i) => i.kind === "turn").map((i) => (i.kind === "turn" ? i.steps : 0))).toEqual([1, 0]);
+  });
 });

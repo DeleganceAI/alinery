@@ -39,6 +39,7 @@ export function messageOf(item: TranscriptItem): VinculumMessage {
     ...(item.toolCallId ? { toolCallId: item.toolCallId } : {}),
     ...(item.isError ? { isError: true } : {}),
     ...(item.runningToolIds.length > 0 ? { runningToolIds: item.runningToolIds } : {}),
+    ...(item.at ? { at: Number(item.at) } : {}),
   };
 }
 

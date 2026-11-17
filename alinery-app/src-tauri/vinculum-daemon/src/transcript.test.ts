@@ -74,3 +74,12 @@ test("a running slot keeps the call running and carries its output; a finished c
   expect(reply[2]).toMatchObject({ id: "r1", content: [{ type: "text", text: "stored" }] });
   expect(JSON.stringify(reply).includes("should not repeat")).toBe(false);
 });
+
+test("each message carries when it was complete: a reply's start plus its duration", () => {
+  const reply = formatTranscript([
+    transcriptSource("u", { role: "user", content: "go", timestamp: 1000 }),
+    transcriptSource("a", { role: "assistant", content: [{ type: "text", text: "done" }], timestamp: 2000, durationMs: 500 }),
+    transcriptSource("b", { role: "assistant", content: [{ type: "text", text: "old" }] }),
+  ]);
+  expect(reply.map((message) => message.at)).toEqual([1000, 2500, undefined]);
+});
