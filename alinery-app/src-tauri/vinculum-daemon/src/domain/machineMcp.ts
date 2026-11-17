@@ -194,6 +194,9 @@ export class MachineLink {
       if (performance.now() > end) return { ...(await this.status()), state: "stuck" };
       await Bun.sleep(100);
     }
+    // The old MCP unlinks its socket before it exits, so our registration may not have seen its close yet; register() would skip.
+    this.socket?.destroy();
+    this.socket = undefined;
     return this.ensure();
   }
 }
