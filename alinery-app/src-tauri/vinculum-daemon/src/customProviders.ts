@@ -152,10 +152,10 @@ export function checkCustom(text: string, taken: ReadonlySet<string>, stored: re
         const model: CustomModel = { id: modelId };
         const modelName = optionalString(m.name, path("name"), error);
         if (modelName) model.name = modelName;
-        if (m.reasoning !== undefined) {
-          if (typeof m.reasoning !== "boolean") error(path("reasoning"), "must be true or false");
-          else model.reasoning = m.reasoning;
-        }
+        // A model without `reasoning` offers no thinking levels, and nothing on the endpoint says otherwise, so say so here.
+        if (m.reasoning === undefined) warn(path("reasoning"), "not set, so this model gets no thinking levels: add reasoning: true if it thinks, or reasoning: false");
+        else if (typeof m.reasoning !== "boolean") error(path("reasoning"), "must be true or false");
+        else model.reasoning = m.reasoning;
         if (m.input !== undefined) {
           const input = Array.isArray(m.input) ? m.input : [m.input];
           if (!input.every((kind) => kind === "text" || kind === "image") || !input.includes("text")) error(path("input"), "must be [text] or [text, image]");

@@ -20,7 +20,7 @@ deepinfra:
       name: DeepSeek V4 Pro          # optional display name
       contextWindow: 1000000         # tokens the model reads; default 128000
       maxTokens: 32000               # tokens it may write per reply; default 8192
-      reasoning: true                # thinks before answering; default false
+      reasoning: true                # thinks before answering, so it gets thinking levels
       input: [text, image]           # default [text]
       supportsTools: true            # cannot be false: the agent works through tool calls
       cost:                          # optional, dollars per million tokens
@@ -33,6 +33,7 @@ deepinfra:
     - id: zai-org/GLM-5.3
       contextWindow: 1000000
       maxTokens: 32000
+      reasoning: true
 `;
 
 /** What a new endpoint starts from: the fields most endpoints need. */
@@ -45,4 +46,5 @@ export const CUSTOM_ENDPOINT_STARTER = `my-endpoint:
     - id: org/model-name
       contextWindow: 128000
       maxTokens: 8192
+      reasoning: false               # true if the model thinks: turns on its thinking levels
 `;

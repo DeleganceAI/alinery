@@ -29,7 +29,11 @@ const OMP = `phdeepinfra:
 
 test("an OMP provider block reads with no problem, slashes in model ids included", () => {
   const { providers, problems } = checkCustom(OMP, new Set());
-  expect(problems).toEqual([]);
+  // The block sets no reasoning, so each model is warned that it gets no thinking levels.
+  expect(problems.map((p) => [p.path, p.error])).toEqual([
+    ["phdeepinfra.models[0].reasoning", false],
+    ["phdeepinfra.models[1].reasoning", false],
+  ]);
   expect(providers).toEqual([
     {
       id: "phdeepinfra",
@@ -45,7 +49,7 @@ test("an OMP provider block reads with no problem, slashes in model ids included
     },
   ]);
   // A whole pi models.json, JSON included, reads the same way.
-  expect(checkCustom(JSON.stringify({ providers: { local: { baseUrl: "http://127.0.0.1:11434/v1", models: [{ id: "llama", contextWindow: 8000, maxTokens: 2000 }] } } }), new Set()).problems).toEqual([
+  expect(checkCustom(JSON.stringify({ providers: { local: { baseUrl: "http://127.0.0.1:11434/v1", models: [{ id: "llama", contextWindow: 8000, maxTokens: 2000, reasoning: false }] } } }), new Set()).problems).toEqual([
     { path: "local.apiKey", message: "no key: requests go out without one, which only a local server accepts", error: false },
   ]);
 });
