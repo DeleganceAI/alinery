@@ -1,6 +1,10 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
-type Props = { children: ReactNode };
+type Props = {
+  children: ReactNode;
+  /** Drawn in place of the children after a throw. Without it, the full-window recovery screen. */
+  fallback?: (error: Error) => ReactNode;
+};
 type State = { error: Error | null };
 
 /**
@@ -26,6 +30,7 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     const { error } = this.state;
     if (!error) return this.props.children;
+    if (this.props.fallback) return this.props.fallback(error);
     return (
       <div className="app-shell" style={{ padding: 24, overflow: "auto" }}>
         <h2 style={{ marginTop: 0 }}>Something broke while drawing this screen.</h2>
