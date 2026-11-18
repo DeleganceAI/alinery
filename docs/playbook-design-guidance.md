@@ -295,6 +295,7 @@ The ancestry value 0 is not permission to rename existing physical `00-ticket.md
 - Permission applies only to that execution. It does not enable future auto-advance, authorize a replacement execution, or expose agent/MCP self-approval.
 - The human tells the harness to wrap up. The harness finishes its writes, verification and user-facing handoff, then calls completion.
 - The daemon checks ownership, permission and current outputs before accepting. Invalid outputs leave the session open for correction.
+- A session can end its turn with its outputs written and never call completion. When a live execution has been idle for 30 seconds, may finish (gate open) and its assigned outputs validate, the engine sends one reminder to call completion, at most twice per execution (`#nudgeIfFinished`). Idle with the gate closed or outputs missing means the session is waiting on the human or fixing its work, so it is left alone. The engine never completes a step on the agent's behalf.
 
 The grant means “this execution may finish”, not approval of immutable artifact bytes. Human review precedes accepted completion, so review edits do not require rewriting a previously accepted checkpoint. Do not add content-hash approval/revocation machinery.
 

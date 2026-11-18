@@ -83,6 +83,8 @@ export interface EngineOptions {
    * Empty adds nothing. A throw fails that launch, so a requirement is never dropped without a trace.
    */
   requirements?: () => string | Promise<string>;
+  /** Clock for the idle reminder, in ms. Defaults to `Date.now`. */
+  now?: () => number;
   /** Values for prompt tokens that are not derived from the execution. `{{ARTIFACTS_DIR}}` is each execution's own output directory. */
   tokens?: {
     TICKET_FILE?: string;
@@ -97,11 +99,22 @@ export interface EngineOptions {
 
 const WRAP_UP = 'Permission to finish granted. Complete your writes, give a brief handoff, then call the completion tool once and finish without starting more work.';
 
+/** An agent that ends its turn with valid outputs but never calls the completion tool holds its step forever. */
+const IDLE_NUDGE = 'Your assigned outputs are in place and you may finish. If you are done, call the completion tool now and stop. If you still need an answer from the human, ask for it.';
+/** Idle this long (continuously) before the engine sends the reminder. */
+const IDLE_NUDGE_AFTER_MS = 30_000;
+/** Reminders per execution. After these the session stays idle for a person to act. */
+const IDLE_NUDGES_MAX = 2;
+
 export class Engine {
   readonly #opts: EngineOptions;
   #state: State;
   /** Executions whose shutdown this process has already requested. Rebuilt lazily after restart; stop() is idempotent. */
   readonly #stopping = new Set<string>();
+  /** When each live execution's session was first seen idle in an unbroken run. In memory only: a restart starts the wait over. */
+  readonly #idleSince = new Map<string, number>();
+  /** Idle reminders sent per execution by this process. A restart allows a few more, which is harmless. */
+  readonly #nudges = new Map<string, number>();
   #saving: Promise<void> | null = null;
   #dirty = false;
   #saveError: unknown;
@@ -214,6 +227,7 @@ export class Engine {
     this.#append({ t: 'permitted', execId });
     await this.flush();
     await this.#opts.harness.send(e.sessionId, WRAP_UP);
+    this.#idleSince.delete(execId); // the agent has just been told; its idle wait starts over
   }
 
   /** Explicit recovery: continue a failed execution. Never called by the engine itself. Capacity and coding rules still apply. */
@@ -252,13 +266,36 @@ export class Engine {
   async #observe(): Promise<void> {
     for (const e of this.#occupying()) {
       const s = await this.#opts.harness.status(e.sessionId!);
-      if (s.kind === 'exited') this.#append({ t: 'exited', execId: e.id });
+      if (s.kind !== 'idle') this.#idleSince.delete(e.id);
+      if (s.kind === 'idle') await this.#nudgeIfFinished(e);
+      else if (s.kind === 'exited') this.#append({ t: 'exited', execId: e.id });
       else if (s.kind === 'failed') {
         if (e.status !== 'failed' || e.unconfirmed) this.#append({ t: 'failed', execId: e.id, reason: s.reason });
       } else if (s.kind === 'unknown' && e.status !== 'failed') {
         // Not proof the process stopped: it keeps its capacity and worktree until a person confirms.
         this.#append({ t: 'failed', execId: e.id, reason: 'harness has no record of the session', unconfirmed: true });
       }
+    }
+  }
+
+  /**
+   * Idle is ambiguous: a session may be asking the human something, waiting for the gate, or fixing rejected outputs.
+   * Remind it only when none of those holds: the execution may finish and its assigned outputs already validate.
+   */
+  async #nudgeIfFinished(e: Execution): Promise<void> {
+    if (e.status !== 'live') return;
+    const now = (this.#opts.now ?? Date.now)();
+    const since = this.#idleSince.get(e.id) ?? now;
+    this.#idleSince.set(e.id, since);
+    const sent = this.#nudges.get(e.id) ?? 0;
+    if (now - since < IDLE_NUDGE_AFTER_MS || sent >= IDLE_NUDGES_MAX) return;
+    if (!this.#permitted(e) || !inspectOutputs(e.outDir, this.#step(e.step).outputs).ok) return;
+    this.#idleSince.set(e.id, now); // the next reminder waits a full period, whether or not this send lands
+    try {
+      await this.#opts.harness.send(e.sessionId!, IDLE_NUDGE);
+      this.#nudges.set(e.id, sent + 1);
+    } catch {
+      // A reminder is a courtesy: a failed send must not fail the tick. The next period tries again.
     }
   }
 

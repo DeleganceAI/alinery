@@ -596,3 +596,74 @@ test('nested fan-out: the merges of the inner families can themselves be merged 
   assert.equal(finals[0].inputs['merged*.md'].length, 2);
   assert.deepEqual(engine.diagnose().blocked, []);
 });
+
+/** One step whose agent goes idle after `script` runs. The clock is the test's; `pump` is one tick at time `at`. */
+function idleRun(stepOpts: Parameters<typeof step>[1], script: (launch: Launch, session: FakeSession) => Promise<void>) {
+  const pb = playbook([step('s', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'a.md' }], ...stepOpts })]);
+  const dir = taskDir();
+  const harness = new FakeHarness(script);
+  let t = 0;
+  const engine = openEngine(pb, harness, dir, { now: () => t });
+  engine.seed(seedTicket(dir));
+  const pump = async (at: number) => {
+    t = at;
+    await engine.tick();
+    await new Promise((r) => setImmediate(r));
+  };
+  return { engine, harness, pump, inbox: () => [...harness.sessions.values()][0].inbox };
+}
+
+const writeThenIdle = (then: (launch: Launch, session: FakeSession) => Promise<void>) => async (launch: Launch, session: FakeSession) => {
+  for (const path of Object.values(launch.outputs)) writeText(path, 'x');
+  session.status = { kind: 'idle' };
+  await then(launch, session);
+};
+
+test('idle nudge: a finished agent that never called completion is reminded once idle long enough, then completes', async () => {
+  const run = idleRun(
+    {},
+    writeThenIdle(async (launch, session) => {
+      await new Promise<void>((resolve) => {
+        session.wake = resolve;
+      });
+      session.status = { kind: 'running' };
+      await launch.requestCompletion();
+    }),
+  );
+  await run.pump(0);
+  await run.pump(0); // first sees it idle
+  await run.pump(29_999);
+  assert.equal(run.inbox().length, 0);
+  await run.pump(30_000);
+  assert.equal(run.inbox().length, 1);
+  assert.match(run.inbox()[0], /call the completion tool/);
+  await settle(run.engine);
+  assert.equal(byStep(run.engine, 's')[0].status, 'done');
+});
+
+test('idle nudge: two reminders at most, a period apart, then the session is left for a person', async () => {
+  const run = idleRun({}, writeThenIdle(() => new Promise<void>(() => {})));
+  await run.pump(0);
+  await run.pump(0);
+  await run.pump(30_000);
+  await run.pump(59_999);
+  assert.equal(run.inbox().length, 1);
+  await run.pump(60_000);
+  await run.pump(10 * 60_000);
+  assert.equal(run.inbox().length, 2);
+});
+
+test('idle nudge: not while the gate is closed, and not while the outputs are missing', async () => {
+  const locked = idleRun({ autoAdvanceDefault: false }, writeThenIdle(() => new Promise<void>(() => {})));
+  const empty = idleRun({}, async (_launch, session) => {
+    session.status = { kind: 'idle' };
+    await new Promise<void>(() => {});
+  });
+  for (const run of [locked, empty]) {
+    await run.pump(0);
+    await run.pump(0);
+    await run.pump(10 * 60_000);
+    assert.equal(run.inbox().length, 0);
+    assert.equal(byStep(run.engine, 's')[0].status, 'live');
+  }
+});
