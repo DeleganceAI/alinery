@@ -1095,6 +1095,7 @@ export function SessionView({
   const modelBar = (
     <ChatModelBar
       model={chatMetaHead || "Model"}
+      repoPath={repoPath}
       title={turnActive ? NEXT_TURN_MODEL_TITLE : undefined}
       thinkingTitle={turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
       thinking={chat.sessionMeta.thinking}

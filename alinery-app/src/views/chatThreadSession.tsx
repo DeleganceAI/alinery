@@ -986,6 +986,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           mode="manual"
           initialTab={providersDialog.tab}
           preselect={providersDialog.preselect}
+          repo={repo}
           current={transcript.sessionMeta.model}
           onPick={(model) => {
             setProvidersDialog(null);

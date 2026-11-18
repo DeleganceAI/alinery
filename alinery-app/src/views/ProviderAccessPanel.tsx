@@ -3,6 +3,7 @@ import { CopyTextButton } from "../chat/CopyMessage";
 import type { useProviderAccess } from "../chat/providerAccess";
 import type { ProviderLoginStatus } from "../chat/providers";
 import { confirmDanger } from "../confirm";
+import * as ipc from "../ipc";
 import { CustomEndpointEditor } from "./CustomEndpointEditor";
 
 type Access = ReturnType<typeof useProviderAccess>;
@@ -13,7 +14,7 @@ const isCodeEvent = (event: LoginEvent) => event.type === "device_code" || (even
 
 function eventText(event: LoginEvent): string {
   if (event.type === "info" || event.type === "progress") return event.message;
-  if (event.type === "auth_url" && !event.instructions) return "Opened the sign-in page.";
+  // An auth_url is shown as itself: the page it opens, and the instructions it came with.
   return "";
 }
 
@@ -36,6 +37,35 @@ function CodeEvent({ event }: { event: LoginEvent }) {
     );
   }
   return event.type === "auth_url" && event.instructions ? <SignInInstructions text={event.instructions} /> : null;
+}
+
+/** The sign-in page opens itself, but the tab can be gone (closed, or a browser that refused to open): keep a way back to it. */
+function SignInPage({ event }: { event: LoginEvent }) {
+  if (event.type !== "auth_url") return null;
+  return (
+    <p className="chat-sign-in-page">
+      <button type="button" className="btn ghost small" onClick={() => void ipc.openUrl(event.url).catch(() => undefined)}>
+        Open sign-in page
+      </button>
+      <CopyTextButton text={event.url} label="sign-in link" />
+      <span className="dim">{hostOf(event.url)}</span>
+    </p>
+  );
+}
+
+/**
+ * A browser sign-in finishes on a loopback address that only the daemon's own machine answers. When the
+ * sign-in runs on another machine (a remote repository), the browser shows "Can't connect to the server"
+ * and that error page's address is exactly what has to be pasted back. Nobody guesses that, so say it.
+ */
+function CallbackHelp({ placeholder }: { placeholder?: string }) {
+  const target = /^https?:\/\/([^/]+)/.exec(placeholder ?? "")?.[1];
+  return (
+    <p className="chat-sign-in-callback">
+      After you approve the sign-in, your browser lands on <code>{target ?? "a local address"}</code> and shows <strong>“Can’t connect to the server”</strong>. That is expected
+      when the sign-in runs on another machine. Copy the <strong>whole address from the address bar</strong> and paste it below to finish.
+    </p>
+  );
 }
 
 export function ProviderAccessPanel({ access }: { access: Access }) {
@@ -85,6 +115,14 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
             <CodeEvent key={index} event={event} />
           ))
         : null}
+      {waiting
+        ? events
+            .filter((event) => event.type === "auth_url")
+            .map((event, index) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: the daemon appends events and never reorders them
+              <SignInPage key={index} event={event} />
+            ))
+        : null}
       {notes.length > 0 ? <p className="dim">{notes.join("\n")}</p> : null}
       {access.busy && !prompt ? (
         // A login waiting on a device code asks nothing, so this is its only way out.
@@ -115,6 +153,10 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
             key={`${prompt.type}:${prompt.message}`}
             prompt={prompt}
             secret={prompt.type === "secret"}
+            // A pasted callback URL is a long value the browser hands over in the address bar, not something typed.
+            callback={prompt.type === "manual_code"}
+            // Listening for the redirect makes the paste a fallback, not the instruction.
+            armed={access.callbackArmed}
             onSubmit={(value) => void access.reply(value)}
             onCancel={() => void access.cancel()}
           />
@@ -127,30 +169,31 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
 function PromptForm({
   prompt,
   secret,
+  callback,
+  armed,
   onSubmit,
   onCancel,
 }: {
   prompt: { message: string; placeholder?: string };
   secret: boolean;
+  /** The value is the redirect URL the browser failed to deliver; the help says where to get it. */
+  callback?: boolean;
+  /** This window is listening on the redirect's loopback address: it finishes the sign-in itself. */
+  armed?: boolean;
   onSubmit: (value: string) => void;
   onCancel: () => void;
 }) {
   const [value, setValue] = useState("");
-  return (
-    <form
-      className="chat-ui-prompt"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (value.trim()) onSubmit(value);
-      }}
-    >
-      <p className="chat-msg-title">{prompt.message}</p>
+  const field = (
+    <>
       <input
         className="field-input"
         type={secret ? "password" : "text"}
         value={value}
         placeholder={prompt.placeholder}
         aria-label={prompt.message}
+        // biome-ignore lint/a11y/noAutofocus: the form is the only thing the panel waits on
+        autoFocus
         onChange={(event) => setValue(event.currentTarget.value)}
       />
       <div className="chat-ui-prompt-options">
@@ -161,6 +204,35 @@ function PromptForm({
           Cancel
         </button>
       </div>
+    </>
+  );
+  return (
+    <form
+      className="chat-ui-prompt"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (value.trim()) onSubmit(value);
+      }}
+    >
+      <p className="chat-msg-title">{prompt.message}</p>
+      {armed ? (
+        // Armed: the redirect comes back to this window on its own, so the paste is only for when it does not.
+        <>
+          <p className="chat-sign-in-armed" role="status">
+            Finish signing in in your browser. This window picks the result up by itself.
+          </p>
+          <details className="chat-sign-in-fallback">
+            <summary>Didn’t work? Paste the address instead</summary>
+            <CallbackHelp placeholder={prompt.placeholder} />
+            {field}
+          </details>
+        </>
+      ) : (
+        <>
+          {callback ? <CallbackHelp placeholder={prompt.placeholder} /> : null}
+          {field}
+        </>
+      )}
     </form>
   );
 }

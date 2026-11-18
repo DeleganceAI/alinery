@@ -122,6 +122,7 @@ Bundled playbooks live in `alinery-app/src-tauri/playbooks/` with the registry i
 | `backup.rs` | the backup-destination picker and restore, the one step that runs while no daemon does (creating, listing and the automatic triggers are the daemon's `BackupService`) |
 | `git_ops.rs` | the GitHub pull-request lookup (`lookup_task_pull_request`); re-exports `alinery_core::git_cmd`. Commit, push, worktree removal and the compare URL are the daemon's `GitService` |
 | `connections.rs` | GitHub browser login plus Linear OAuth PKCE |
+| `provider_callback.rs` | the loopback listener that catches a browser sign-in's redirect when the daemon holding the credential is on another machine (`provider_callback_arm` / `provider_callback_disarm`) |
 | `imports.rs` | Linear and GitHub issue fetch (the page passes the repo's origin URL and token override) |
 | `account.rs` | pairing / account chip |
 | `update.rs` | CDN manifest poll, download+sha256 verify, detached swap helper |
@@ -131,7 +132,7 @@ A new command goes in the module that owns its data; `lib.rs` only gains a name 
 
 ## Commands (Rust Tauri)
 
-The shell keeps 85 commands, all of them local-machine work or provisioning. Everything about a repository's tasks, sessions, artifacts, playbooks, git, backups, settings and providers is a daemon RPC. `lib.rs` `generate_handler!` is the list; `check-ipc-commands.sh` ties it to `src/ipc.ts`.
+The shell keeps 87 commands, all of them local-machine work or provisioning. Everything about a repository's tasks, sessions, artifacts, playbooks, git, backups, settings and providers is a daemon RPC. `lib.rs` `generate_handler!` is the list; `check-ipc-commands.sh` ties it to `src/ipc.ts`.
 
 - Bridge: `daemon_rpc`, `daemon_rpc_cancel` (the webview's only path to a daemon), `daemon_status`, `ping`
 - App config and repos: `read_app_config`, `write_appearance`, `list_hosts`, `set_host_onboarded`, `set_active_repo`, `remove_repo`, `pick_repo_dialog`, `classify_picked_folder`, `init_picked_folder`, `pick_attachment_files_dialog`, `read_local_file`, `chat_file_stat`, `save_file_dialog`
@@ -142,6 +143,7 @@ The shell keeps 85 commands, all of them local-machine work or provisioning. Eve
 - Playbook community (network half): `list_community_playbooks`, `community_remote_status`, `download_community_source`, `preview_community_playbook`, `list_my_community_playbooks`, `publish_community_playbook`, `unpublish_community_playbook`
 - Agent directory (Finder and picker half): `open_vinculum_agent_dir`, `pick_vinculum_skill_dialog`
 - Connections and import: `connection_statuses`, `connect_github`, `connect_linear`, `disconnect_linear`, `import_linear_for_repo`, `import_github_for_repo`, `lookup_task_pull_request`
+- Provider sign-in's loopback relay (a browser sign-in whose daemon is on another machine; the arm/disarm pair binds and releases the redirect's port here, an allowlist of the runtime's own callback ports only): `provider_callback_arm`, `provider_callback_disarm`
 - Account and hosted models: `account_status`, `account_refresh`, `account_sign_in`, `account_cancel_sign_in`, `account_sign_out`, `account_open`, `account_open_plans`, `account_credits`, `hosted_catalog`
 - MCP: `mcp_status` (the binary and host args for Copy config); machine MCP Force restart: `machine_mcp_peer`, `force_restart_machine_mcp`
 - Update: `check_update` (never Err; silent no-offer), `download_update`, `apply_update` — prod-only; `runtime_status` (the Settings Runtime panel: each ssh host's runtime against the bundle and each known repo's daemon, from memory, never ssh)
