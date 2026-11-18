@@ -152,21 +152,49 @@ export function useProviderAccess(enabled: boolean) {
     }
   }, []);
 
-  // The editor shows its own errors, so these leave the panel's error alone.
-  const saveCustom = useCallback(async (config: string, replaces?: string) => {
-    setCatalog(await providers.customProviderSave(config, replaces));
+  // Favorites for models a provider no longer serves linger in the app config, so the pickers keep offering them.
+  // The store is the shell's, so the pruning happens here, in the background: the catalog is already updated.
+  const pruneFavorites = useCallback((providerId: string, keep: ReadonlySet<string>) => {
+    void ipc
+      .readModelFavorites("vinculum")
+      .then((favorites) =>
+        Promise.allSettled(
+          favorites.filter((favorite) => favorite.startsWith(`${providerId}/`) && !keep.has(favorite)).map((favorite) => ipc.setModelFavorite("vinculum", favorite, false)),
+        ),
+      )
+      .catch(() => undefined);
   }, []);
+
+  // The editor shows its own errors, so these leave the panel's error alone.
+  const saveCustom = useCallback(
+    async (config: string, replaces?: string) => {
+      const previous = catalog;
+      const next = await providers.customProviderSave(config, replaces);
+      setCatalog(next);
+      // What `previous` served that `next` does not loses its stars: endpoints gone entirely (including a rename)
+      // prune to nothing kept, and an edit that dropped models prunes just those.
+      for (const row of previous?.custom ?? []) {
+        pruneFavorites(row.id, new Set((next.custom.find((kept) => kept.id === row.id)?.models ?? []).map((model) => `${row.id}/${model}`)));
+      }
+    },
+    [catalog, pruneFavorites],
+  );
 
   const checkCustom = useCallback((config: string, live: boolean) => providers.customProviderCheck(config, live), []);
 
-  const deleteCustom = useCallback(async (id: string) => {
-    setError(null);
-    try {
-      setCatalog(await providers.customProviderDelete(id));
-    } catch (cause) {
-      setError(String(cause));
-    }
-  }, []);
+  const deleteCustom = useCallback(
+    async (id: string) => {
+      setError(null);
+      try {
+        setCatalog(await providers.customProviderDelete(id));
+        // The endpoint and every model it served are gone; nothing of it keeps a star.
+        pruneFavorites(id, new Set());
+      } catch (cause) {
+        setError(String(cause));
+      }
+    },
+    [pruneFavorites],
+  );
 
   return {
     settled,

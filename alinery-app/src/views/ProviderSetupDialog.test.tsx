@@ -8,12 +8,15 @@ import { ProviderSetupDialog } from "./ProviderSetupDialog";
 const mocks = vi.hoisted(() => ({
   readModelRoles: vi.fn(),
   readModelFavorites: vi.fn(),
+  setModelFavorite: vi.fn(),
   hostedCatalog: vi.fn(),
   providerCatalog: vi.fn(),
+  customProviderDelete: vi.fn(),
   grokKeyReady: vi.fn(),
   accountSignIn: vi.fn(),
   accountRefresh: vi.fn(),
   openUrl: vi.fn(),
+  confirmDanger: vi.fn(),
   providerLoginStart: vi.fn(),
   providerLoginPoll: vi.fn(),
   providerLoginReply: vi.fn(),
@@ -22,12 +25,15 @@ vi.mock("../ipc", () => mockIpc(mocks));
 // The catalog is the host daemon's ProviderService (sync/providers).
 vi.mock("../sync/providers", () => ({
   providerCatalog: mocks.providerCatalog,
+  customProviderDelete: mocks.customProviderDelete,
   providerLoginStart: mocks.providerLoginStart,
   providerLoginPoll: mocks.providerLoginPoll,
   providerLoginReply: mocks.providerLoginReply,
 }));
 // The model roles are the host daemon's (sync/agent).
 vi.mock("../sync/agent", () => ({ readModelRoles: mocks.readModelRoles, writeModelRoles: vi.fn(async (roles: Record<string, string>) => roles) }));
+// A custom endpoint's Remove asks the danger dialog first.
+vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger }));
 
 const emptyHosted: HostedCatalogView = {
   provider: "alinery",
@@ -174,5 +180,27 @@ describe("provider sign-in", () => {
     expect((provider as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("textbox", { name: title })).toBeNull();
     expect(mocks.providerLoginReply).not.toHaveBeenCalled();
+  });
+});
+
+// A removed endpoint must not leave its models starred in the app config.
+describe("custom endpoint removal", () => {
+  it("prunes the favorites of the models the removed endpoint served", async () => {
+    settleIpc(readyHosted);
+    mocks.providerCatalog.mockResolvedValue({
+      providers: [],
+      models: [],
+      custom: [{ id: "phdeepinfra", name: "DeepInfra", baseUrl: "https://api.deepinfra.com/v1", hasKey: true, models: ["DeepSeek-V4.1-Flash-1017"], config: "" }],
+    });
+    mocks.readModelFavorites.mockResolvedValue(["phdeepinfra/DeepSeek-V4.1-Flash-1017", "xai/grok-4.6"]);
+    mocks.setModelFavorite.mockResolvedValue([]);
+    mocks.customProviderDelete.mockResolvedValue({ providers: [], models: [], custom: [] });
+    mocks.confirmDanger.mockResolvedValue(true);
+    render(<ProviderSetupDialog mode="manual" initialTab="accounts" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(mocks.confirmDanger).toHaveBeenCalled());
+    await waitFor(() => expect(mocks.customProviderDelete).toHaveBeenCalledWith("phdeepinfra"));
+    await waitFor(() => expect(mocks.setModelFavorite).toHaveBeenCalledWith("vinculum", "phdeepinfra/DeepSeek-V4.1-Flash-1017", false));
+    expect(mocks.setModelFavorite).not.toHaveBeenCalledWith("vinculum", "xai/grok-4.6", false);
   });
 });
