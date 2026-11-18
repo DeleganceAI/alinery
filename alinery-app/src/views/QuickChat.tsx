@@ -1,5 +1,5 @@
 import { ArrowDownRight, ArrowUpRight, MessageSquare, X } from "lucide-react";
-import { type PointerEvent as ReactPointerEvent, type UIEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, type UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
 import type { ChatPrefs } from "../chat/visibility";
@@ -237,10 +237,14 @@ export function QuickChat({
     },
   });
 
-  // A prompt's images are the thread's own copies, read back by name.
+  // A prompt's images are the thread's own copies, read back by name. The scope names the thread, so a
+  // cached read from one thread is never served to another.
   const resolvedRepo = resolved?.repo_path ?? "";
   const resolvedThread = resolved?.session.id ?? "";
-  const readThreadImage = useCallback((name: string) => readChatThreadImage(resolvedRepo, resolvedThread, name), [resolvedRepo, resolvedThread]);
+  const readThreadImages = useMemo(
+    () => ({ scope: `thread:${resolvedRepo}/${resolvedThread}`, read: (name: string) => readChatThreadImage(resolvedRepo, resolvedThread, name) }),
+    [resolvedRepo, resolvedThread],
+  );
 
   const box = placedBox(point, size, frame);
   const atDefault = sameBox(box, defaultBox(frame));
@@ -441,7 +445,7 @@ export function QuickChat({
                 status={chat.activity.status}
                 visibility={paneVisibility}
                 atStart={chat.transcript.fileStart === 0}
-                readImage={readThreadImage}
+                readImage={readThreadImages}
               />
             )}
             {chat.disconnected !== null ? (

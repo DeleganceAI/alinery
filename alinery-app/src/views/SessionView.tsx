@@ -761,8 +761,9 @@ export function SessionView({
   };
 
   // A prompt's attached images live in this task's attachment directory: the pane reads them back by the
-  // name the model was given, so a row shows them long after the send.
-  const readPromptImage = useCallback((name: string) => readChatImage(repoPath, taskSlug, name), [repoPath, taskSlug]);
+  // name the model was given, so a row shows them long after the send. The scope names the task, so a
+  // cached read from one task is never served to another.
+  const readPromptImages = useMemo(() => ({ scope: `task:${repoPath}/${taskSlug}`, read: (name: string) => readChatImage(repoPath, taskSlug, name) }), [repoPath, taskSlug]);
 
   const sendCurrentMessage = async (text?: string) => {
     const caption = (text ?? messageDraftRef.current.body).trim();
@@ -1589,7 +1590,7 @@ export function SessionView({
                           onLoadOlder={loadOlder}
                           loadingOlder={loadingOlder}
                           atStart={chat.fileStart === 0}
-                          readImage={readPromptImage}
+                          readImage={readPromptImages}
                         />
                         {/* The history view is the live pane with the input switched off, so a finished
                       session reads the same way as a running one. */}
@@ -1635,7 +1636,7 @@ export function SessionView({
                             onLoadOlder={loadOlder}
                             loadingOlder={loadingOlder}
                             atStart={chat.fileStart === 0}
-                            readImage={readPromptImage}
+                            readImage={readPromptImages}
                           />
                         </div>
                         {showChatComposer ? (
@@ -1733,7 +1734,7 @@ export function SessionView({
                             onLoadOlder={loadOlder}
                             loadingOlder={loadingOlder}
                             atStart={chat.fileStart === 0}
-                            readImage={readPromptImage}
+                            readImage={readPromptImages}
                           />
                           <ChatComposer
                             body=""

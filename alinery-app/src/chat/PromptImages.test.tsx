@@ -33,7 +33,7 @@ describe("PromptImages", () => {
   it("reads an image the row knows only by name back from the daemon", async () => {
     const read = vi.fn().mockResolvedValue({ mime_type: "image/jpeg", data: "bb" });
     const { container } = render(
-      <PromptImageReaderContext.Provider value={read}>
+      <PromptImageReaderContext.Provider value={{ scope: "thread:/r/s-a", read }}>
         <PromptImages images={[{ kind: "image", name: "pasted.jpg", mimeType: "image/jpeg" }]} />
       </PromptImageReaderContext.Provider>,
     );
@@ -41,15 +41,45 @@ describe("PromptImages", () => {
     await waitFor(() => expect(container.querySelector(".chat-prompt-image img")?.getAttribute("src")).toBe("data:image/jpeg;base64,bb"));
   });
 
+  it("serves a remounted tile from the cache instead of reading the image again", async () => {
+    const read = vi.fn().mockResolvedValue({ mime_type: "image/jpeg", data: "bb" });
+    const source = { scope: "thread:/r/cache", read };
+    const first = render(
+      <PromptImageReaderContext.Provider value={source}>
+        <PromptImages images={[{ kind: "image", name: "pasted.jpg", mimeType: "image/jpeg" }]} />
+      </PromptImageReaderContext.Provider>,
+    );
+    await waitFor(() => expect(first.container.querySelector(".chat-prompt-image img")).toBeTruthy());
+    first.unmount();
+    const second = render(
+      <PromptImageReaderContext.Provider value={source}>
+        <PromptImages images={[{ kind: "image", name: "pasted.jpg", mimeType: "image/jpeg" }]} />
+      </PromptImageReaderContext.Provider>,
+    );
+    await waitFor(() => expect(second.container.querySelector(".chat-prompt-image img")?.getAttribute("src")).toBe("data:image/jpeg;base64,bb"));
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the same name in another scope as a different image", async () => {
+    const read = vi.fn().mockResolvedValue({ mime_type: "image/jpeg", data: "bb" });
+    const { container } = render(
+      <PromptImageReaderContext.Provider value={{ scope: "thread:/r/other", read }}>
+        <PromptImages images={[{ kind: "image", name: "pasted.jpg", mimeType: "image/jpeg" }]} />
+      </PromptImageReaderContext.Provider>,
+    );
+    await waitFor(() => expect(container.querySelector(".chat-prompt-image img")?.getAttribute("src")).toBe("data:image/jpeg;base64,bb"));
+    expect(read).toHaveBeenCalledWith("pasted.jpg");
+  });
+
   it("does not guess a name it was never given", async () => {
     const read = vi.fn().mockResolvedValue({ mime_type: "image/png", data: "bb" });
     render(
-      <PromptImageReaderContext.Provider value={read}>
+      <PromptImageReaderContext.Provider value={{ scope: "thread:/r/s-a", read }}>
         <PromptImages images={[{ kind: "image", name: "", mimeType: "image/png" }]} />
       </PromptImageReaderContext.Provider>,
     );
     expect(read).not.toHaveBeenCalled();
-    expect(screen.getByRole("img", { name: "Attached image" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Attached image (not available)" })).toBeTruthy();
   });
 
   it("copies the expanded image to the clipboard as PNG", async () => {
@@ -57,12 +87,12 @@ describe("PromptImages", () => {
     vi.stubGlobal("navigator", { clipboard: { write } });
     const png = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ blob: async () => png }));
-    const written: Record<string, Blob>[] = [];
+    const written: Record<string, Promise<Blob> | Blob>[] = [];
     vi.stubGlobal(
       "ClipboardItem",
       class {
-        readonly items: Record<string, Blob>;
-        constructor(items: Record<string, Blob>) {
+        readonly items: Record<string, Promise<Blob> | Blob>;
+        constructor(items: Record<string, Promise<Blob> | Blob>) {
           this.items = items;
           written.push(items);
         }
@@ -73,8 +103,11 @@ describe("PromptImages", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open shot.png" }));
     fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
 
-    await waitFor(() => expect(write).toHaveBeenCalledTimes(1));
-    expect(written[0]?.["image/png"]).toBe(png);
+    // The write starts inside the click, with the blob on its way as a promise: awaiting it first would
+    // lose the user gesture in the desktop app's WKWebView.
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(written[0]?.["image/png"]).toBeInstanceOf(Promise);
+    await expect(written[0]?.["image/png"]).resolves.toBe(png);
     await waitFor(() => expect(screen.getByRole("button", { name: "Copied image" })).toBeTruthy());
   });
 

@@ -4,14 +4,24 @@ import { Dialog } from "../shared";
 import { toast } from "../toast";
 import type { UserRowAttachment } from "./attachments";
 
+/** The image read back from the daemon: its type and its bytes as base64. */
+export type ChatImage = { mime_type: string; data: string };
+
 /**
  * Reads one attached image back from the daemon, by the name it was copied under: a chat thread's own
  * attachment directory, or a task session's. Only the view knows which one this pane is, so it supplies
  * this — a prompt's row never carries the bytes itself, only the name of the file the model was given.
  */
-export type PromptImageReader = (name: string) => Promise<{ mime_type: string; data: string }>;
+export type PromptImageReader = (name: string) => Promise<ChatImage>;
 
-export const PromptImageReaderContext = createContext<PromptImageReader | null>(null);
+/** The one directory a pane's prompt images are read from, so a cached read is never served to another thread. */
+export type PromptImageSource = {
+  /** Identifies the directory ("thread:<repo>/<id>" or "task:<repo>/<slug>"), not just this render. */
+  scope: string;
+  read: PromptImageReader;
+};
+
+export const PromptImageReaderContext = createContext<PromptImageSource | null>(null);
 
 /** PNG bytes for the system clipboard: a pasted screenshot already is one; anything else is drawn first. */
 async function pngBlob(src: string): Promise<Blob> {
@@ -33,24 +43,67 @@ async function pngBlob(src: string): Promise<Blob> {
 /** The image bytes on the clipboard again, as PNG, so they can be pasted anywhere. */
 export async function copyImageToClipboard(src: string): Promise<void> {
   if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") throw new Error("the clipboard does not take images");
-  await navigator.clipboard.write([new ClipboardItem({ "image/png": await pngBlob(src) })]);
+  // The write has to start inside the click: WKWebView (the desktop app's web view) lets the blob arrive
+  // later as a promise, but awaiting it first loses the user gesture and rejects with NotAllowedError.
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob(src) })]);
 }
 
-/** A prompt image's own `src` when it carries one (a live message, or the send's own preview), else the copy on disk. */
-function usePromptImageSrc(image: UserRowAttachment): { src: string; error: string } {
-  const read = useContext(PromptImageReaderContext);
+// One read per image is enough for every mount of it: a tile is a thumbnail, and without this, remounts
+// (scrolling back through "load older", switching threads) re-read the whole file over RPC each time.
+// The cache is module-level and least-recently-used, bounded by the bytes it holds.
+const READ_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+const readCache = new Map<string, string>(); // "<scope>\u0000<name>" → the image as a data URL
+const reading = new Map<string, Promise<string>>(); // in-flight reads, so two tiles of one image read it once
+
+function readCached(source: PromptImageSource, name: string): Promise<string> {
+  const key = `${source.scope}\u0000${name}`;
+  const hit = readCache.get(key);
+  if (hit !== undefined) {
+    readCache.delete(key); // re-inserted below: the hit becomes the most recently used
+    readCache.set(key, hit);
+    return Promise.resolve(hit);
+  }
+  let inFlight = reading.get(key);
+  if (!inFlight) {
+    inFlight = source.read(name).then((image) => {
+      reading.delete(key);
+      const url = `data:${image.mime_type};base64,${image.data}`;
+      readCache.delete(key);
+      readCache.set(key, url);
+      let total = 0;
+      for (const cached of readCache.values()) total += cached.length;
+      while (total > READ_CACHE_MAX_BYTES && readCache.size > 1) {
+        const oldest = readCache.keys().next().value;
+        if (oldest === undefined) break;
+        total -= readCache.get(oldest)?.length ?? 0;
+        readCache.delete(oldest);
+      }
+      return url;
+    });
+    inFlight.catch(() => reading.delete(key)); // a failed read is not remembered, so a retry can happen
+    reading.set(key, inFlight);
+  }
+  return inFlight;
+}
+
+/** A prompt image's own `src` when it carries one (a live message, or the send's own preview), else the copy on disk.
+ * A row with no name and no `src` is a prompt sent before images kept one: nothing can be read back for it. */
+function usePromptImageSrc(image: UserRowAttachment): { src: string; error: string; unavailable: boolean } {
+  const source = useContext(PromptImageReaderContext);
   const [loaded, setLoaded] = useState("");
   const [error, setError] = useState("");
   const direct = image.src ?? "";
   const name = image.name;
+  const unavailable = !direct && (!name || !source);
   useEffect(() => {
+    if (direct || unavailable) return;
     let cancelled = false;
     setLoaded("");
     setError("");
-    if (direct || !read || !name) return;
-    read(name).then(
-      (image) => {
-        if (!cancelled) setLoaded(`data:${image.mime_type};base64,${image.data}`);
+    if (!source || !name) return; // the same cases as `unavailable`, restated so the types narrow below
+    readCached(source, name).then(
+      (url) => {
+        if (!cancelled) setLoaded(url);
       },
       (reason) => {
         if (!cancelled) setError(String(reason));
@@ -59,8 +112,8 @@ function usePromptImageSrc(image: UserRowAttachment): { src: string; error: stri
     return () => {
       cancelled = true;
     };
-  }, [direct, read, name]);
-  return { src: direct || loaded, error };
+  }, [direct, unavailable, source, name]);
+  return { src: direct || loaded, error, unavailable };
 }
 
 function CopyImageButton({ src }: { src: string }) {
@@ -116,15 +169,16 @@ function PromptImageLightbox({ image, src, onClose }: { image: UserRowAttachment
 }
 
 function PromptImageTile({ image, onOpen }: { image: UserRowAttachment; onOpen: (src: string) => void }) {
-  const { src, error } = usePromptImageSrc(image);
+  const { src, error, unavailable } = usePromptImageSrc(image);
   const name = image.name || "Attached image";
   if (!src) {
+    const title = unavailable ? `${name} — not available` : error ? `Could not read ${name}: ${error}` : `Loading ${name}…`;
     return (
       <span
-        className="chat-prompt-image is-missing"
-        title={error ? `Could not read ${name}: ${error}` : `Loading ${name}…`}
+        className={`chat-prompt-image is-missing${unavailable ? " is-unavailable" : ""}`}
+        title={title}
         role="img"
-        aria-label={error ? `${name} could not be read` : name}
+        aria-label={unavailable ? `${name} (not available)` : error ? `${name} could not be read` : name}
       >
         <ImageIcon size={18} strokeWidth={1.5} aria-hidden="true" />
       </span>

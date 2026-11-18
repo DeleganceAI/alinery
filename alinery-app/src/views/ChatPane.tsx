@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "
 import { chatMaxWidthCss } from "../appearance";
 import { formatDuration } from "../chat/format";
 import { type JournalItem, journalItems } from "../chat/journalRows";
-import { type PromptImageReader, PromptImageReaderContext } from "../chat/PromptImages";
+import { PromptImageReaderContext, type PromptImageSource } from "../chat/PromptImages";
 import { collectLiveSubagents } from "../chat/subagents";
 import type { ChatEntry, SessionChatStatus } from "../chat/types";
 import { type ChatPrefs, chatActivityLabel, DEFAULT_CHAT_VISIBILITY, isChatEntryVisible, visibleChatEntries, workRailDefaultExpanded } from "../chat/visibility";
@@ -31,7 +31,7 @@ function ChatPaneImpl({
   /** The first prompt of the conversation is loaded — there is nothing older to fetch. */
   atStart?: boolean;
   /** Where this pane's attached images are read back from: its chat thread's directory, or its task session's. */
-  readImage?: PromptImageReader;
+  readImage?: PromptImageSource;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(visibility.autoScroll);

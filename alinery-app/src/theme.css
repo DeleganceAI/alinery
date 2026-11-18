@@ -6366,6 +6366,10 @@ button.chat-prompt-image:focus-visible {
   height: calc(var(--chat-font-size, 14px) * 8);
   cursor: default;
 }
+/* A prompt sent before images kept a name: there is nothing to read back, so the tile says so and stops. */
+.chat-prompt-image.is-unavailable {
+  color: var(--text-faint);
+}
 .chat-prompt-image img {
   display: block;
   width: auto;
