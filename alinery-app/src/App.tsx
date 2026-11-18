@@ -1407,7 +1407,7 @@ export default function App() {
                 {daemon.repo_busy ? null : content}
                 {(playbooksVisited || view.kind === "playbooks") && (
                   <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
-                    <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
+                    <Playbooks repoPath={appConfig?.active_repo || undefined} repos={appConfig?.known_repos} onCreateTask={(reference) => openCreate(reference)} />
                   </div>
                 )}
                 {/* Kept mounted once visited, like Playbooks: the open thread, per-thread drafts and the
