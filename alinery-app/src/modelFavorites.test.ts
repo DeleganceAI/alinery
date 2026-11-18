@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveModelRows, modelMatches } from "./modelFavorites";
+import { deriveModelRows, favoriteAlive, modelMatches } from "./modelFavorites";
 
 describe("modelMatches", () => {
   it("matches every whitespace-separated token in any order", () => {
@@ -52,5 +52,35 @@ describe("deriveModelRows", () => {
   it("does not synthesize rows for favorites missing from discovery", () => {
     expect(deriveModelRows(["opus"], ["missing"], "")).toEqual([{ model: "opus", favorite: false }]);
     expect(deriveModelRows([], ["missing"], "")).toEqual([]);
+  });
+});
+
+describe("favoriteAlive", () => {
+  const catalog = {
+    providers: [{ id: "xai" }],
+    custom: [{ id: "ph-infra" }],
+    models: [
+      { provider: "alinery", id: "Qwen3.6" },
+      { provider: "xai", id: "grok-4.6" },
+    ],
+  };
+
+  it("keeps favorites of providers the catalog still lists, and of the hosted provider", () => {
+    expect(favoriteAlive("xai/grok-4.6", catalog)).toBe(true);
+    expect(favoriteAlive("ph-infra/GLM-5.3", catalog)).toBe(true);
+    expect(favoriteAlive("alinery/Qwen3.6", catalog)).toBe(true);
+  });
+
+  it("drops favorites whose provider is gone, but keeps a signed-out provider's", () => {
+    expect(favoriteAlive("phdeepinfra/DeepSeek-V4.1-Flash-1017", catalog)).toBe(false);
+    expect(favoriteAlive("phinfra/zai-org/GLM-5.3", catalog)).toBe(false);
+    // Signed out: xai has no models in the list, but the provider row remains.
+    expect(favoriteAlive("xai/grok-4.6", { providers: [{ id: "xai" }], custom: [], models: [] })).toBe(true);
+  });
+
+  it("keeps everything when the catalog did not answer, and malformed favorites", () => {
+    expect(favoriteAlive("gone/model", null)).toBe(true);
+    expect(favoriteAlive("bare", catalog)).toBe(true);
+    expect(favoriteAlive("", catalog)).toBe(true);
   });
 });

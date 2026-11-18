@@ -2,6 +2,8 @@ import { Brain, Check, ChevronUp, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { formatContextUsage, formatTokenCount } from "../chat/format";
 import * as ipc from "../ipc";
+import { favoriteAlive } from "../modelFavorites";
+import { providerCatalog } from "../sync/providers";
 
 /**
  * The model and thinking level above the chat composer: two joined buttons, each opening a list upward. The model list is
@@ -37,8 +39,14 @@ export function ChatModelBar({
   useEffect(() => {
     if (!open) return;
     if (open === "model") {
-      // Read on every open: stars change in the Providers dialog.
-      void ipc.readModelFavorites("vinculum").then(setFavorites, () => undefined);
+      // Read on every open: stars change in the Providers dialog, and a provider this machine no longer has (a
+      // removed endpoint, a renamed id) must stop offering its models even while its favorites linger in the store.
+      void Promise.all([ipc.readModelFavorites("vinculum"), providerCatalog().catch(() => null)]).then(
+        ([favorites, catalog]) => {
+          setFavorites(favorites.filter((favorite) => favoriteAlive(favorite, catalog)));
+        },
+        () => undefined,
+      );
     }
     const onDown = (e: MouseEvent) => {
       if (!box.current?.contains(e.target as Node)) setOpen(null);
