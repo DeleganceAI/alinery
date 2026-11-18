@@ -98,8 +98,8 @@ const VIEWS: { key: View; group: "Library" | "Signals" | "Community"; label: str
   { key: "changed", group: "Signals", label: "Not published", icon: Activity, test: (row) => row.state === "changed" },
   { key: "diverged", group: "Signals", label: "Edited, update waiting", icon: Activity, test: (row) => row.state === "diverged" },
   { key: "withdrawn", group: "Signals", label: "Withdrawn", icon: Activity, test: (row) => row.state === "withdrawn" },
-  { key: "downloaded", group: "Community", label: "Downloaded", icon: Download, test: (row) => row.origin.kind === "download" },
   { key: "explore", group: "Community", label: "Explore", icon: Compass },
+  { key: "downloaded", group: "Community", label: "Downloaded", icon: Download, test: (row) => row.origin.kind === "download" },
   { key: "listings", group: "Community", label: "Your published", icon: Upload, test: (row) => row.publication !== null },
 ];
 const NOTES: Record<LibraryRow["state"], string> = {
@@ -229,6 +229,8 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
   const [mode, setMode] = useState<"ring" | "graph" | "source">("ring");
   const [graphFraction, setGraphFraction] = useState(2 / 3);
   const [view, setView] = useState<View>("all");
+  // A repository opened from the rail tree: the list shows that repository's own playbooks instead of a view's slice.
+  const [repoView, setRepoView] = useState<string | null>(null);
   // A row id in the library views, a listing id in Explore.
   const [chosen, setChosen] = useState<string | null>(null);
   // The step the rings and chips agree on. Hover sets it and leaving keeps it, so the readout stays put.
@@ -458,7 +460,20 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
       if (currentRepo.current === owner) setCatalogError(errorText(e));
     }
   };
-  // Expanding a repository in the tree reads its own catalog once; the active repository already has one.
+  // Reading another repository's catalog once; the active repository already has one.
+  const loadRepoCatalog = (repo: string) => {
+    if (repo === repoPath || repoCatalogs.has(repo)) return;
+    void listPlaybookCatalog(repo)
+      .then((value) => setRepoCatalogs((current) => new Map(current).set(repo, value)))
+      .catch((e) => toast.error(`Couldn't read ${repoName(repo)}'s playbooks: ${errorText(e)}`));
+  };
+  // A repository in the tree opens its own list; the chevron still shows its playbooks inline.
+  const selectRepo = (repo: string) => {
+    setRepoView(repo);
+    setChosen(null);
+    setStep(null);
+    loadRepoCatalog(repo);
+  };
   const toggleRepo = (repo: string) => {
     const expanded = expandedRepos.has(repo);
     setExpandedRepos((current) => {
@@ -467,10 +482,8 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
       else next.add(repo);
       return next;
     });
-    if (expanded || repo === repoPath || repoCatalogs.has(repo)) return;
-    void listPlaybookCatalog(repo)
-      .then((value) => setRepoCatalogs((current) => new Map(current).set(repo, value)))
-      .catch((e) => toast.error(`Couldn't read ${repoName(repo)}'s playbooks: ${errorText(e)}`));
+    if (expanded) return;
+    selectRepo(repo);
   };
   const repoCatalogOf = (repo: string) => (repo === repoPath ? catalog : (repoCatalogs.get(repo) ?? null));
   const discard = async () =>
@@ -969,11 +982,26 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
   const counts = new Map(VIEWS.map((item) => [item.key, item.test ? rows.filter((row) => item.test?.(row, starredKeys)).length : communityPlaybooks.length]));
   const current = VIEWS.find((item) => item.key === view) ?? VIEWS[0];
   const needle = query.trim().toLowerCase();
-  const visible = rows
-    .filter((row) => current.test?.(row, starredKeys) && `${row.title} ${row.description} ${row.id}`.toLowerCase().includes(needle))
+  // A repository opened from the tree lists its own playbooks: the active repository's live rows, or another one's catalog.
+  const openedCatalog = repoView ? (repoView === repoPath ? catalog : (repoCatalogs.get(repoView) ?? null)) : null;
+  const repoRows = repoView
+    ? openedCatalog
+      ? repoView === repoPath
+        ? rows.filter((row) => row.reference?.scope === "repo")
+        : libraryRows({
+            candidates: openedCatalog.candidates,
+            imports: [],
+            downloads: null,
+            mine: communitySignedIn && mineReady && !mineError ? minePlaybooks : null,
+            published: [],
+          }).filter((row) => row.reference?.scope === "repo")
+      : []
+    : null;
+  const visible = (repoRows ?? rows)
+    .filter((row) => (repoRows ? true : !!current.test?.(row, starredKeys)) && `${row.title} ${row.description} ${row.id}`.toLowerCase().includes(needle))
     .sort(
       (left, right) =>
-        (view === "all" ? Number(SIGNAL_STATES.has(right.state)) - Number(SIGNAL_STATES.has(left.state)) : 0) ||
+        (!repoRows && view === "all" ? Number(SIGNAL_STATES.has(right.state)) - Number(SIGNAL_STATES.has(left.state)) : 0) ||
         left.title.localeCompare(right.title, undefined, { sensitivity: "base", numeric: true }),
     );
   const rowForListing = (id: string) => rows.find((row) => row.importRow?.id === id || row.publication?.id === id) ?? null;
@@ -981,9 +1009,12 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
   const inspected = listing ? rowForListing(listing.id) : view === "explore" ? null : (visible.find((row) => row.id === chosen) ?? visible[0] ?? null);
   const realSteps = (row: LibraryRow) => row.candidate?.steps;
   const stepsOf = (row: LibraryRow) => realSteps(row) ?? placeholderSteps(row.publication?.stepCount ?? 0);
+  // A playbook opened from a repository view must be read from that repository, not the active one.
+  const rowOwner = (row: LibraryRow) => (repoView && row.reference?.scope === "repo" ? repoView : repoPath);
 
   const selectView = (next: View) => {
     if ((next === "explore") !== (view === "explore")) setQuery("");
+    setRepoView(null);
     setView(next);
     setChosen(null);
     setStep(null);
@@ -993,7 +1024,7 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
     setChosen(id);
   };
   const openRow = (row: LibraryRow) => {
-    if (row.reference && row.state !== "broken") void load(row.reference);
+    if (row.reference && row.state !== "broken") void load(row.reference, rowOwner(row));
   };
   const copyRow = async (reference: PlaybookRef) => {
     try {
@@ -1108,6 +1139,8 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
 
   // The one action each state asks for; Open and Create task sit beside it.
   const stateActions = (row: LibraryRow) => {
+    // A repository opened from the tree is a browsing list; open a playbook to act on it from its own repository.
+    if (repoView && repoView !== repoPath) return null;
     const id = row.importRow?.id;
     const name = row.importRow ? `${row.importRow.label}/${row.importRow.playbookKey}` : row.title;
     const noRepo = !repoPath;
@@ -1286,6 +1319,8 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
   const rowInspector = (row: LibraryRow) => {
     const steps = realSteps(row);
     const key = row.reference?.key ?? row.publication?.playbookKey ?? row.id;
+    // A playbook in another repository's list is read-only here: open it to publish or create a task from it.
+    const foreign = repoView !== null && repoView !== repoPath;
     return (
       <>
         <span className="pb-k">
@@ -1306,8 +1341,8 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
             <button
               type="button"
               className="btn ghost"
-              disabled={!repoPath}
-              title={repoPath ? undefined : "Select a repository before creating a task."}
+              disabled={!repoPath || foreign}
+              title={foreign ? `Open it from ${repoName(repoView ?? "")} to create a task.` : repoPath ? undefined : "Select a repository before creating a task."}
               onClick={() => row.reference && onCreateTask(row.reference)}
             >
               Create task
@@ -1363,12 +1398,17 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
   };
 
   const libraryManifest = (
-    <section ref={libraryRef} className="pb-manifest" aria-label={current.label} onScroll={(event) => (libraryScrollTop.current = event.currentTarget.scrollTop)}>
+    <section
+      ref={libraryRef}
+      className="pb-manifest"
+      aria-label={repoView ? repoName(repoView) : current.label}
+      onScroll={(event) => (libraryScrollTop.current = event.currentTarget.scrollTop)}
+    >
       <header className="pb-mhead">
-        <h2>{view === "all" ? "Library" : current.label}</h2>
+        <h2>{repoView ? repoName(repoView) : view === "all" ? "Library" : current.label}</h2>
         <span>
           {visible.length} {visible.length === 1 ? "playbook" : "playbooks"}
-          {view === "all" && " · signals first"} · double-click to open
+          {!repoView && view === "all" && " · signals first"} · double-click to open
         </span>
       </header>
       {!repoPath && <p className="pb-hint">Select a repository to see its playbooks, downloads and stars.</p>}
@@ -1393,7 +1433,8 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
         </InlineStatus>
       )}
       {!catalog && !catalogError && <LoadingState label="Loading playbooks" state={ORB_STATE} />}
-      {catalog && (
+      {repoView && !openedCatalog && <LoadingState label="Loading playbooks" state={ORB_STATE} />}
+      {(repoRows ? openedCatalog : catalog) && (
         <div className="pb-cols" aria-hidden="true">
           <span>Shape</span>
           <span>Name</span>
@@ -1437,7 +1478,7 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
                   aria-label={`Star playbook: ${row.id}`}
                   title={`${isStarred ? "Unstar" : "Star"} ${row.title}`}
                   aria-pressed={isStarred}
-                  disabled={!repoPath || !preferences || preferenceSaving}
+                  disabled={!repoPath || !preferences || preferenceSaving || (repoView !== null && repoView !== repoPath)}
                   onClick={() => row.reference && setStarred(row.reference, !isStarred)}
                 >
                   <Star size={14} strokeWidth={1.5} fill={isStarred ? "currentColor" : "none"} aria-hidden="true" />
@@ -1447,7 +1488,7 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
           );
         })}
       </ul>
-      {catalog && visible.length === 0 && <p className="pb-empty">{needle ? "No matching playbooks." : "Nothing here."}</p>}
+      {(repoRows ? openedCatalog : catalog) && visible.length === 0 && <p className="pb-empty">{needle ? "No matching playbooks." : "Nothing here."}</p>}
       {view === "alinery" && !!catalog?.hidden?.length && (
         <details className="pb-hidden">
           <summary>
@@ -1557,8 +1598,9 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
     </section>
   );
 
-  // The tree of open repositories: each expands to the playbooks that live in that repository, including copies of published
-  // or downloaded playbooks. It replaces the old Team view; a committed playbook is just one more row here.
+  // The tree of open repositories: a repository opens its own list, and a playbook under it opens that list rather than the
+  // playbook; double-clicking the playbook opens it directly. It replaces the old Team view; a committed playbook is just
+  // one more row in a repository's list.
   const repoTree = repoList.length > 0 && (
     <div className="pb-rail-group pb-repos">
       <span className="pb-eyebrow">Repositories</span>
@@ -1568,7 +1610,7 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
         const playbooks = repoCatalog?.candidates.filter((candidate) => candidate.source.reference.scope === "repo") ?? [];
         return (
           <div key={repo} className="pb-repo-node">
-            <button type="button" aria-expanded={expanded} aria-label={`${repoName(repo)} repository`} onClick={() => toggleRepo(repo)}>
+            <button type="button" aria-expanded={expanded} aria-pressed={repoView === repo} aria-label={`${repoName(repo)} repository`} onClick={() => toggleRepo(repo)}>
               {expanded ? <ChevronDown size={14} strokeWidth={1.5} aria-hidden="true" /> : <ChevronRight size={14} strokeWidth={1.5} aria-hidden="true" />}
               <GitBranch size={14} strokeWidth={1.5} aria-hidden="true" />
               {repoName(repo)}
@@ -1578,7 +1620,7 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
               <ul className="pb-repo-list">
                 {playbooks.map((candidate) => (
                   <li key={candidate.source.reference.key}>
-                    <button type="button" onClick={() => void load(candidate.source.reference, repo)}>
+                    <button type="button" onClick={() => selectRepo(repo)} onDoubleClick={() => void load(candidate.source.reference, repo)}>
                       {candidate.title || candidate.source.reference.key}
                     </button>
                   </li>
@@ -1593,7 +1635,7 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
     </div>
   );
 
-  const openRowStatus = selected ? rows.find((row) => row.id === playbookRefKey(selected.source.reference)) : undefined;
+  const openRowStatus = selected ? (repoRows ?? rows).find((row) => row.id === playbookRefKey(selected.source.reference)) : undefined;
 
   return (
     <main className="playbooks-page pb-deck">
@@ -1627,6 +1669,7 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
                 onChange={(event) => {
                   const value = event.target.value;
                   if (value.startsWith("@") && view !== "explore") {
+                    setRepoView(null);
                     setView("explore");
                     setChosen(null);
                     setStep(null);
@@ -1734,7 +1777,7 @@ export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string
                   <div key={group} className={`pb-rail-group${group === "Signals" ? " sig" : ""}`}>
                     <span className="pb-eyebrow">{group}</span>
                     {items.map((item) => (
-                      <button key={item.key} type="button" aria-pressed={view === item.key} onClick={() => selectView(item.key)}>
+                      <button key={item.key} type="button" aria-pressed={!repoView && view === item.key} onClick={() => selectView(item.key)}>
                         <item.icon size={14} strokeWidth={1.5} aria-hidden="true" />
                         {item.label}
                         {item.key !== "explore" && (

@@ -228,7 +228,7 @@ describe("playbook library", () => {
     preferencesByRepo.set("/repo", { order: [], entries: [preference("repo")] });
     render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
     await rowButton("repo/review");
-    // Library is All, then Alinery, then Starred; Downloaded moved under Community above Explore.
+    // Library is All, then Alinery, then Starred; Community is Explore, then Downloaded, then Your published.
     const rail = within(screen.getByRole("navigation", { name: "Library views" }));
     expect(
       rail
@@ -236,6 +236,12 @@ describe("playbook library", () => {
         .slice(0, 3)
         .map((button) => button.textContent),
     ).toEqual(["All 3", "Alinery 1", "Starred 1"]);
+    expect(
+      rail
+        .getAllByRole("button")
+        .map((button) => button.textContent?.replace(/\s*\d+$/, ""))
+        .filter((name) => name && ["Explore", "Downloaded", "Your published"].includes(name)),
+    ).toEqual(["Explore", "Downloaded", "Your published"]);
     expect(railButton("All 3")).toBeTruthy();
     fireEvent.click(railButton("Starred 1"));
     expect(libraryOrder()).toEqual(["repo/review"]);
@@ -245,6 +251,14 @@ describe("playbook library", () => {
     expect(libraryOrder()).toHaveLength(3);
     // Nothing needs attention, so no signal is on the rail.
     expect(screen.queryByText("Signals")).toBeNull();
+  });
+
+  it("lists only a repository's playbooks when its tree node is opened", async () => {
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    await rowButton("repo/review");
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Library views" })).getByRole("button", { name: "repo repository" }));
+    await waitFor(() => expect(screen.getByRole("region", { name: "repo" })).toBeTruthy());
+    expect(libraryOrder()).toEqual(["repo/review"]);
   });
 
   it("names each row by origin, range and status", async () => {
@@ -391,14 +405,20 @@ describe("playbook library", () => {
     expect(screen.getByRole("button", { name: "Star playbook: global/review" })).toHaveProperty("disabled", true);
   });
 
-  it("trees the open repositories and opens a repository playbook from another one", async () => {
+  it("opens a repository's list from the tree, and a double-click opens the playbook", async () => {
     render(<Playbooks repoPath="/repo" repos={["/repo", "/other"]} onCreateTask={onCreateTask} />);
     await rowButton("repo/review");
     const nav = () => within(screen.getByRole("navigation", { name: "Library views" }));
     expect(nav().getByRole("button", { name: "repo repository" })).toBeTruthy();
     fireEvent.click(nav().getByRole("button", { name: "other repository" }));
     await waitFor(() => expect(mocks.listPlaybookCatalog).toHaveBeenCalledWith("/other"));
+    // The list now belongs to the other repository, not the active one.
+    expect(await screen.findByRole("region", { name: "other" })).toBeTruthy();
+    expect(libraryOrder()).toEqual(["repo/review"]);
+    // A playbook under a repository opens that repository's list; a double-click opens the playbook itself.
     fireEvent.click(await nav().findByRole("button", { name: "Review" }));
+    expect(screen.queryByRole("region", { name: "Playbook details" })).toBeNull();
+    fireEvent.doubleClick(await nav().findByRole("button", { name: "Review" }));
     await screen.findByRole("region", { name: "Playbook details" });
     expect(mocks.readPlaybook).toHaveBeenCalledWith({ scope: "repo", key: "review" }, "/other");
   });
