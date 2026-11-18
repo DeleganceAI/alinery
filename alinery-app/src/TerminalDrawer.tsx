@@ -39,13 +39,29 @@ export function shellCdCommand(path: string): string {
 
 /**
  * Resolve the "cd here" target from app navigation context.
- * Priority: session/task/create-draft worktree → active repo root → home
+ * Priority: focused chat thread directory (Chat view) → session/task/create-draft worktree → active repo root → home
  * (home when all-repos scope or no active repo / unresolved).
  */
-export function resolveDrawerCdTarget(opts: { view: View; scope: RepoScope; activeRepo: string | undefined; home: string; tasks: { slug: string; worktree: string }[] }): string {
-  const { view, scope, activeRepo, home, tasks } = opts;
+export function resolveDrawerCdTarget(opts: {
+  view: View;
+  scope: RepoScope;
+  activeRepo: string | undefined;
+  home: string;
+  tasks: { slug: string; worktree: string }[];
+  /** The focused chat thread's directory: its worktree, or the repo it runs in when it has none. */
+  chatCwd?: string;
+}): string {
+  const { view, scope, activeRepo, home, tasks, chatCwd } = opts;
   const worktreeForSlug = (slug: string) => (slug.trim() ? tasks.find((t) => t.slug === slug)?.worktree?.trim() || null : null);
   const homeFallback = home.trim() || "~";
+
+  // Chat threads carry their own directory, and it is the whole reason the button exists there: a thread's
+  // worktree sits outside the checkout the drawer's shell starts in. A thread without one runs in the repo,
+  // which is what the scope fallback below would give anyway.
+  if (view.kind === "chat") {
+    const fromChat = chatCwd?.trim();
+    if (fromChat) return fromChat;
+  }
 
   if (view.kind === "session") {
     if (view.cwd.trim()) return view.cwd.trim();
@@ -110,6 +126,7 @@ export function TerminalDrawer({
   view,
   scope,
   activeRepo,
+  chatCwd = "",
 }: {
   open: boolean;
   width: number;
@@ -126,11 +143,13 @@ export function TerminalDrawer({
   view: View;
   scope: RepoScope;
   activeRepo: string | undefined;
+  /** The focused chat thread's directory, reported by the Chat view; used while that view is the one on screen. */
+  chatCwd?: string;
 }) {
   const [home, setHome] = useState("");
   // The task rows come from the active repo's stream, so the target is known as soon as the view is.
   const tasks = useRepoTasks(activeRepo) ?? [];
-  const cdTarget = resolveDrawerCdTarget({ view, scope, activeRepo, home, tasks });
+  const cdTarget = resolveDrawerCdTarget({ view, scope, activeRepo, home, tasks, chatCwd });
   const activeTabRef = useRef<HTMLDivElement | null>(null);
   const tabListRef = useRef<HTMLDivElement | null>(null);
   const active = tabs.find((tab) => tab.id === activeId) ?? null;

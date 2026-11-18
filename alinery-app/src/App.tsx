@@ -183,6 +183,9 @@ export default function App() {
   const playbooksReturnView = useRef<View | null>(null);
   const [playbooksVisited, setPlaybooksVisited] = useState(false);
   const [chatVisited, setChatVisited] = useState(false);
+  // The Chat view's focused thread directory, for the terminal drawer's "cd here". Ephemeral, like the drawer:
+  // the view reports it, the drawer reads it while Chat is the view on screen.
+  const [chatThreadCwd, setChatThreadCwd] = useState("");
   const [scope, setScope] = useState<RepoScope>("active");
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   // Closed until config loads. First run (no repository) opens at Step 01; a configured
@@ -1385,6 +1388,7 @@ export default function App() {
                 view={view}
                 scope={scope}
                 activeRepo={appConfig?.active_repo}
+                chatCwd={chatThreadCwd}
               />
             )}
             <div className={drawerOpen ? "app-main-column" : undefined} style={drawerOpen ? undefined : { display: "contents" }}>
@@ -1424,6 +1428,7 @@ export default function App() {
                       linkKey={String(daemon.reachable)}
                       appearance={appearance}
                       onAppearanceChange={onAppearanceChange}
+                      onFocusedCwdChange={setChatThreadCwd}
                     />
                   </div>
                 )}
