@@ -760,6 +760,10 @@ export function SessionView({
       .finally(() => setApprovalBusy(false));
   };
 
+  // A prompt's attached images live in this task's attachment directory: the pane reads them back by the
+  // name the model was given, so a row shows them long after the send.
+  const readPromptImage = useCallback((name: string) => readChatImage(repoPath, taskSlug, name), [repoPath, taskSlug]);
+
   const sendCurrentMessage = async (text?: string) => {
     const caption = (text ?? messageDraftRef.current.body).trim();
     const attachments = messageDraftRef.current.attachments ?? [];
@@ -785,7 +789,10 @@ export function SessionView({
       if (transport === "rpc") {
         const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
         await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
-        const next = appendOptimisticUser(chatRef.current, caption, busy ? "follow_up" : "prompt");
+        // The row keeps the images the model was given, by the name they were copied under: the pane
+        // reads them back from the same directory, so they stay visible after the turn ends.
+        const row = prepared ? draftToRowAttachments(prepared.copied) : [];
+        const next = appendOptimisticUser(chatRef.current, caption, busy ? "follow_up" : "prompt", undefined, row.length > 0 ? row : undefined);
         chatRef.current = next;
         setChat(next);
         updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
@@ -819,7 +826,7 @@ export function SessionView({
       const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
       await abortSession(repoPath, id);
       await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
-      const rowAttachments = draftToRowAttachments(attachments);
+      const rowAttachments = prepared ? draftToRowAttachments(prepared.copied) : [];
       updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
       const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
       chatRef.current = next;
@@ -1582,6 +1589,7 @@ export function SessionView({
                           onLoadOlder={loadOlder}
                           loadingOlder={loadingOlder}
                           atStart={chat.fileStart === 0}
+                          readImage={readPromptImage}
                         />
                         {/* The history view is the live pane with the input switched off, so a finished
                       session reads the same way as a running one. */}
@@ -1627,6 +1635,7 @@ export function SessionView({
                             onLoadOlder={loadOlder}
                             loadingOlder={loadingOlder}
                             atStart={chat.fileStart === 0}
+                            readImage={readPromptImage}
                           />
                         </div>
                         {showChatComposer ? (
@@ -1724,6 +1733,7 @@ export function SessionView({
                             onLoadOlder={loadOlder}
                             loadingOlder={loadingOlder}
                             atStart={chat.fileStart === 0}
+                            readImage={readPromptImage}
                           />
                           <ChatComposer
                             body=""

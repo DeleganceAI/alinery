@@ -1,5 +1,5 @@
 import { Archive, ChevronDown, ChevronRight, FolderGit2, GitBranch, LayoutGrid, MessageSquare, PanelLeftClose, Pencil, Pin, PinOff, Plus, Trash2, X } from "lucide-react";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
 import { DROP_WITHOUT_FILE } from "../chat/attachments";
@@ -19,6 +19,7 @@ import {
   archiveChatThread,
   createChatThread,
   enableCanvas,
+  readChatThreadImage,
   removeChatWorktree,
   resumeChatThread,
   setChatModel,
@@ -197,6 +198,10 @@ function ChatViewBody({
   });
   const { transcript, observation, connection, activity } = chat;
   const error = chat.error;
+  // A prompt's images are the thread's own copies: read back by name, so they survive a reload of the pane.
+  const threadRepo = selected?.repo_path ?? "";
+  const threadId = selected?.session.id ?? "";
+  const readThreadImage = useCallback((name: string) => readChatThreadImage(threadRepo, threadId, name), [threadRepo, threadId]);
   const setError = chat.setError;
   const body = chat.draft;
   const sending = chat.sending;
@@ -596,7 +601,7 @@ function ChatViewBody({
             />
           </div>
         ) : selected ? (
-          <ChatPane entries={transcript.entries} status={activity.status} visibility={visibility} atStart={transcript.fileStart === 0} />
+          <ChatPane entries={transcript.entries} status={activity.status} visibility={visibility} atStart={transcript.fileStart === 0} readImage={readThreadImage} />
         ) : (
           <div className="chat-blank">
             <MessageSquare size={28} aria-hidden="true" />

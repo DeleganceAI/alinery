@@ -806,6 +806,30 @@ describe("chat attachments", () => {
     ]);
   });
 
+  it("keeps the name of a prompt image and gives it no src, so the pane reads the copy back", () => {
+    const mapped = mapHydratedMessage({
+      role: "user",
+      rowId: "u1",
+      content: [
+        { type: "text", text: "look" },
+        { type: "image", mimeType: "image/png", name: "shot.png" },
+      ],
+    });
+    expect(mapped?.content).toEqual([
+      { type: "text", text: "look" },
+      { type: "image", mimeType: "image/png", name: "shot.png" },
+    ]);
+    const state = applyFilePage(emptyTranscript(), { start: 0, messages: mapped ? [mapped] : [] }, "initial");
+    const entry = state.entries[0];
+    expect(entry && "attachments" in entry && entry.attachments).toEqual([{ kind: "image", name: "shot.png", mimeType: "image/png" }]);
+  });
+
+  it("names an image the transcript carried without one, leaving it unreadable rather than guessed", () => {
+    const state = applyFilePage(emptyTranscript(), { start: 0, messages: [{ role: "user", rowId: "u1", content: [{ type: "image", mimeType: "image/png" }] }] }, "initial");
+    const entry = state.entries[0];
+    expect(entry && "attachments" in entry && entry.attachments).toEqual([{ kind: "image", name: "", mimeType: "image/png" }]);
+  });
+
   it("still drops unknown content types", () => {
     const mapped = mapHydratedMessage({
       role: "assistant",
@@ -910,7 +934,9 @@ describe("chat attachments", () => {
       message: { role: "user", content: [imagePart] },
     });
     const entry = live.entries[0];
-    expect(entry && "attachments" in entry && entry.attachments).toEqual([{ kind: "image", name: "image", mimeType: "image/png", src: "data:image/png;base64,aa" }]);
+    // The live part carries the bytes and no name; the row keeps the name its copy went under, so the
+    // pane can still read the file once the turn is over.
+    expect(entry && "attachments" in entry && entry.attachments).toEqual([{ kind: "image", name: "shot.png", mimeType: "image/png", src: "data:image/png;base64,aa" }]);
   });
 });
 

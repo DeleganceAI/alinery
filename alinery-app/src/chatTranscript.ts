@@ -161,6 +161,7 @@ function mapPart(raw: unknown): ChatPart | null {
       type: "image",
       mimeType: typeof part.mimeType === "string" ? part.mimeType : "image/png",
       ...(typeof part.data === "string" ? { data: part.data } : {}),
+      ...(typeof part.name === "string" && part.name.length > 0 ? { name: part.name } : {}),
     };
   }
   return null;
@@ -471,6 +472,23 @@ function applyLoginProviders(state: ChatTranscriptState, data: Record<string, un
   return { ...state, sessionMeta: { ...state.sessionMeta, loginProviders } };
 }
 
+/**
+ * A prompt's image parts as transcript chips. The pane shows the bytes when the part carried them (a live
+ * message) and otherwise reads the named copy back from the daemon, so history costs the wire nothing.
+ * `named` is the row's own image chips, in order: a live part carries the bytes but not always the name the
+ * copy went under, and the row already knows it.
+ */
+function imageRowAttachments(content: ChatMessage["content"], named: UserRowAttachment[] = []): UserRowAttachment[] {
+  let index = -1;
+  return content.flatMap((part) => {
+    if (part.type !== "image") return [];
+    index += 1;
+    const chip: UserRowAttachment = { kind: "image", name: part.name ?? named[index]?.name ?? "", mimeType: part.mimeType };
+    if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
+    return [chip];
+  });
+}
+
 function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entrySeq: number; liveAssistantKeys: Record<string, string> } {
   let entrySeq = 0;
   const entries: ChatEntry[] = [];
@@ -493,15 +511,7 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
         .map((part) => (part.type === "text" ? part.text : ""))
         .join("");
       const parsed = parseFileTrailers(joined);
-      const attachments: UserRowAttachment[] = [
-        ...message.content.flatMap((part) => {
-          if (part.type !== "image") return [];
-          const chip: UserRowAttachment = { kind: "image", name: "image", mimeType: part.mimeType };
-          if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
-          return [chip];
-        }),
-        ...parsed.files.map((file) => ({ kind: "file" as const, name: file.name })),
-      ];
+      const attachments: UserRowAttachment[] = [...imageRowAttachments(message.content), ...parsed.files.map((file) => ({ kind: "file" as const, name: file.name }))];
       entries.push({
         id: alloc(),
         at: message.at,
@@ -1121,12 +1131,10 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
                 parsedIncoming.caption === lastUserEntry.text ||
                 (incoming === "" && attachments.some((item) => item.kind === "image"))));
           if (sameOptimistic) {
-            const imageChips: UserRowAttachment[] = content.flatMap((part) => {
-              if (part.type !== "image") return [];
-              const chip: UserRowAttachment = { kind: "image", name: "image", mimeType: part.mimeType };
-              if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
-              return [chip];
-            });
+            const imageChips = imageRowAttachments(
+              content,
+              attachments.filter((item) => item.kind === "image"),
+            );
             const fileChips: UserRowAttachment[] =
               parsedIncoming.files.length > 0
                 ? parsedIncoming.files.map((file) => ({ kind: "file" as const, name: file.name }))

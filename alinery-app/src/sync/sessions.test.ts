@@ -133,10 +133,15 @@ describe("the turn controls and the process", () => {
     expect(seen[1].req).toMatchObject({ sessionId: "s1" });
   });
 
-  it("a prompt's images go as bytes beside the text", async () => {
+  it("a prompt's images go as bytes beside the text, under the name of the copy", async () => {
+    await promptSession("/r", "s1", "look", [{ type: "image", data: "AQID", mimeType: "image/png", name: "shot.png" }]);
+    const images = seen[0].req.images as { name: string; mimeType: string; bytes: Uint8Array }[];
+    expect(images.map((image) => [image.name, image.mimeType, Array.from(image.bytes)])).toEqual([["shot.png", "image/png", [1, 2, 3]]]);
+  });
+
+  it("an image with no name of its own still travels, unnamed", async () => {
     await promptSession("/r", "s1", "look", [{ type: "image", data: "AQID", mimeType: "image/png" }]);
-    const images = seen[0].req.images as { mimeType: string; bytes: Uint8Array }[];
-    expect(images.map((image) => [image.mimeType, Array.from(image.bytes)])).toEqual([["image/png", [1, 2, 3]]]);
+    expect((seen[0].req.images as { name: string }[])[0]?.name).toBe("");
   });
 
   it("a model or thinking change answers with the controls in the shape the views read", async () => {

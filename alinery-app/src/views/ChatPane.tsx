@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "
 import { chatMaxWidthCss } from "../appearance";
 import { formatDuration } from "../chat/format";
 import { type JournalItem, journalItems } from "../chat/journalRows";
+import { type PromptImageReader, PromptImageReaderContext } from "../chat/PromptImages";
 import { collectLiveSubagents } from "../chat/subagents";
 import type { ChatEntry, SessionChatStatus } from "../chat/types";
 import { type ChatPrefs, chatActivityLabel, DEFAULT_CHAT_VISIBILITY, isChatEntryVisible, visibleChatEntries, workRailDefaultExpanded } from "../chat/visibility";
@@ -18,6 +19,7 @@ function ChatPaneImpl({
   onLoadOlder,
   loadingOlder = false,
   atStart = true,
+  readImage,
 }: {
   entries: ChatEntry[];
   status?: SessionChatStatus;
@@ -28,6 +30,8 @@ function ChatPaneImpl({
   loadingOlder?: boolean;
   /** The first prompt of the conversation is loaded — there is nothing older to fetch. */
   atStart?: boolean;
+  /** Where this pane's attached images are read back from: its chat thread's directory, or its task session's. */
+  readImage?: PromptImageReader;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(visibility.autoScroll);
@@ -97,63 +101,65 @@ function ChatPaneImpl({
   const liveSubs = useMemo(() => collectLiveSubagents(entries), [entries]);
 
   return (
-    <div
-      className="chat-pane"
-      data-testid="chat-pane"
-      data-density={visibility.railDensity}
-      data-actor-labels={visibility.showActorLabels ? "on" : "off"}
-      data-agent-bubbles={visibility.showAgentBubbles ? "on" : "off"}
-      style={{
-        ["--chat-font-size" as string]: `${visibility.fontSize}px`,
-        ["--chat-rail-font-size" as string]: `${visibility.railFontSize}px`,
-        ["--chat-max-width" as string]: chatMaxWidthCss(visibility.maxWidth),
-      }}
-    >
-      {visibility.showSubagentDrawer ? <SubagentDrawer agents={liveSubs} /> : null}
-      <div ref={scroller} onScroll={onScroll} className="chat-list">
-        {shown.length === 0 ? <div className="chat-empty">No messages yet</div> : null}
-        <ol className="chat-journal">
-          {loadingOlder ? <li className="chat-older">Loading earlier messages…</li> : atStart && shown.length > 0 ? <li className="chat-older">Start of conversation</li> : null}
-          {items.map((item) => (
-            <li key={item.key} className="chat-journal-item" data-node={nodeOf(item)} data-entry-id={item.kind === "turn" ? undefined : item.key}>
-              {item.kind === "work" ? (
-                <ChatWorkStrip
-                  entries={item.entries}
-                  live={item.live}
-                  defaultOpen={item.entries.some(stepOpen)}
-                  collapseWhenDone={visibility.autoCollapseThinking && !visibility.expandThinking}
-                  stepOpen={stepOpen}
-                />
-              ) : item.kind === "turn" ? (
-                <div className="chat-turn-end">
-                  <span className="chat-turn-rule" />
-                  <span className="chat-turn-copy">
-                    {[`${item.steps} ${item.steps === 1 ? "step" : "steps"}`, item.durationMs != null ? formatDuration(item.durationMs) : ""].filter(Boolean).join(" · ")}
-                  </span>
-                </div>
-              ) : (
-                <ChatEntryRow
-                  entry={item.entry}
-                  onApprove={onApprove}
-                  narration={item.role === "narration"}
-                  showDate={visibility.showDate}
-                  showTime={visibility.showTime}
-                  showActorLabels={visibility.showActorLabels}
-                  showBlockCopyButtons={visibility.showBlockCopyButtons}
-                  showCopyButton={visibility.showCopyButtons}
-                />
-              )}
-            </li>
-          ))}
-        </ol>
-      </div>
-      {activity ? (
-        <div className="chat-activity" role="status" data-testid="chat-activity" aria-live="polite">
-          <RunningIndicator running={status === "running"} />
-          <span>{activity}</span>
+    <PromptImageReaderContext.Provider value={readImage ?? null}>
+      <div
+        className="chat-pane"
+        data-testid="chat-pane"
+        data-density={visibility.railDensity}
+        data-actor-labels={visibility.showActorLabels ? "on" : "off"}
+        data-agent-bubbles={visibility.showAgentBubbles ? "on" : "off"}
+        style={{
+          ["--chat-font-size" as string]: `${visibility.fontSize}px`,
+          ["--chat-rail-font-size" as string]: `${visibility.railFontSize}px`,
+          ["--chat-max-width" as string]: chatMaxWidthCss(visibility.maxWidth),
+        }}
+      >
+        {visibility.showSubagentDrawer ? <SubagentDrawer agents={liveSubs} /> : null}
+        <div ref={scroller} onScroll={onScroll} className="chat-list">
+          {shown.length === 0 ? <div className="chat-empty">No messages yet</div> : null}
+          <ol className="chat-journal">
+            {loadingOlder ? <li className="chat-older">Loading earlier messages…</li> : atStart && shown.length > 0 ? <li className="chat-older">Start of conversation</li> : null}
+            {items.map((item) => (
+              <li key={item.key} className="chat-journal-item" data-node={nodeOf(item)} data-entry-id={item.kind === "turn" ? undefined : item.key}>
+                {item.kind === "work" ? (
+                  <ChatWorkStrip
+                    entries={item.entries}
+                    live={item.live}
+                    defaultOpen={item.entries.some(stepOpen)}
+                    collapseWhenDone={visibility.autoCollapseThinking && !visibility.expandThinking}
+                    stepOpen={stepOpen}
+                  />
+                ) : item.kind === "turn" ? (
+                  <div className="chat-turn-end">
+                    <span className="chat-turn-rule" />
+                    <span className="chat-turn-copy">
+                      {[`${item.steps} ${item.steps === 1 ? "step" : "steps"}`, item.durationMs != null ? formatDuration(item.durationMs) : ""].filter(Boolean).join(" · ")}
+                    </span>
+                  </div>
+                ) : (
+                  <ChatEntryRow
+                    entry={item.entry}
+                    onApprove={onApprove}
+                    narration={item.role === "narration"}
+                    showDate={visibility.showDate}
+                    showTime={visibility.showTime}
+                    showActorLabels={visibility.showActorLabels}
+                    showBlockCopyButtons={visibility.showBlockCopyButtons}
+                    showCopyButton={visibility.showCopyButtons}
+                  />
+                )}
+              </li>
+            ))}
+          </ol>
         </div>
-      ) : null}
-    </div>
+        {activity ? (
+          <div className="chat-activity" role="status" data-testid="chat-activity" aria-live="polite">
+            <RunningIndicator running={status === "running"} />
+            <span>{activity}</span>
+          </div>
+        ) : null}
+      </div>
+    </PromptImageReaderContext.Provider>
   );
 }
 

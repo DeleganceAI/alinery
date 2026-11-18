@@ -149,6 +149,25 @@ describe("transcript frames", () => {
     expect("at" in messageOf(item("u", "x"))).toBe(false);
   });
 
+  it("maps a prompt's image part to its name and type, never its bytes", () => {
+    const m = messageOf(
+      create(TranscriptItemSchema, {
+        id: "u1",
+        role: "user",
+        content: [
+          { kind: { case: "text", value: "what is this?" } },
+          { kind: { case: "image", value: { mimeType: "image/png", name: "shot.png" } } },
+          { kind: { case: "image", value: { mimeType: "image/jpeg", name: "" } } },
+        ],
+      }),
+    );
+    expect(m.content).toEqual([
+      { type: "text", text: "what is this?" },
+      { type: "image", mimeType: "image/png", name: "shot.png" },
+      { type: "image", mimeType: "image/jpeg" },
+    ]);
+  });
+
   it("applyFrame appends at the end, replaces from the start index, and refuses a gap", () => {
     const base = [messageOf(item("a", "1")), messageOf(item("b", "2"))];
     expect(applyFrame(base, frame([item("c", "3")], 3))?.map((m) => m.id)).toEqual(["a", "b", "c"]);
