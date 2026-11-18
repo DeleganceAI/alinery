@@ -143,6 +143,7 @@ type DrawerProps = {
   view: View;
   scope: RepoScope;
   activeRepo: string | undefined;
+  chatCwd?: string;
 };
 
 const tabs: DrawerTab[] = [
@@ -359,6 +360,34 @@ describe("TerminalDrawer tab bar", () => {
     const button = await screen.findByRole("button", { name: "cd here: /repo/.alinery/worktrees/task" });
     fireEvent.click(button);
     expect(writeTerminal).toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo/.alinery/worktrees/task"));
+  });
+
+  it("cds to the focused chat thread's directory while Chat is the view", async () => {
+    renderDrawer({ view: { kind: "chat" }, chatCwd: "/repo/.alinery/chat-worktrees/s-wt" });
+    const button = await screen.findByRole("button", { name: "cd here: /repo/.alinery/chat-worktrees/s-wt" });
+    expect(button.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(button);
+    expect(writeTerminal).toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo/.alinery/chat-worktrees/s-wt"));
+
+    // A thread in another repo is where the shell belongs, whatever repo is active and whatever the scope.
+    cleanup();
+    vi.mocked(writeTerminal).mockClear();
+    renderDrawer({ view: { kind: "chat" }, scope: "all", activeRepo: "/repo", chatCwd: "/other/.alinery/chat-worktrees/s-x" });
+    fireEvent.click(await screen.findByRole("button", { name: "cd here: /other/.alinery/chat-worktrees/s-x" }));
+    expect(writeTerminal).toHaveBeenCalledWith("drawer-1", shellCdCommand("/other/.alinery/chat-worktrees/s-x"));
+  });
+
+  it("keeps the repo fallback for Chat with no thread open, and ignores a chat directory on other views", async () => {
+    renderDrawer({ view: { kind: "chat" } });
+    fireEvent.click(await screen.findByRole("button", { name: "cd here: /repo" }));
+    expect(writeTerminal).toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo"));
+
+    // Chat keeps its focused thread while another tab is on screen; that thread must not move this shell.
+    cleanup();
+    vi.mocked(writeTerminal).mockClear();
+    renderDrawer({ view: { kind: "list" }, chatCwd: "/repo/.alinery/chat-worktrees/s-wt" });
+    fireEvent.click(await screen.findByRole("button", { name: "cd here: /repo" }));
+    expect(writeTerminal).toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo"));
   });
 
   it("keeps cd-here disabled when there is no active id", async () => {

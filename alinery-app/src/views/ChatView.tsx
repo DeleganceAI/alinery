@@ -109,6 +109,7 @@ function ChatViewBody({
   linkKey = "",
   appearance,
   onAppearanceChange,
+  onFocusedCwdChange,
 }: {
   active?: boolean;
   terminalFontSize: number;
@@ -121,6 +122,8 @@ function ChatViewBody({
   /** The thread list's width is the side panel width the task and session views use. */
   appearance: AppearancePrefs;
   onAppearanceChange: (next: AppearancePrefs) => void;
+  /** The focused thread's directory, for the terminal drawer's "cd here"; "" when no thread is open. */
+  onFocusedCwdChange?: (cwd: string) => void;
 }) {
   const [showArchived, setShowArchived] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -161,6 +164,15 @@ function ChatViewBody({
 
   const selected = useMemo(() => threads.find((thread) => threadKey(thread) === selectedKey) ?? null, [threads, selectedKey]);
   const selectionKey = selected ? threadKey(selected) : null;
+  // A thread runs in its own worktree, or in the repo when it has none: that directory is where a shell
+  // beside this view should land. Reported up rather than read there, because which thread is focused is this
+  // view's state, and the view stays mounted (hidden) so the report outlives a trip to another tab.
+  const focusedCwd = selected?.session.worktree.trim() ?? "";
+  const reportFocusedCwd = useRef(onFocusedCwdChange);
+  reportFocusedCwd.current = onFocusedCwdChange;
+  useEffect(() => {
+    reportFocusedCwd.current?.(focusedCwd);
+  }, [focusedCwd]);
   const threadTabs = openKeys.flatMap((key) => {
     const thread = threads.find((t) => threadKey(t) === key);
     return thread ? [{ key, name: threadLabel(thread), mode: "preview" as const }] : [];
