@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { libraryRows, lineDiff, SIGNAL_STATES, statusOf } from "./playbookLibrary";
+import { libraryRows, lineDiff, originLabel, SIGNAL_STATES, statusOf } from "./playbookLibrary";
 import type { CommunityImportRow, CommunitySummary, DownloadStatusRow, PlaybookCandidate } from "./types";
 
 const candidate = (scope: "bundled" | "global" | "repo", key: string, broken = false, body_sha256?: string, path: string | null = null): PlaybookCandidate => ({
@@ -46,14 +46,22 @@ describe("libraryRows", () => {
     expect(statusOf(row)).toEqual({ label: "Built in", tone: "dim" });
   });
 
-  it("reads your own playbook against your listings", () => {
-    const candidates = [candidate("global", "a"), candidate("repo", "b", false, "same"), candidate("repo", "c", false, "new"), candidate("repo", "d")];
+  it("reads your own global playbook against your listings, and keeps a repo copy unpublished", () => {
+    const candidates = [
+      candidate("global", "a"),
+      candidate("global", "b", false, "same"),
+      candidate("global", "c", false, "new"),
+      candidate("global", "d"),
+      candidate("repo", "b", false, "same"),
+    ];
     const mine = [listing("b", { bodySha256: "same" }), listing("c", { bodySha256: "old" }), listing("d")];
     const rows = one({ candidates, mine });
-    expect(rows.map((row) => row.state)).toEqual(["private", "live", "changed", "live"]);
-    expect(rows.map((row) => statusOf(row).label)).toEqual(["Not published", "Live · v3", "Changes not published", "Live · v3"]);
+    expect(rows.map((row) => row.state)).toEqual(["private", "live", "changed", "live", "private"]);
+    expect(rows.map((row) => statusOf(row).label)).toEqual(["Not published", "Live · v3", "Changes not published", "Live · v3", "Not published"]);
     expect(rows[0].range).toBe("All repos");
-    expect(rows[1].range).toBe("This repo");
+    expect(rows[4].range).toBe("This repo");
+    // A repository playbook is a copy: it never claims the listing.
+    expect(rows[4].publication).toBeNull();
   });
 
   it("says only Yours while your listings are unknown", () => {
@@ -93,8 +101,10 @@ describe("libraryRows", () => {
 
   it("lists your publications that have no copy here", () => {
     const rows = one({ candidates: [candidate("repo", "kept")], imports: [imported("dl", { id: "pub-dl" })], mine: [listing("kept"), listing("gone"), listing("dl")] });
+    // The repository playbook of that key is a copy, not the listing's source, so both listings are remote.
     expect(rows.map((row) => [row.id, row.state])).toEqual([
-      ["repo/kept", "live"],
+      ["repo/kept", "private"],
+      ["listing:pub-kept", "remote"],
       ["listing:pub-gone", "remote"],
     ]);
     expect(statusOf(rows[1]).label).toBe("Live · v3 · not here");
@@ -138,8 +148,30 @@ describe("links and origins", () => {
     const rows = one({ candidates: [candidate("global", "x"), candidate("repo", "x")], imports: [imported("x", { localScope: "global" })] });
     expect(rows.map((row) => [row.id, row.origin.kind, row.range])).toEqual([
       ["global/x", "download", "All repos"],
-      ["repo/x", "mine", "This repo"],
+      ["repo/x", "local", "This repo"],
     ]);
+    expect(originLabel(rows[1].origin)).toBe("Repo");
+  });
+
+  it("names a local global playbook Global and your listing Published", () => {
+    const rows = one({ candidates: [candidate("global", "kept")], mine: [listing("kept"), listing("gone")] });
+    expect(rows.map((row) => [row.id, row.origin.kind, originLabel(row.origin)])).toEqual([
+      ["global/kept", "local", "Global"],
+      ["listing:pub-gone", "published", "Published"],
+    ]);
+  });
+
+  it("reads a download of your own listing as live or changed and links its publication", () => {
+    const rows = one({
+      candidates: [candidate("global", "a", false, "same"), candidate("global", "b", false, "new")],
+      imports: [imported("a", { id: "pub-a", localScope: "global" }), imported("b", { id: "pub-b", localScope: "global" })],
+      mine: [listing("a", { id: "pub-a", bodySha256: "same" }), listing("b", { id: "pub-b", bodySha256: "old" })],
+    });
+    expect(rows.map((row) => [row.id, row.state, row.publication?.id])).toEqual([
+      ["global/a", "live", "pub-a"],
+      ["global/b", "changed", "pub-b"],
+    ]);
+    expect(statusOf(rows[1]).label).toBe("Changes not published");
   });
 });
 

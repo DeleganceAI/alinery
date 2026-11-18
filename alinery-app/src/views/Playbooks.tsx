@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, Compass, Download, GitBranch, Hand, Layers, type LucideIcon, Star, Triangle, Upload, User, X } from "lucide-react";
+import { Activity, ArrowLeft, ChevronDown, ChevronRight, Compass, Download, GitBranch, Hand, Layers, type LucideIcon, Star, Triangle, Upload, X } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import "./Playbooks.css";
 import { askConfirm, confirmDanger } from "../confirm";
@@ -86,31 +86,31 @@ const errorText = (error: unknown) => {
   return String(error);
 };
 
-// The rail: Library slices by origin, Signals only while something needs you, Community for what is not here yet.
-type View = "all" | "starred" | "mine" | "downloaded" | "team" | "alinery" | "update" | "changed" | "diverged" | "withdrawn" | "explore" | "listings";
+// The rail: Library (all, what ships with Alinery, stars, then a tree of the open repositories), Signals while something needs you,
+// and Community for downloads, browsing, and what you have published. A download lives in the machine's library for every
+// repository by default; a repository copy is the secondary choice.
+type View = "all" | "alinery" | "starred" | "downloaded" | "update" | "changed" | "diverged" | "withdrawn" | "explore" | "listings";
 const VIEWS: { key: View; group: "Library" | "Signals" | "Community"; label: string; icon: LucideIcon; test?: (row: LibraryRow, starred: Set<string>) => boolean }[] = [
   { key: "all", group: "Library", label: "All", icon: Layers, test: (row) => row.state !== "remote" },
-  { key: "starred", group: "Library", label: "Starred", icon: Star, test: (row, starred) => starred.has(row.id) },
-  { key: "mine", group: "Library", label: "Mine", icon: User, test: (row) => row.origin.kind === "mine" && row.state !== "remote" },
-  { key: "downloaded", group: "Library", label: "Downloaded", icon: Download, test: (row) => row.origin.kind === "download" },
-  { key: "team", group: "Library", label: "Team", icon: GitBranch, test: (row) => row.origin.kind === "team" },
   { key: "alinery", group: "Library", label: "Alinery", icon: Triangle, test: (row) => row.origin.kind === "alinery" },
+  { key: "starred", group: "Library", label: "Starred", icon: Star, test: (row, starred) => starred.has(row.id) },
   { key: "update", group: "Signals", label: "Updates", icon: Activity, test: (row) => row.state === "update" },
   { key: "changed", group: "Signals", label: "Not published", icon: Activity, test: (row) => row.state === "changed" },
   { key: "diverged", group: "Signals", label: "Edited, update waiting", icon: Activity, test: (row) => row.state === "diverged" },
   { key: "withdrawn", group: "Signals", label: "Withdrawn", icon: Activity, test: (row) => row.state === "withdrawn" },
+  { key: "downloaded", group: "Community", label: "Downloaded", icon: Download, test: (row) => row.origin.kind === "download" },
   { key: "explore", group: "Community", label: "Explore", icon: Compass },
-  { key: "listings", group: "Community", label: "Your listings", icon: Upload, test: (row) => row.publication !== null },
+  { key: "listings", group: "Community", label: "Your published", icon: Upload, test: (row) => row.publication !== null },
 ];
 const NOTES: Record<LibraryRow["state"], string> = {
   builtin: "Built-ins update with the app. A copy is yours: it never changes underneath you.",
   team: "Your team's version, committed in alinery/playbooks and changed through git. Copy it to experiment without touching the repo.",
   broken: "This definition doesn't read. Fix the file, then come back to the library.",
   yours: "Sign in to see whether this is published.",
-  private: "Only on this machine. Publishing makes it a community listing.",
+  private: "Not published yet. Publishing puts it in your global library as a community listing.",
   live: "This file is exactly what people download.",
   changed: "You saved changes after publishing. People download the last published version until you publish again.",
-  remote: "Your listing has no copy on this machine. Download it to edit and republish.",
+  remote: "Your published playbook has no copy on this machine. Download it to edit and publish again.",
   downloaded: "Not checked against the community yet.",
   synced: "Unedited and current.",
   edited: "You edited this copy. An update from the author asks before it overwrites your edits.",
@@ -201,8 +201,26 @@ function RingLegend() {
   );
 }
 
-export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCreateTask: (reference: PlaybookRef) => void }) {
+export function Playbooks({ repoPath, repos, onCreateTask }: { repoPath?: string; repos?: string[]; onCreateTask: (reference: PlaybookRef) => void }) {
   const [catalog, setCatalog] = useState<PlaybookCatalog | null>(null);
+  // The repositories the tree lists: the ones open in this window, else what the caller knows, else the active one.
+  const [openRepos, setOpenRepos] = useState<string[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    void ipc
+      .listChatRepos()
+      .then((list) => {
+        if (live && list.length > 0) setOpenRepos(list);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  const repoList = [...new Set([...(openRepos ?? (repos && repos.length > 0 ? repos : repoPath ? [repoPath] : [])), ...(repoPath ? [repoPath] : [])])];
+  // Catalogs of the repositories the tree is not already showing as the active library.
+  const [repoCatalogs, setRepoCatalogs] = useState<Map<string, PlaybookCatalog>>(new Map());
+  const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<ScopedPlaybook | null>(null);
   const [editorRepoPath, setEditorRepoPath] = useState(repoPath);
   const [source, setSource] = useState("");
@@ -248,7 +266,13 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   // True only while this dialog has a pairing in flight, so Cancel knows what to cancel.
   const [signupPairing, setSignupPairing] = useState(false);
   const signupGeneration = useRef(0);
-  const [publishConfirm, setPublishConfirm] = useState<{ reference: PlaybookRef; playbookKey: string; title: string; fromVersion: number | null } | null>(null);
+  const [publishConfirm, setPublishConfirm] = useState<{
+    reference: PlaybookRef;
+    playbookKey: string;
+    title: string;
+    fromVersion: number | null;
+    promote: { copyKey: string } | null;
+  } | null>(null);
   // null = closed. Opened before the fetch so the click is never silent; source stays
   // empty until the document arrives.
   const [preview, setPreview] = useState<{ name: string; source: string; error: string } | null>(null);
@@ -434,6 +458,21 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       if (currentRepo.current === owner) setCatalogError(errorText(e));
     }
   };
+  // Expanding a repository in the tree reads its own catalog once; the active repository already has one.
+  const toggleRepo = (repo: string) => {
+    const expanded = expandedRepos.has(repo);
+    setExpandedRepos((current) => {
+      const next = new Set(current);
+      if (expanded) next.delete(repo);
+      else next.add(repo);
+      return next;
+    });
+    if (expanded || repo === repoPath || repoCatalogs.has(repo)) return;
+    void listPlaybookCatalog(repo)
+      .then((value) => setRepoCatalogs((current) => new Map(current).set(repo, value)))
+      .catch((e) => toast.error(`Couldn't read ${repoName(repo)}'s playbooks: ${errorText(e)}`));
+  };
+  const repoCatalogOf = (repo: string) => (repo === repoPath ? catalog : (repoCatalogs.get(repo) ?? null));
   const discard = async () =>
     !dirty ||
     (await askConfirm({
@@ -451,9 +490,8 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     setDiagnostics([]);
     setOpen(true);
   };
-  const load = async (reference: PlaybookRef) => {
+  const load = async (reference: PlaybookRef, owner: string | undefined = repoPath) => {
     if (busy || !(await discard())) return;
-    const owner = repoPath;
     setBusy(true);
     setError("");
     setNotice("");
@@ -790,18 +828,47 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       await refreshDownloads(owner);
     }
   };
-  const openPublishConfirm = (confirm: { reference: PlaybookRef; playbookKey: string; title: string; fromVersion: number | null }) => {
+  const openPublishConfirm = (confirm: { reference: PlaybookRef; playbookKey: string; title: string; fromVersion: number | null; promote?: { copyKey: string } | null }) => {
     setAttest(false);
     setPublishLabel("");
     setShowPublishLabel(false);
     setPublishMessage("");
     setPublishDiagnostics([]);
-    setPublishConfirm(confirm);
+    setPublishConfirm({ ...confirm, promote: confirm.promote ?? null });
+  };
+  // A repository playbook that is published stops being the source of truth: the listing is downloaded into the machine's
+  // global library, and the repository keeps only an untied copy under a new key. This runs after the listing is saved.
+  const promotePublished = async (id: string, reference: PlaybookRef, copyKey: string) => {
+    if (!repoPath) return;
+    const first = await community.importCommunityPlaybook({ id, repoPath, overwrite: false, global: true });
+    const imported = first.kind === "conflict" ? await community.importCommunityPlaybook({ id, repoPath, overwrite: true, global: true }) : first;
+    // Without the global copy the published listing has no main version, so the repository original is left alone.
+    if (imported.kind === "invalid" || imported.kind === "failed" || imported.kind === "needs_account") {
+      const message = imported.kind === "failed" ? imported.message : imported.kind === "invalid" ? errorText(imported) : "Sign in to download the published playbook.";
+      setError(`Published, but the global copy was not downloaded: ${message}`);
+      await reloadMine();
+      await refresh(repoPath);
+      return;
+    }
+    try {
+      const loaded = await readPlaybook(reference, repoPath);
+      const copySource = await renderPlaybookSource({ ...loaded.definition, key: copyKey });
+      await savePlaybookSource({ target: { scope: "repo", key: copyKey }, source: copySource, overwrite: false }, repoPath);
+      await deletePlaybookSource(reference, repoPath);
+    } catch (e) {
+      setError(`Published and downloaded, but the repository copy could not be made: ${errorText(e)}`);
+    }
+    await community.recordPublication({ id, reference: { scope: "global", key: reference.key }, repoPath }).catch(() => {});
+    setNotice(`${reference.key} is published and downloaded for every repository. ${copyKey} stays in this repo as a copy.`);
+    await reloadMine();
+    await refresh(repoPath);
+    await reloadImports(repoPath);
+    await refreshDownloads(repoPath);
   };
   const confirmPublish = async () => {
     if (!repoPath || !publishConfirm) return;
     if (showPublishLabel && !labelPattern.test(publishLabel)) return;
-    const { reference } = publishConfirm;
+    const { reference, promote } = publishConfirm;
     const result = showPublishLabel
       ? await community.publishCommunityPlaybook({ reference, repoPath, label: publishLabel })
       : await community.publishCommunityPlaybook({ reference, repoPath });
@@ -826,6 +893,10 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       return;
     }
     setPublishConfirm(null);
+    if (promote) {
+      await promotePublished(result.id, reference, promote.copyKey);
+      return;
+    }
     await reloadMine();
     await refresh(repoPath);
   };
@@ -934,23 +1005,28 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const publish = (row: LibraryRow) => {
     const reference = row.reference;
     if (!reference) return;
-    void withAccount(async () => openPublishConfirm({ reference, playbookKey: reference.key, title: row.title, fromVersion: row.publication?.version ?? null }));
+    // A repository playbook is promoted: the published version becomes the global main version, and the repo keeps a copy.
+    const promote = reference.scope === "repo" && row.origin.kind === "local" ? { copyKey: `${reference.key}-copy` } : null;
+    void withAccount(async () => openPublishConfirm({ reference, playbookKey: reference.key, title: row.title, fromVersion: row.publication?.version ?? null, promote }));
   };
-  const download = (id: string, global = false) => void withAccount(() => importPublication(repoPath, id, false, global));
-  const downloadButtons = (id: string, primary: boolean) => (
+  // Downloads go to the machine's global library unless the person explicitly asks for a repository copy.
+  const download = (id: string, global = true) => void withAccount(() => importPublication(repoPath, id, false, global));
+  const downloadButtons = (id: string, primary: boolean, withRepoCopy = false) => (
     <>
       <button
         type="button"
         className={primary ? "btn primary" : "btn"}
         disabled={!repoPath}
-        title={repoPath ? undefined : "Select a repository before downloading."}
+        title={repoPath ? "Keep it in this machine's library for every repository" : "Select a repository before downloading."}
         onClick={() => download(id)}
       >
-        Download to this repo
+        Download
       </button>
-      <button type="button" className="btn ghost" disabled={!repoPath} title="Keep it in this machine's library for every repository" onClick={() => download(id, true)}>
-        For all repos
-      </button>
+      {withRepoCopy && (
+        <button type="button" className="btn ghost" disabled={!repoPath} title="Also keep a copy in this repository only" onClick={() => download(id, false)}>
+          Copy to this repo
+        </button>
+      )}
     </>
   );
   const keepAsMine = async (row: LibraryRow) => {
@@ -1097,7 +1173,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         return (
           row.publication && (
             <>
-              {downloadButtons(row.publication.id, true)}
+              {downloadButtons(row.publication.id, true, true)}
               {unpublishButton}
             </>
           )
@@ -1119,6 +1195,25 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       return [
         { label: "Source", value: "Committed in alinery/playbooks", lit: true },
         { label: "Your copy", value: "None. Edits go through the repo.", lit: false },
+      ];
+    }
+    if (row.origin.kind === "download" && row.publication) {
+      return [
+        {
+          label: `Your copy · ${here}`,
+          value: row.state === "changed" ? <span className="t-act">Saved ahead of listing</span> : "Saved",
+          lit: true,
+        },
+        {
+          label: "Your listing",
+          value: (
+            <>
+              alinery.ai · v{row.publication.version}
+              {row.state === "live" && <span className="t-ok"> matches</span>}
+            </>
+          ),
+          lit: true,
+        },
       ];
     }
     if (row.origin.kind === "download") {
@@ -1251,7 +1346,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         {item.description && <p>{item.description}</p>}
         {ringOf(item.title, placeholderSteps(item.stepCount), "panel")}
         <div className="pb-acts">
-          {downloadButtons(item.id, true)}
+          {downloadButtons(item.id, true, true)}
           <button type="button" className="btn ghost" onClick={() => previewListing(item.id, name)}>
             Preview
           </button>
@@ -1462,6 +1557,42 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     </section>
   );
 
+  // The tree of open repositories: each expands to the playbooks that live in that repository, including copies of published
+  // or downloaded playbooks. It replaces the old Team view; a committed playbook is just one more row here.
+  const repoTree = repoList.length > 0 && (
+    <div className="pb-rail-group pb-repos">
+      <span className="pb-eyebrow">Repositories</span>
+      {repoList.map((repo) => {
+        const expanded = expandedRepos.has(repo);
+        const repoCatalog = repoCatalogOf(repo);
+        const playbooks = repoCatalog?.candidates.filter((candidate) => candidate.source.reference.scope === "repo") ?? [];
+        return (
+          <div key={repo} className="pb-repo-node">
+            <button type="button" aria-expanded={expanded} aria-label={`${repoName(repo)} repository`} onClick={() => toggleRepo(repo)}>
+              {expanded ? <ChevronDown size={14} strokeWidth={1.5} aria-hidden="true" /> : <ChevronRight size={14} strokeWidth={1.5} aria-hidden="true" />}
+              <GitBranch size={14} strokeWidth={1.5} aria-hidden="true" />
+              {repoName(repo)}
+              <span className="pb-n">{repoCatalog ? playbooks.length : "…"}</span>
+            </button>
+            {expanded && (
+              <ul className="pb-repo-list">
+                {playbooks.map((candidate) => (
+                  <li key={candidate.source.reference.key}>
+                    <button type="button" onClick={() => void load(candidate.source.reference, repo)}>
+                      {candidate.title || candidate.source.reference.key}
+                    </button>
+                  </li>
+                ))}
+                {!repoCatalog && <li className="pb-repo-note">Loading…</li>}
+                {repoCatalog && playbooks.length === 0 && <li className="pb-repo-note">No playbooks in this repository.</li>}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
   const openRowStatus = selected ? rows.find((row) => row.id === playbookRefKey(selected.source.reference)) : undefined;
 
   return (
@@ -1614,6 +1745,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                         )}
                       </button>
                     ))}
+                    {group === "Library" && repoTree}
                   </div>
                 );
               })}
@@ -1741,6 +1873,12 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                 <dt>Version</dt>
                 <dd>{publishConfirm.fromVersion == null ? "Not published → 1" : `${publishConfirm.fromVersion} → ${publishConfirm.fromVersion + 1}`}</dd>
               </dl>
+              {publishConfirm.promote && (
+                <p className="dim">
+                  This repository playbook becomes a copy named <code>{publishConfirm.promote.copyKey}</code>. The published playbook is downloaded into this machine's global
+                  library for every repository, and that copy becomes the main version.
+                </p>
+              )}
               <Checkbox checked={attest} onChange={setAttest} label="Confirm you can share this playbook." />
               {showPublishLabel && (
                 <div className="field">
