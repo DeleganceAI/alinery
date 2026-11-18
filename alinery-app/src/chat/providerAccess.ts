@@ -47,6 +47,8 @@ export function useProviderAccess(enabled: boolean, repo?: string) {
   const armed = useRef<string | null>(null);
   /** An address this sign-in already failed to bind, so a taken port is tried once, not every poll. */
   const unbindable = useRef<string | null>(null);
+  /** The `port+path` an armed listener already gave up on: expiry arms nothing twice for one sign-in. */
+  const expired = useRef<string | null>(null);
   const [callbackArmed, setCallbackArmed] = useState(false);
 
   const disarm = useCallback(async () => {
@@ -108,7 +110,7 @@ export function useProviderAccess(enabled: boolean, repo?: string) {
           // the callback lands in this window rather than on an error page.
           const target = status.prompt?.type === "manual_code" ? loopbackTarget(status.prompt.placeholder) : null;
           const key = target ? `${target.port}${target.path}` : null;
-          if (target && key && armed.current !== key && unbindable.current !== key && isRemoteRepo(loginHost.current ?? "")) {
+          if (target && key && armed.current !== key && unbindable.current !== key && expired.current !== key && isRemoteRepo(loginHost.current ?? "")) {
             armed.current = key;
             const ready = await ipc.providerCallbackArm(target.port, target.path).then(
               () => true,
@@ -179,6 +181,19 @@ export function useProviderAccess(enabled: boolean, repo?: string) {
     [reply],
   );
 
+  // The listener gives up after ten minutes. Left alone, the panel would keep promising a pickup
+  // that is no longer coming, so expiry puts the paste fallback back in the prompt's place — and a
+  // re-arm on the next poll would undo that, so the expired target is not tried again.
+  useEffect(
+    () =>
+      ipc.onProviderCallbackExpired(() => {
+        if (armed.current) expired.current = armed.current;
+        armed.current = null;
+        setCallbackArmed(false);
+      }),
+    [],
+  );
+
   // A dialog torn down without Cancel must not leave the port held until the deadline.
   useEffect(() => () => void disarm(), [disarm]);
 
@@ -192,6 +207,7 @@ export function useProviderAccess(enabled: boolean, repo?: string) {
         loginHost.current = host;
         loginId.current = status.loginId;
         unbindable.current = null;
+        expired.current = null;
         setLogin(status);
         setBusy(provider);
       } catch (cause) {

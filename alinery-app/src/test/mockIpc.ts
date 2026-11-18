@@ -27,6 +27,7 @@ export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: Ex
   const cache = new Map<string, unknown>([
     ["onRemoteHostConnected", vi.fn(() => () => {})],
     ["onProviderCallback", vi.fn(() => () => {})],
+    ["onProviderCallbackExpired", vi.fn(() => () => {})],
     [
       "getTaskExecution",
       vi.fn(

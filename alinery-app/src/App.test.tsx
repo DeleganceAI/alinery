@@ -241,6 +241,7 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
     // Event subscriptions return their unlisten; the proxy's default is a rejected promise, which a
     // useEffect cleanup cannot be.
     onProviderCallback: vi.fn(() => () => {}),
+    onProviderCallbackExpired: vi.fn(() => () => {}),
   };
   const cache: Record<string, unknown> = {};
   const ipcModule = new Proxy(ipcMocks, {
