@@ -1,10 +1,10 @@
 import { ArrowDownRight, ArrowUpRight, MessageSquare, X } from "lucide-react";
-import { type PointerEvent as ReactPointerEvent, type UIEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, type UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
 import type { ChatPrefs } from "../chat/visibility";
 import * as ipc from "../ipc";
-import { useChatThreads, useOpenChatRepos } from "../sync/chat";
+import { readChatThreadImage, useChatThreads, useOpenChatRepos } from "../sync/chat";
 import { toast } from "../toast";
 import { usePointerDrag } from "../usePointerDrag";
 import { ChatPane } from "./ChatPane";
@@ -237,6 +237,15 @@ export function QuickChat({
     },
   });
 
+  // A prompt's images are the thread's own copies, read back by name. The scope names the thread, so a
+  // cached read from one thread is never served to another.
+  const resolvedRepo = resolved?.repo_path ?? "";
+  const resolvedThread = resolved?.session.id ?? "";
+  const readThreadImages = useMemo(
+    () => ({ scope: `thread:${resolvedRepo}/${resolvedThread}`, read: (name: string) => readChatThreadImage(resolvedRepo, resolvedThread, name) }),
+    [resolvedRepo, resolvedThread],
+  );
+
   const box = placedBox(point, size, frame);
   const atDefault = sameBox(box, defaultBox(frame));
   // The journal usually arrives a frame after the pane. Stay armed until there is something to land on,
@@ -431,7 +440,13 @@ export function QuickChat({
                 <p>This thread is open in the terminal.</p>
               </div>
             ) : (
-              <ChatPane entries={chat.transcript.entries} status={chat.activity.status} visibility={paneVisibility} atStart={chat.transcript.fileStart === 0} />
+              <ChatPane
+                entries={chat.transcript.entries}
+                status={chat.activity.status}
+                visibility={paneVisibility}
+                atStart={chat.transcript.fileStart === 0}
+                readImage={readThreadImages}
+              />
             )}
             {chat.disconnected !== null ? (
               <div className="chat-banner" role="alert">

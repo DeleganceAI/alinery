@@ -10,6 +10,8 @@ import { applyRpcLine, emptyTranscript } from "../chatTranscript";
 import { stubScrollSize } from "../test/scroll";
 import { ChatPane } from "./ChatPane";
 
+vi.mock("../WindowChrome", () => ({ WindowControls: () => null }));
+
 const at = Date.parse("2026-09-05T12:11:00Z");
 
 function pane(entries: ChatEntry[], visibility = DEFAULT_CHAT_VISIBILITY, status: "idle" | "running" | "waiting_approval" = "idle") {

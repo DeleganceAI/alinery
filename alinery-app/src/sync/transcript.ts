@@ -30,6 +30,8 @@ export function messageOf(item: TranscriptItem): VinculumMessage {
             ...(kind.value.name !== undefined ? { name: kind.value.name } : {}),
             ...(kind.value.arguments ? { arguments: toJson(ValueSchema, kind.value.arguments) } : {}),
           };
+        case "image":
+          return { type: "image", mimeType: kind.value.mimeType, ...(kind.value.name ? { name: kind.value.name } : {}) };
         default:
           return { type: "text", text: "" };
       }

@@ -56,7 +56,8 @@ describe("prepareChatAttachments", () => {
     expect(writeBytes).toHaveBeenCalledWith("shot.png", [1, 2]);
     expect(readImage).toHaveBeenCalledWith("shot.png");
     expect(prepared.message).toBe("");
-    expect(prepared.images).toEqual([{ type: "image", data: "aa", mimeType: "image/png" }]);
+    // The copy's own name rides with the part: the transcript reports it, so the pane can read the file back.
+    expect(prepared.images).toEqual([{ type: "image", data: "aa", mimeType: "image/png", name: "shot.png" }]);
     vi.unstubAllGlobals();
   });
 

@@ -67,7 +67,9 @@ export async function prepareChatAttachments(store: ChatAttachmentStore, caption
     if (item.kind !== "image") continue;
     const name = item.copiedName ?? item.name;
     const image = await store.readImage(name);
-    images.push({ type: "image", data: image.data, mimeType: image.mime_type });
+    // The name rides to the daemon so the transcript can report which file this is: the pane reads that copy
+    // back instead of the bytes travelling in every frame.
+    images.push({ type: "image", data: image.data, mimeType: image.mime_type, name });
   }
   return { message: buildPromptMessage(caption, files, store.trailerDir), images, copied };
 }

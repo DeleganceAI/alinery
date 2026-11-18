@@ -83,3 +83,27 @@ test("each message carries when it was complete: a reply's start plus its durati
   ]);
   expect(reply.map((message) => message.at)).toEqual([1000, 2500, undefined]);
 });
+
+test("a prompt's images ride as named parts, so an image-only send is still a row", () => {
+  const reply = formatTranscript([
+    transcriptSource("u1", {
+      role: "user",
+      content: [
+        { type: "text", text: "what is this?" },
+        { type: "image", data: "AAAA", mimeType: "image/png", name: "shot.png" },
+        { type: "image", data: "BBBB", mimeType: "image/jpeg" },
+      ],
+    }),
+    transcriptSource("u2", { role: "user", content: [{ type: "image", data: "CCCC", mimeType: "image/png", name: "only.png" }] }),
+    transcriptSource("u3", { role: "user", content: [{ type: "text", text: "   " }] }),
+  ]);
+  expect(reply.map((message) => message.id)).toEqual(["u1", "u2"]);
+  expect(reply[0]?.content).toEqual([
+    { type: "text", text: "what is this?" },
+    { type: "image", mimeType: "image/png", name: "shot.png" },
+    { type: "image", mimeType: "image/jpeg" },
+  ]);
+  expect(reply[1]?.content).toEqual([{ type: "image", mimeType: "image/png", name: "only.png" }]);
+  // The bytes stay on disk: the pane reads them back through BlobService.
+  expect(JSON.stringify(reply).includes("AAAA")).toBe(false);
+});

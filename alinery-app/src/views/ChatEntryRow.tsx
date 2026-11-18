@@ -1,6 +1,7 @@
 import { memo, type ReactNode, useState } from "react";
 import { ChatMarkdown, CopyChatMessageButton } from "../chat/CopyMessage";
 import { type ChatStampParts, formatChatStamp, formatIso } from "../chat/format";
+import { PromptImages } from "../chat/PromptImages";
 import { type Actor, type ChatEntry, type ChatEntryType, TYPE_LABEL, whoLabel, whoLane } from "../chat/types";
 
 function kindFace(type: ChatEntryType): string {
@@ -23,7 +24,7 @@ function copyTextForEntry(entry: ChatEntry): string {
   switch (entry.type) {
     case "prompt":
     case "follow_up": {
-      const attachments = entry.attachments?.map((item) => `Attached ${item.kind}: ${item.name}`) ?? [];
+      const attachments = entry.attachments?.map((item) => `Attached ${item.kind}: ${item.name || item.kind}`) ?? [];
       return [entry.text, ...attachments].filter(Boolean).join("\n");
     }
     case "slash":
@@ -126,11 +127,7 @@ function UserRowBody({ entry }: { entry: Extract<ChatEntry, { type: "prompt" | "
           {folded ? `Show all · ${lines} ${lines === 1 ? "line" : "lines"}` : "Show less"}
         </button>
       ) : null}
-      {images.length > 0 ? (
-        <div className="chat-entry-thumbs">
-          {images.map((item) => (item.src ? <img key={`${item.name}:${item.src}`} alt={item.name} src={item.src} /> : <span key={item.name}>{item.name}</span>))}
-        </div>
-      ) : null}
+      {images.length > 0 ? <PromptImages images={images} /> : null}
       {files.length > 0 ? (
         <div className="chat-entry-chips">
           {files.map((item) => (

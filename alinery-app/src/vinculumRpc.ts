@@ -1,6 +1,8 @@
 /** Official Vinculum RPC stdin commands. Never `{ method, params }`. */
 
-export type ImageContent = { type: "image"; data: string; mimeType: string };
+/** An image part of a prompt. `name` is the copy in the session's attachment directory, so the transcript can
+ *  point the pane at the same file the model read instead of carrying its bytes back. */
+export type ImageContent = { type: "image"; data: string; mimeType: string; name?: string };
 
 let seq = 0;
 const nextId = (): string => {

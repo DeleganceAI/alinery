@@ -337,7 +337,8 @@ describe("ChatView", () => {
       fireEvent.change(input, { target: { value: "what is this" } });
       fireEvent.click(screen.getByRole("button", { name: "Send" }));
       await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalled());
-      expect(mocks.chatPrompt.mock.lastCall?.[3]).toEqual([{ type: "image", data: "aa", mimeType: "image/png" }]);
+      // The part is named after the copy the daemon holds, so the transcript can point the pane at the same file.
+      expect(mocks.chatPrompt.mock.lastCall?.[3]).toEqual([{ type: "image", data: "aa", mimeType: "image/png", name: "shot.png" }]);
     } finally {
       createObjectURL.mockRestore();
       vi.unstubAllGlobals();
