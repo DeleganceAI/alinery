@@ -3,27 +3,32 @@ import { Maximize2, Minimize2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { CANVAS_SANDBOX, lockedLoader, withCanvasCsp } from "../canvasSandbox";
 import { ChatMarkdown } from "../chat/CopyMessage";
+import { ErrorBoundary } from "../ErrorBoundary";
 import { closeCanvasPanel, readCanvasPanel } from "../sync/chat";
 import { toast } from "../toast";
 import { FilePanel, FilesPanel, Grid } from "./CanvasFiles";
 import { errorMessage } from "./chatThreadSession";
 
-type Body = { rev: bigint; text?: string; error?: string };
+type Body = { rev: bigint; kind: string; text?: string; error?: string };
 
-/** A panel's body, read again only when its rev moves; the last body stays up while the next one loads. */
+/**
+ * A panel's body, read again only when its rev moves; the last body stays up while the next one loads. The body
+ * carries the kind it was read for: an agent can show a new kind under the same panel id, and drawing the old
+ * markdown text as the new table would throw.
+ */
 function usePanelBody(repo: string, threadId: string, panel: CanvasPanel): Body | undefined {
   const [body, setBody] = useState<Body>();
-  const { id, rev } = panel;
+  const { id, rev, kind } = panel;
   useEffect(() => {
     let live = true;
     readCanvasPanel(repo, threadId, id).then(
-      (text) => live && setBody({ rev, text }),
-      (error: unknown) => live && setBody({ rev, error: errorMessage(error) }),
+      (text) => live && setBody({ rev, kind, text }),
+      (error: unknown) => live && setBody({ rev, kind, error: errorMessage(error) }),
     );
     return () => {
       live = false;
     };
-  }, [repo, threadId, id, rev]);
+  }, [repo, threadId, id, rev, kind]);
   return body;
 }
 
@@ -71,18 +76,13 @@ function ChartPanel({ text }: { text: string }) {
 }
 
 function PanelBody({ kind, text, title, where }: { kind: string; text: string; title: string; where: { repo: string; threadId: string; panel: string } }) {
-  try {
-    // Keyed by the body: showing a file again (a new size or time) reads it again.
-    if (kind === "file") return <FilePanel key={text} where={where} text={text} />;
-    if (kind === "files") return <FilesPanel key={text} where={where} text={text} />;
-    if (kind === "markdown") return <ChatMarkdown text={text} />;
-    if (kind === "table") return <TablePanel text={text} />;
-    if (kind === "chart") return <ChartPanel text={text} />;
-    if (kind === "html")
-      return <iframe className="canvas-frame" sandbox={CANVAS_SANDBOX} referrerPolicy="no-referrer" srcDoc={withCanvasCsp(text)} title={title || "Canvas page"} />;
-  } catch (error) {
-    return <p className="canvas-error">{errorMessage(error)}</p>;
-  }
+  // Keyed by the body: showing a file again (a new size or time) reads it again.
+  if (kind === "file") return <FilePanel key={text} where={where} text={text} />;
+  if (kind === "files") return <FilesPanel key={text} where={where} text={text} />;
+  if (kind === "markdown") return <ChatMarkdown text={text} />;
+  if (kind === "table") return <TablePanel text={text} />;
+  if (kind === "chart") return <ChartPanel text={text} />;
+  if (kind === "html") return <iframe className="canvas-frame" sandbox={CANVAS_SANDBOX} referrerPolicy="no-referrer" srcDoc={withCanvasCsp(text)} title={title || "Canvas page"} />;
   return <p className="canvas-error">Unknown panel kind {kind}.</p>;
 }
 
@@ -117,7 +117,10 @@ function CanvasSlot(props: { repo: string; threadId: string; panel: CanvasPanel;
         {body?.error ? (
           <p className="canvas-error">{body.error}</p>
         ) : body?.text === undefined ? null : (
-          <PanelBody kind={panel.kind} text={body.text} title={label} where={{ repo, threadId, panel: panel.id }} />
+          // A panel that throws while drawing shows its error here; the rest of the app keeps running. A new body retries.
+          <ErrorBoundary key={`${body.rev}:${body.kind}`} fallback={(error) => <p className="canvas-error">This panel could not be drawn: {errorMessage(error)}</p>}>
+            <PanelBody kind={body.kind} text={body.text} title={label} where={{ repo, threadId, panel: panel.id }} />
+          </ErrorBoundary>
         )}
       </div>
     </section>
