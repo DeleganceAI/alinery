@@ -35,6 +35,13 @@ test("a gated execution stays locked until it is permitted, and auto-approve-all
   expect(completionPermission({ ...execution, automatic: true }, false)).toEqual({ kind: "automatic" });
 });
 
+test("with no automatic snapshot the projection follows the step's playbook default, as the engine does", () => {
+  const execution = { id: "e", sessionId: "s", permitted: false };
+  expect(completionPermission(execution, false, false)).toEqual({ kind: "locked" });
+  expect(completionPermission(execution, false, true)).toEqual({ kind: "automatic" });
+  expect(completionPermission({ ...execution, automatic: true }, false, false)).toEqual({ kind: "automatic" });
+});
+
 test("reopening a stopped session removes the exit stamp", () => {
   const next = completeSessionMeta({ id: "s", worktree: "/wt", created: 3, ended_at: 9, exit_code: 0 }, { ended_at: null, exit_code: null }, "s", "/wt", 10);
   expect(next.ended_at).toBeUndefined();

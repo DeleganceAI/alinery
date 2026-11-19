@@ -480,11 +480,19 @@ export async function setAutoApproveAll(repo: string, slug: string, enabled: boo
     }
     // Completion reads execution.json, not task.md. The task is written first so a failed execution write leaves the engine off
     // rather than approving while the file says off.
+    const previous = task.auto_approve_all;
     task.auto_approve_all = enabled;
     await writeTaskUnlocked(repo, task);
     if (state.auto_approve_all !== enabled) {
       state.auto_approve_all = enabled;
-      await writeExecutionState(repo, slug, state);
+      try {
+        await writeExecutionState(repo, slug, state);
+      } catch (e) {
+        // The toggle reads task.md; leaving it on while the gate stays locked would lie to the user.
+        task.auto_approve_all = previous;
+        await writeTaskUnlocked(repo, task).catch(() => undefined);
+        throw e;
+      }
     }
     return task;
   });

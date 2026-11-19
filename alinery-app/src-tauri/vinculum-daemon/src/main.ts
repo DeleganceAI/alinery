@@ -720,7 +720,7 @@ function phaseResultText(reply: Record<string, unknown>): string {
   if (typeof reply.error === "string" && reply.error) return `Alinery rejected phase completion: ${reply.error}. Keep this session open and resolve the error.`;
   if (reply.outcome === "accepted") return "Alinery accepted phase completion. Do no further work; this session is finishing.";
   if (reply.outcome === "waiting_for_approval") {
-    return "Completion permission is still locked. Keep this session open. Do not call the completion tool again until the user grants permission or tells you to continue the work.";
+    return "Completion permission is still locked. Keep this session open. A chat reply does not unlock it: the user unlocks it with Finish step in this session, Allow this session to complete in the task's History tab, or Auto Approval All. Tell them that, do only the work they ask for, and call the completion tool again once they say it is unlocked.";
   }
   if (reply.outcome === "waiting_for_input") {
     const diagnostics = Array.isArray(reply.diagnostics) ? reply.diagnostics.filter((item) => typeof item === "string").join("\n") : "";

@@ -194,7 +194,7 @@ fn parse_execution_state(bytes: &[u8]) -> Result<TaskExecutionState, String> {
 }
 
 /// Saved progress this build cannot read, made readable. Two cases, both safe to fill in:
-/// - records from before `permission` was required lack it. `locked` grants nothing, so it cannot approve anything.
+/// - records from before `permission` was required lack it. They get `automatic` when their step is in `enabled_steps`, else `locked`, which grants nothing.
 /// - the `version: 2` format of another branch (main), whose records carry a continuation mode instead. It is read
 ///   as version 1: the extra fields are carried along unread, and with no engine state the daemon shows the task's
 ///   runs as history only, so nothing is launched from records it does not understand.
@@ -208,9 +208,20 @@ fn repaired_execution_state(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
         value["version"] = serde_json::json!(1);
         changes += 1;
     }
+    let enabled: Vec<String> = value
+        .get("enabled_steps")
+        .and_then(serde_json::Value::as_array)
+        .map(|steps| steps.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+        .unwrap_or_default();
     for record in value.get_mut("executions")?.as_object_mut()?.values_mut().filter_map(|record| record.as_object_mut()) {
         if !record.contains_key("permission") {
-            record.insert("permission".into(), serde_json::json!({ "kind": "locked" }));
+            // A step the user approved at creation is automatic; stamping it `locked` would stop its agent on a gate nobody set.
+            let approved = record
+                .get("candidate")
+                .and_then(|c| c.get("step_key"))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|key| enabled.iter().any(|e| e == key));
+            record.insert("permission".into(), serde_json::json!({ "kind": if approved { "automatic" } else { "locked" } }));
             changes += 1;
         }
     }

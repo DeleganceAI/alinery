@@ -14,10 +14,13 @@ function lifecycle(execution: Execution): string {
   return "running";
 }
 
-/** A closed gate stays locked until this execution is permitted. Auto-approve-all opens it without rewriting the snapshot. */
-export function completionPermission(execution: Pick<Execution, "id" | "sessionId" | "permitted" | "automatic">, autoApproveAll: boolean): Record<string, unknown> {
+/**
+ * A closed gate stays locked until this execution is permitted. Auto-approve-all opens it without rewriting the snapshot.
+ * With no snapshot the engine gates on the step's playbook default (`fallbackGate`), so this does too.
+ */
+export function completionPermission(execution: Pick<Execution, "id" | "sessionId" | "permitted" | "automatic">, autoApproveAll: boolean, fallbackGate = true): Record<string, unknown> {
   if (execution.permitted) return { kind: "human_granted", execution_id: execution.id, session_id: execution.sessionId ?? "" };
-  if (execution.automatic === false && !autoApproveAll) return { kind: "locked" };
+  if ((execution.automatic ?? fallbackGate) === false && !autoApproveAll) return { kind: "locked" };
   return { kind: "automatic" };
 }
 
@@ -43,7 +46,7 @@ export function projectExecution(execution: Execution, autoApproveAll = false, p
     is_coding_step: false,
     start_requested: true,
     lifecycle: lifecycle(execution),
-    permission: completionPermission(execution, autoApproveAll),
+    permission: completionPermission(execution, autoApproveAll, project?.steps.find((step) => step.key === execution.step)?.autoAdvanceDefault),
     receipt_id: execution.receipt ? execution.id : null,
     exit_code: null,
     shutdown_confirmed: execution.status === "done" || execution.status === "failed",

@@ -205,6 +205,31 @@ fn repair_fills_a_missing_permission_keeps_the_original_and_reads_afterwards() {
 }
 
 #[test]
+fn repair_does_not_lock_a_step_the_task_enabled() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    persist_owner_fixture(&mut f);
+    let path = execution_state_path(&f.repo, "task").unwrap();
+    let mut json: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    json["enabled_steps"] = serde_json::json!(["work"]);
+    let record = |step: &str| {
+        serde_json::json!({
+            "id": step, "binding_key": "k",
+            "candidate": {"step_key": step, "context_id": "root", "inputs": {}, "complete_collection_id": null, "each_collection_id": null, "each_member_id": null, "manual": false},
+            "outputs": [], "parent_execution_ids": [], "depth": 0, "owner_session_id": "s", "previous_session_ids": [],
+            "launch": {"harness": "", "model": ""}, "is_coding_step": false, "start_requested": false,
+            "lifecycle": "running", "receipt_id": null, "exit_code": null, "shutdown_confirmed": false, "error": null
+        })
+    };
+    json["executions"]["e1"] = record("work");
+    json["executions"]["e2"] = record("review");
+    fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+    assert_eq!(repair_execution_state(&f.repo, "task").unwrap(), 2);
+    let state = read_execution_state(&f.repo, "task").unwrap();
+    assert_eq!(state.executions["e1"].permission, CompletionPermission::Automatic);
+    assert_eq!(state.executions["e2"].permission, CompletionPermission::Locked);
+}
+
+#[test]
 fn repair_reads_main_branch_version_2_progress_as_version_1() {
     let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
     persist_owner_fixture(&mut f);
