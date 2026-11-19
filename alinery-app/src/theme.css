@@ -152,6 +152,18 @@ textarea {
   user-select: text;
 }
 
+/* A number field's spinner is painted by the browser in the page's colour scheme, and
+   the app never declares one, so the arrows stay black on a dark field (the same reason
+   an unstyled input's text is black). Say what the surface is; the arrows then follow the
+   theme. Scoped to number inputs: a root-level colour scheme would also repaint
+   scrollbars and every other UA widget, which is a separate decision. */
+input[type="number"] {
+  color-scheme: dark;
+}
+:root[data-theme="light"] input[type="number"] {
+  color-scheme: light;
+}
+
 /* Focus is a first-class treatment: 2px accent ring, offset from the control
    edge, on every interactive element (DESIGN.md §Accessibility). */
 :where(button, [href], input, select, textarea, summary, [tabindex]):focus-visible {
