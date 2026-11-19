@@ -279,7 +279,7 @@ export function SessionView({
   }, [repoPath, taskSlug, id]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [executionError, setExecutionError] = useState("");
-  const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only;
+  const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only && !executionView.state.engine_unavailable;
   const [completionBusy, setCompletionBusy] = useState(false);
   const [dismissedCompletionId, setDismissedCompletionId] = useState("");
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
@@ -1071,6 +1071,10 @@ export function SessionView({
   });
   const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting ? "waiting_approval" : turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;
+  // "Continue working" hides the card only until the agent's next locked completion reply, which is a new request.
+  useEffect(() => {
+    if (agentState === "waiting_for_approval") setDismissedCompletionId("");
+  }, [agentState]);
   const composerCanAbort = canAbortChatSession(messageReadiness);
   const sendNowEnabled =
     turnActive &&
@@ -1285,6 +1289,11 @@ export function SessionView({
             Start this queued session
           </button>
         </div>
+      )}
+      {executionView?.state.engine_unavailable && !executionError && (
+        <InlineStatus tone="warning" detail={executionView.state.engine_unavailable}>
+          Completion grants and queued starts are unavailable for this task.
+        </InlineStatus>
       )}
       {executionError && (
         <InlineStatus tone="warning" detail={executionError}>

@@ -10,7 +10,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { readCompactionSettings } from "./compaction.ts";
-import { completeSession, engineAxis, enginePlaybook, sessionHarnessStatus, startGraphs } from "./graph.ts";
+import { completeSession, completionWaitCleared, engineAxis, enginePlaybook, sessionHarnessStatus, sessionPermitted, startGraphs } from "./graph.ts";
 import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
@@ -692,7 +692,9 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
   attach(harness.watchDoc(LiveDoc, conversationId, context), (value) => {
     const running = Boolean(value?.run);
     const finished = row.liveRun && !running;
+    const started = !row.liveRun && running;
     row.liveRun = running;
+    if (row.agent.state === "waiting_for_approval" && completionWaitCleared(row.agent.correlation_id, started, sessionPermitted(row.id))) row.agent = { state: "busy" };
     if (row.agent.state !== "waiting_for_input" && row.agent.state !== "waiting_for_approval") row.agent = { state: running ? "busy" : "idle" };
     commitSession(row.taskSlug, row.id);
     if (finished && !row.taskSlug) void maybeTitleChat(row);

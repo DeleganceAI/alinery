@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { stateHasStart } from "./domain/executionStore.ts";
 import type { SessionHooks } from "./graph.ts";
-import { completeSession, engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, taskShouldHold, tickGraphs } from "./graph.ts";
+import { completeSession, completionWaitCleared, engineExecutions, engineRefusal, executionModel, forgetTask, handoffForStep, liveSessionCap, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, taskShouldHold, tickGraphs } from "./graph.ts";
 
 describe("execution model", () => {
   test("uses the task default when the playbook leaves the model blank", () => {
@@ -314,4 +314,28 @@ describe("a coding step records its worktree", () => {
     const bare = mkdtempSync(join(tmpdir(), "vinculum-worktree-nogit-"));
     expect((await accept(bare, "nogit", true)).manifest?.worktree).toBeUndefined();
   }, 120_000);
+});
+
+describe("completion wait", () => {
+  test("a denied completion ends when the person continues or permits, and nothing else's wait does", () => {
+    const wait = "completion-permission:e1";
+    expect(completionWaitCleared(wait, false, false)).toBe(false);
+    expect(completionWaitCleared(wait, true, false)).toBe(true);
+    expect(completionWaitCleared(wait, false, true)).toBe(true);
+    expect(completionWaitCleared("tool-approval:x", true, true)).toBe(false);
+    expect(completionWaitCleared(undefined, true, true)).toBe(false);
+  });
+});
+
+describe("engine refusal", () => {
+  test("a task whose creation is unfinished says so, and a ready one with no rejection says nothing", () => {
+    const repo = mkdtempSync(join(tmpdir(), "refusal-"));
+    const dir = join(repo, ".alinery", "tasks", "t");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "execution.json"), JSON.stringify({ creation: "creating" }));
+    expect(engineRefusal(repo, "t")).toBe("task creation has not finished");
+    writeFileSync(join(dir, "execution.json"), JSON.stringify({ creation: "ready" }));
+    expect(engineRefusal(repo, "t")).toBe("");
+    expect(engineRefusal(repo, "no-such-task")).toBe("");
+  });
 });

@@ -84,6 +84,20 @@ export async function completeSession(sessionId: string): Promise<Record<string,
   return phaseReply(await engine.requestCompletion(link.execId), link.execId);
 }
 
+/** Whether the session's execution has been permitted to finish (by a person; the engine's own gate is separate). */
+export function sessionPermitted(sessionId: string): boolean {
+  const link = bound.get(sessionId);
+  return link ? running.get(link.slug)?.engine.state.executions.get(link.execId)?.permitted === true : false;
+}
+
+/**
+ * The completion denial is local agent state with no Attention wait behind it, so nothing else ends it.
+ * It ends when the person continues the conversation (a new run starts) or permits the execution.
+ */
+export function completionWaitCleared(correlationId: string | undefined, runStarted: boolean, permitted: boolean): boolean {
+  return Boolean(correlationId?.startsWith("completion-permission:")) && (runStarted || permitted);
+}
+
 /** The person lets one live execution finish. Not found, or not live, is a precondition failure the caller reports. */
 export async function permitExecution(slug: string, execId: string): Promise<void> {
   const engine = running.get(slug)?.engine;
@@ -251,6 +265,23 @@ function ticketPath(taskDir: string): string | undefined {
   return undefined;
 }
 
+/** One daemon owns a task. The same check guards a session open (main.ts taskOpenAllowed). */
+function ownedElsewhere(execution: Record<string, unknown>): boolean {
+  return Boolean(owner && ((typeof execution.owning_lane === "string" && execution.owning_lane !== owner.lane) || (typeof execution.owning_app_config_identity === "string" && execution.owning_app_config_identity !== owner.identity)));
+}
+
+/**
+ * Why this daemon will never open an engine for the task, or "" when it can (or has). Only refusals that do not
+ * clear by themselves: a daemon that has simply not opened the task yet is not one, so no affordance is hidden early.
+ */
+export function engineRefusal(repo: string, slug: string): string {
+  if (rejected.has(slug)) return "its playbook.md could not be read";
+  const execution = readExecutionFile(join(repo, ".alinery", "tasks", slug));
+  if (!execution) return "";
+  if (execution.creation !== "ready") return "task creation has not finished";
+  return ownedElsewhere(execution) ? "another Alinery daemon owns this task" : "";
+}
+
 function openTask(repo: string, slug: string, hooks: SessionHooks, release = false) {
   if (running.has(slug) || rejected.has(slug)) return;
   const taskDir = join(repo, ".alinery", "tasks", slug);
@@ -258,8 +289,7 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
   if (!existsSync(sourcePath)) return;
   const execution = readExecutionFile(taskDir);
   if (!execution || execution.creation !== "ready") return;
-  // One daemon owns a task. The same check guards a session open (main.ts taskOpenAllowed).
-  if (owner && ((typeof execution.owning_lane === "string" && execution.owning_lane !== owner.lane) || (typeof execution.owning_app_config_identity === "string" && execution.owning_app_config_identity !== owner.identity))) return;
+  if (ownedElsewhere(execution)) return;
   const stored = loadEngineState(repo, slug);
   // Records the old Rust runner wrote. They stay as history; nothing is seeded, reserved or launched.
   if (stored.kind === "history_only") return;

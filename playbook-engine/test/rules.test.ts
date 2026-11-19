@@ -433,6 +433,22 @@ test('a failed status frees the slot, and resume launches that same execution on
   assert.equal(resumed.sessions.size, 1);
 });
 
+test('a grant survives the crash and resume of the execution it was given to', async () => {
+  const pb = playbook([step('review', { autoAdvanceDefault: false, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'r.md' }] })]);
+  const dir = taskDir();
+  const harness = new FakeHarness(async () => {});
+  const engine = openEngine(pb, harness, dir);
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  const [review] = byStep(engine, 'review');
+  await engine.permit(review.id);
+  harness.crash(review.sessionId!);
+  await engine.tick();
+  await engine.resume(review.id);
+  assert.equal(engine.state.executions.get(review.id)?.status, 'live');
+  assert.equal(engine.state.executions.get(review.id)?.permitted, true);
+});
+
 test('confirmExited records a process that is already gone and does not resume it', async () => {
   const pb = playbook([step('s', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'a.md' }] })]);
   const dir = taskDir();

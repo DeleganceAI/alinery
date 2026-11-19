@@ -77,7 +77,7 @@ export function CreateSessionPage({
   const existing = mode === "existing";
   const effectiveHarness = auxiliary ? harness : "vinculum";
   const exactTaskLoaded = loadedTaskId === taskId;
-  const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only;
+  const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only && !executionView.state.engine_unavailable;
 
   useEffect(() => {
     let alive = true;

@@ -431,7 +431,7 @@ export function TaskDetail({
     setTask((current) => (current && fetched && sameTask(current, fetched) ? current : fetched));
   };
   const allowCompletion = async (executionId: string) => {
-    if (executionView?.live?.status !== "available" || executionView.state.history_only || executionError || busy) return;
+    if (executionView?.live?.status !== "available" || executionView.state.history_only || executionView.state.engine_unavailable || executionError || busy) return;
     setBusy(`allow:${executionId}`);
     try {
       await allowExecutionCompletion(repoPath, slug, executionId, executionView.revision);
@@ -1273,7 +1273,8 @@ export function TaskDetail({
                         <button
                           type="button"
                           className="btn small"
-                          disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
+                          disabled={!!busy || !!executionError || executionView.live?.status !== "available" || !!executionView.state.engine_unavailable}
+                          title={executionView.state.engine_unavailable ? `Unavailable: ${executionView.state.engine_unavailable}` : undefined}
                           onClick={() => void allowCompletion(execution.id)}
                         >
                           Allow this session to complete · {execution.owner_session_id}

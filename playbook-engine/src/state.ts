@@ -146,7 +146,7 @@ export function apply(state: State, ev: Event): void {
       e.status = 'live';
       e.failure = null;
       delete e.unconfirmed;
-      if (ev.t === 'resumed') e.permitted = false; // permission belonged to the previous owner
+      // `permitted` survives a resume: the person already said this execution may finish, and the same execution is what resumes.
       return;
     case 'permitted':
       if (e) e.permitted = true;

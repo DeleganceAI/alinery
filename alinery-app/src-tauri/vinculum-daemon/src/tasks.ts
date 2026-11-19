@@ -5,7 +5,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { writeAtomic } from "./platform/fs.ts";
 import { withTaskMutation } from "./platform/lock.ts";
-import { engineExecutions, resumeFailedSession, runTask } from "./graph.ts";
+import { engineExecutions, engineRefusal, resumeFailedSession, runTask } from "./graph.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
 import type { Playbook, Step } from "playbook-engine/src/playbook.ts";
 import { projectExecution, projectionContext, taskAutoApproveAll } from "./domain/executionProjection.ts";
@@ -53,6 +53,9 @@ function executionState(repo: string, slug: string, lane: string, appIdentity: s
   }
   // Records the old runner wrote are history. The views offer no approve or resume for them.
   if (stored.kind === "history_only") state.history_only = true;
+  // Why this daemon has no engine to take a completion grant, so the views say so instead of failing on the click.
+  const refusal = engineRefusal(repo, slug);
+  if (refusal) state.engine_unavailable = refusal;
   state.owning_lane = typeof state.owning_lane === "string" ? state.owning_lane : lane;
   state.owning_app_config_identity = typeof state.owning_app_config_identity === "string" ? state.owning_app_config_identity : appIdentity;
   return state;
