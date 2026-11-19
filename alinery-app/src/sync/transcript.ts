@@ -2,7 +2,7 @@
 // index, then only what changed. This keeps the list the pane renders and resumes at its end after a drop.
 import { toJson } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
-import { createClient } from "@connectrpc/connect";
+import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { SessionService, type TranscriptItem, type WatchTranscriptResponse } from "alinery-proto/alinery/v1/sessions_pb";
 import type { SessionControls, VinculumMessage, VinculumTranscript } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
@@ -60,6 +60,7 @@ export function watchSessionTranscript(
   session: { taskSlug: string; id: string },
   apply: (reply: VinculumTranscript) => void,
   reconnectMs = RECONNECT_MS,
+  history?: { onMissing: (signal: AbortSignal) => Promise<void>; onError: (error: Error) => void },
 ): () => void {
   const ac = new AbortController();
   void (async () => {
@@ -68,22 +69,42 @@ export function watchSessionTranscript(
     while (!ac.signal.aborted) {
       try {
         const client = createClient(SessionService, daemonTransport(repo));
+        let needsReplay = false;
         for await (const frame of client.watchTranscript({ session, fromItem: BigInt(items.length) }, { signal: ac.signal })) {
           const next = applyFrame(items, frame);
           if (!next) {
             items = [];
+            needsReplay = true;
             break;
           }
           items = next;
           if (frame.controls) controls = controlsOf(frame.controls);
           if (!ac.signal.aborted) apply({ messages: items, ...controls });
         }
-      } catch {
-        /* the daemon is away or the session is not open yet: try again */
+        if (history && !needsReplay) return;
+      } catch (error) {
+        if (ac.signal.aborted) return;
+        if (history) {
+          const failure = ConnectError.from(error);
+          if (failure.code === Code.NotFound) {
+            await history.onMissing(ac.signal);
+            return;
+          }
+          if (![Code.Unavailable, Code.DeadlineExceeded, Code.Unknown, Code.Aborted].includes(failure.code)) {
+            history.onError(failure);
+            return;
+          }
+        }
       }
+      if (ac.signal.aborted) return;
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, reconnectMs);
-        ac.signal.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
+        const finish = () => {
+          clearTimeout(timer);
+          ac.signal.removeEventListener("abort", finish);
+          resolve();
+        };
+        const timer = setTimeout(finish, reconnectMs);
+        ac.signal.addEventListener("abort", finish, { once: true });
       });
     }
   })();

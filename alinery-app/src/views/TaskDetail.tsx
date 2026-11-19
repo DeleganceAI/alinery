@@ -208,7 +208,15 @@ export function TaskDetail({
   onBack: () => void;
   /** The conversation of a session opened here, for its tab. `onClose` closes the tab (the session was archived); `onOpenPath`
    * opens a path from the conversation (`artifact:<name>` or `repo:<path>`) in this task's tabs. */
-  renderSession: (target: TaskSessionTarget, actions: { onClose: () => void; onOpenPath: (target: string, keep?: boolean) => void }) => ReactNode;
+  renderSession: (
+    target: TaskSessionTarget,
+    actions: {
+      active: boolean;
+      onClose: () => void;
+      onOpenPath: (target: string, keep?: boolean) => void;
+      onOpenSession: (session: SessionMeta, intent?: "history" | "attach") => void;
+    },
+  ) => ReactNode;
   onNewSession: () => void;
   onOpenRelatedTask: (slug: string, relatedRepoPath?: string) => void;
   knownRepos?: string[];
@@ -1509,14 +1517,20 @@ export function TaskDetail({
               </div>
             )
           )}
-          {fileTabs.tabs.map(
-            (tab) =>
-              tab.session && (
-                <div key={tab.key} className="task-session-view" hidden={tab.key !== fileTabs.active}>
-                  {renderSession(tab.session, { onClose: () => fileTabs.close(tab.key), onOpenPath: openSessionPath })}
-                </div>
-              ),
-          )}
+          {fileTabs.tabs.map((tab) => {
+            const target = tab.session;
+            if (!target) return null;
+            return (
+              <div key={tab.key} className="task-session-view" hidden={tab.key !== fileTabs.active}>
+                {renderSession(target, {
+                  active: tab.key === fileTabs.active,
+                  onClose: () => fileTabs.close(tab.key),
+                  onOpenPath: openSessionPath,
+                  onOpenSession: (session, intent) => openSession(target.taskSlug, session, intent),
+                })}
+              </div>
+            );
+          })}
           <div className="task-sessions-tab" hidden={!!fileTabs.current}>
             <section className="task-panel task-sessions-panel">
               <div className="task-panel-head">

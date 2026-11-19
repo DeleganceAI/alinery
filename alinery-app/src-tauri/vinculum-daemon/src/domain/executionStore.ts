@@ -72,7 +72,7 @@ export const stateHasStart = (state: State | undefined): boolean => [...(state?.
 
 /** The Rust-shaped records the engine's executions and occurrences stand for; the old runner's and manual ones stay. */
 export function mergedRecords(file: Json, state: State, repo: string, slug: string): { executions: Json; occurrences: Json } {
-  const project = projectionContext(repo, slug);
+  const project = projectionContext(repo, slug, state.executions.values());
   const autoApproveAll = file.auto_approve_all === true;
   const keep = (map: unknown, isEngine: (id: string) => boolean): Json =>
     Object.fromEntries(Object.entries((map && typeof map === "object" ? map : {}) as Json).filter(([id]) => !isEngine(id)));

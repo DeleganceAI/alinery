@@ -18,7 +18,7 @@ import type { TranscriptPart, TranscriptReply } from "../transcript.ts";
 import { requireCapability } from "./auth.ts";
 import { domain, fail, metaOf } from "./errors.ts";
 
-/** The session's transcript source, or undefined when it is not open in this daemon. */
+/** Live conversation or a snapshot of a retained session. */
 export type Transcripts = (taskSlug: string, id: string) => Promise<TranscriptFeed | undefined>;
 
 type Item = MessageInitShape<typeof TranscriptItemSchema>;
@@ -285,9 +285,11 @@ function transcriptHandlers(transcripts: Transcripts): Pick<ServiceImpl<typeof S
     async *watchTranscript(req, ctx) {
       requireCapability(ctx, Capability.VIEW);
       if (!req.session?.id) throw new ConnectError("WatchTranscript needs a session", Code.InvalidArgument);
-      const source = await transcripts(req.session.taskSlug, req.session.id);
-      if (!source) throw new ConnectError(`no open session ${req.session.id}`, Code.NotFound);
-      for await (const frame of watchTranscript(source, Number(req.fromItem), ctx.signal)) yield toResponse(frame);
+      const session = req.session;
+      const source = await domain(() => transcripts(session.taskSlug, session.id));
+      if (!source) throw new ConnectError(`no transcript for session ${session.id}`, Code.NotFound);
+      const feed = { read: () => domain(() => source.read()), subscribe: source.subscribe?.bind(source) };
+      for await (const frame of watchTranscript(feed, Number(req.fromItem), ctx.signal)) yield toResponse(frame);
     },
   };
 }

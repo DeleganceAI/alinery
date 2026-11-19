@@ -9,8 +9,8 @@ export type TranscriptRead = { items: TranscriptReply[]; controls: SessionContro
 
 export type TranscriptFeed = {
   read(): Promise<TranscriptRead>;
-  /** Call `notify` after any change that could alter `read()`. Returns the unsubscribe. */
-  subscribe(notify: () => void): () => void;
+  /** Call `notify` after any change that could alter `read()`. A retained snapshot ends after its first frame. */
+  subscribe?(notify: () => void): () => void;
 };
 
 /** `items` cover [nextItem - items.length, nextItem). `replace`: the client drops everything from that index on first. */
@@ -33,7 +33,7 @@ export async function* watchTranscript(source: TranscriptFeed, fromItem: number,
     dirty = true;
     wake?.();
   };
-  const stop = source.subscribe(notify);
+  const stop = source.subscribe?.(notify);
   const aborted = () => wake?.();
   signal.addEventListener("abort", aborted);
   try {
@@ -60,6 +60,7 @@ export async function* watchTranscript(source: TranscriptFeed, fromItem: number,
           yield { items: read.items.slice(first), nextItem: now.length, replace, ...changedControls };
         }
       }
+      if (!stop) return;
       sent = now;
       while (!dirty && !signal.aborted) await new Promise<void>((resolve) => (wake = resolve));
       wake = undefined;
@@ -67,7 +68,7 @@ export async function* watchTranscript(source: TranscriptFeed, fromItem: number,
     }
   } finally {
     signal.removeEventListener("abort", aborted);
-    stop();
+    stop?.();
   }
 }
 

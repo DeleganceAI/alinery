@@ -1,11 +1,18 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { createRegistry, Harness } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { JobRunner } from "../jobs/runner.ts";
+import { DaemonConnection } from "../mcpServer/client.ts";
+import { startDaemon } from "../mcpServer/daemonFixture.testutil.ts";
+import { buildFixture } from "../mcpServer/fixtureRepo.testutil.ts";
 import type { TranscriptFeed } from "../runtime/transcript.ts";
 import { Store } from "../sync/store.ts";
 import type { TranscriptReply } from "../transcript.ts";
@@ -89,7 +96,7 @@ test("WatchTranscript over the socket: parts, tool call arguments and controls s
   ac.abort();
 });
 
-test("WatchTranscript needs VIEW and an open session", async () => {
+test("WatchTranscript needs VIEW and a transcript", async () => {
   const feed: TranscriptFeed = { read: async () => ({ items: [], controls: { model: "", thinking: "off", thinking_levels: [] } }), subscribe: () => () => {} };
   const client = await start(feed);
   const call = (c: ReturnType<typeof client>, id: string) => c.watchTranscript({ session: { taskSlug: "t", id } })[Symbol.asyncIterator]().next();
@@ -98,3 +105,31 @@ test("WatchTranscript needs VIEW and an open session", async () => {
   const missing = await call(client(), "nope").catch((e) => e);
   expect(ConnectError.from(missing).code).toBe(Code.NotFound);
 });
+
+test("WatchTranscript on a fresh daemon returns a retained Pi conversation in one frame", async () => {
+  const fx = await buildFixture();
+  let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
+  try {
+    const id = "first-draft";
+    const base = join(fx.repo, ".alinery", "tasks", fx.slug, "sessions", id);
+    const harness = await Harness.open(await openNodeSqliteStorage(base + ".pi.sqlite"), { registry: createRegistry(), models: createModels() } as never, BACKGROUND_CONTEXT);
+    try {
+      const root = await harness.root(BACKGROUND_CONTEXT);
+      await root.commit((tx) => tx.appendEntry(root.id, { kind: "message", model: [{ role: "user", content: "This draft survived.", timestamp: 10 }] }), BACKGROUND_CONTEXT);
+    } finally {
+      await harness.close(BACKGROUND_CONTEXT);
+    }
+    writeFileSync(base + ".meta.json", JSON.stringify({ id, ended_at: 30 }));
+    daemon = await startDaemon(fx);
+    const client = new DaemonConnection({ socket: daemon.socket, token: daemon.token }, daemon.context().protocol).api(SessionService);
+    const frames = [];
+    for await (const frame of client.watchTranscript({ session: { taskSlug: fx.slug, id } }, { signal: AbortSignal.timeout(5000) })) frames.push(frame);
+    expect(frames).toHaveLength(1);
+    expect(frames[0]!.items).toMatchObject([{ role: "user", content: [{ kind: { case: "text", value: "This draft survived." } }] }]);
+    const invalid = await client.watchTranscript({ session: { taskSlug: fx.slug, id: "../missing" } })[Symbol.asyncIterator]().next().catch((err) => err);
+    expect(ConnectError.from(invalid).code).toBe(Code.InvalidArgument);
+  } finally {
+    await daemon?.stop();
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+}, 45_000);

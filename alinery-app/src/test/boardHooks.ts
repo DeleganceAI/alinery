@@ -96,8 +96,17 @@ export function boardHooks(actual: typeof Board): typeof Board {
     useSessionDisplay(repo, taskSlug, id) {
       const s = use();
       return useMemo(() => {
-        const row = s.sessions.find((x) => x.repo_path === repo && x.task_slug === taskSlug && x.id === id);
-        return { session: (row as SessionDisplayMeta | undefined) ?? null, taskName: row?.task_name ?? "", subtaskName: row?.subtask_name ?? null, loaded: true };
+        const rows = s.sessions.filter((x) => x.repo_path === repo && x.task_slug === taskSlug);
+        const row = rows.find((x) => x.id === id);
+        const sessions = rows.length ? rows : s.taskSessions;
+        return {
+          session: row ?? sessions?.find((x) => x.id === id) ?? null,
+          sessions,
+          sessionsCurrent: !!repo && s.ready && !s.down.includes(repo),
+          taskName: row?.task_name ?? "",
+          subtaskName: row?.subtask_name ?? null,
+          loaded: s.ready,
+        };
       }, [s, repo, taskSlug, id]);
     },
     useSessionItems(repos, includeArchived, enabled = true) {

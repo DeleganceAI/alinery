@@ -41,12 +41,14 @@ import {
   NEXT_TURN_THINKING_TITLE,
 } from "../chatTranscript";
 import { confirmDanger } from "../confirm";
+import { FollowNextSession, type SessionFollow } from "../FollowNextSession";
 import * as ipc from "../ipc";
 import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PaneResizer } from "../PaneResizer";
 import { ReviewedCompletion } from "../ReviewedCompletion";
 import { revealPath } from "../revealPath";
+import { SessionLineage } from "../SessionLineage";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
@@ -83,7 +85,7 @@ import { useBoardTask, useSessionDisplay } from "../sync/board";
 import { readChatImage } from "../sync/chat";
 import { useTaskExecution } from "../sync/execution";
 import { listWorktreeFilesForRepo } from "../sync/git";
-import { observationNow, useSessionObservation } from "../sync/sessionObservation";
+import { observationNow, sessionObservationKey, useSessionObservation, useSessionObservations } from "../sync/sessionObservation";
 import {
   abortSession,
   archiveSession,
@@ -107,6 +109,7 @@ import type {
   ReviewHandoffSource,
   SessionDisplayContext,
   SessionMessageActionProvenance,
+  SessionMeta,
   TaskExecutionReply,
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
@@ -158,6 +161,9 @@ export function SessionView({
   onDiagramZoomOpenChange,
   onNameCommitted,
   embedded,
+  active = true,
+  follow,
+  onOpenSession,
   onOpenPath,
 }: {
   id: string;
@@ -184,6 +190,9 @@ export function SessionView({
   onNameCommitted?: (change: NameCommit) => void;
   /** A tab of the task view: the task supplies the artifact pane and the tab strip, so this view drops its own, and its Back. */
   embedded?: boolean;
+  active?: boolean;
+  follow?: SessionFollow;
+  onOpenSession?: (session: SessionMeta, intent: "history" | "attach") => void;
   /** Where an embedded view opens a path from the conversation: `artifact:<name>` or `repo:<path>`, in the task's tabs. */
   onOpenPath?: (target: string, keep?: boolean) => void;
 }) {
@@ -192,6 +201,8 @@ export function SessionView({
   const artifactItems = liveArtifacts.items;
   const artifactTree = liveArtifacts.tree;
   const artifactNames = artifactItems.map((a) => a.name);
+  const ownedPaths = useMemo(() => artifactItems.filter((item) => !item.attachment).map((item) => item.name), [artifactItems]);
+  const readablePaths = useMemo(() => ownedPaths.filter((path) => findOwnedArtifactNode(artifactTree, path)), [ownedPaths, artifactTree]);
   // The main pane's tabs: the conversation is pinned first, then each opened artifact; another session starts on the conversation.
   // `repo` marks a worktree file opened from a path in the conversation: read from the worktree, never commented on.
   const fileTabs = useOpenTabs<OpenTab & { node: ArtifactTreeNode | null; repo?: boolean }>(`${id}\0${taskSlug}`);
@@ -254,6 +265,15 @@ export function SessionView({
   const task = useBoardTask(taskSlug ? repoPath : undefined, taskSlug) ?? null;
   const parentTask = useBoardTask(taskSlug ? repoPath : undefined, task?.parent_task ?? "") ?? null;
   const live = useSessionDisplay(taskSlug ? repoPath : undefined, taskSlug, id);
+  const sessionRefs = useMemo(
+    () => (live.sessions ?? []).filter((s) => !s.archived && s.ended_at == null).map((s) => ({ repo_path: repoPath, task_slug: taskSlug, id: s.id })),
+    [live.sessions, repoPath, taskSlug],
+  );
+  const observedSessions = useSessionObservations(sessionRefs, active && !fileTabs.current && live.sessionsCurrent);
+  const lineageObservations = useMemo(
+    () => Object.fromEntries(sessionRefs.map((r) => [r.id, observedSessions[sessionObservationKey(r.repo_path, r.task_slug, r.id)]])),
+    [sessionRefs, observedSessions],
+  );
   const display = useMemo<SessionDisplayContext | null>(
     () => (live.session ? { session: live.session, task_name: live.taskName, subtask_name: live.subtaskName } : null),
     [live.session, live.taskName, live.subtaskName],
@@ -301,6 +321,7 @@ export function SessionView({
   const [messageInterrupting, setMessageInterrupting] = useState(false);
   const [messageError, setMessageError] = useState("");
   const [chat, setChat] = useState<ChatTranscriptState>(emptyTranscript);
+  const [historyError, setHistoryError] = useState("");
   const [modelDialog, setModelDialog] = useState<{ tab: ProvidersDialogTab; preselect: string; setup?: boolean } | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const providerAccess = useProviderAccess(isVinculumHarness(harness));
@@ -930,14 +951,12 @@ export function SessionView({
     });
   }, [showChat, termIntent, observation?.transport, id, taskSlug, repoPath, cwd, resumeToken]);
 
-  // The journal owns committed history. It is read straight off disk, so it works for a dead
-  // session with no daemon, it survives a busy Vinculum that refuses RPC history, and it still holds
-  // the turns compaction dropped from Vinculum's context.
+  // Older sessions have a paged journal instead of a Pi database.
   const loadVinculumPage = useCallback(
-    async (position: "initial" | "older", end?: number) => {
+    async (position: "initial" | "older", end?: number, signal?: AbortSignal) => {
       const buffer = await readSessionVinculum(repoPath, { id, taskSlug: taskSlug || null, end: end ?? null });
       const page = decodeVinculumPage(buffer);
-      setChat((current) => applyFilePage(current, page, position));
+      if (!signal?.aborted) setChat((current) => applyFilePage(current, page, position));
       return page;
     },
     [id, taskSlug, repoPath],
@@ -958,17 +977,36 @@ export function SessionView({
       });
   }, [loadVinculumPage]);
 
+  const readingHistory = navHistory || (showPanel && showHistory);
   useEffect(() => {
-    if (!vinculum || !showChat) return;
-    return watchSessionTranscript(repoPath, { taskSlug, id }, (reply) => {
-      setChat(() => {
-        const next = applyVinculumTranscript(reply);
-        chatRef.current = next;
-        return next;
-      });
-      setTerminalConnection("open");
-    });
-  }, [vinculum, showChat, repoPath, taskSlug, id]);
+    if (!vinculum || (!showChat && !readingHistory)) return;
+    setHistoryError("");
+    return watchSessionTranscript(
+      repoPath,
+      { taskSlug, id },
+      (reply) => {
+        setChat(() => {
+          const next = applyVinculumTranscript(reply);
+          chatRef.current = next;
+          return next;
+        });
+        setTerminalConnection("open");
+      },
+      undefined,
+      readingHistory
+        ? {
+            onMissing: async (signal) => {
+              try {
+                await loadVinculumPage("initial", undefined, signal);
+              } catch (error) {
+                if (!signal.aborted) setHistoryError(String(error));
+              }
+            },
+            onError: (error) => setHistoryError(error.message),
+          }
+        : undefined,
+    );
+  }, [vinculum, showChat, readingHistory, repoPath, taskSlug, id, loadVinculumPage]);
   useEffect(() => {
     let cancelled = false;
     void ipc
@@ -1154,6 +1192,25 @@ export function SessionView({
     }
   };
   const finalizedNotice = task ? finalizedSubtaskNotice(task, parentTask) : "";
+  const lineageView = executionFeed.reply;
+  const lineageExecutions = Object.values(lineageView?.state.executions ?? {});
+  const lineageExecution = lineageExecutions.find((e) => e.owner_session_id === id || e.previous_session_ids.includes(id));
+  const navigateSession = (s: SessionMeta) => {
+    const past = lineageExecutions.some((e) => e.previous_session_ids.includes(s.id) || (e.owner_session_id === s.id && e.lifecycle === "completed" && e.shutdown_confirmed));
+    onOpenSession?.(s, past || s.archived || s.ended_at != null ? "history" : "attach");
+  };
+  const followControl = follow && hasTask && (
+    <FollowNextSession
+      follow={follow}
+      scope={JSON.stringify([repoPath, taskSlug])}
+      sessionId={id}
+      active={active && !fileTabs.current}
+      readingHistory={readingHistory}
+      state={lineageView?.live?.status === "available" && live.sessionsCurrent && !task?.archived ? lineageView.state : undefined}
+      sessions={live.sessions ?? []}
+      onOpenSession={onOpenSession && navigateSession}
+    />
+  );
   const awaitingName = display != null && awaitingSessionName({ ...display.session, harness: display.session.harness || harness }, observation);
 
   return (
@@ -1395,7 +1452,9 @@ export function SessionView({
         )}
         <PathLinksContext.Provider value={pathLinks}>
           <main className="session-main">
-            {!embedded && <MainTabs pinned="Agent conversation" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.select} onClose={fileTabs.close} />}
+            {(!embedded || (!onOpenPath && fileTabs.tabs.length > 0)) && (
+              <MainTabs pinned="Agent conversation" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.select} onClose={fileTabs.close} />
+            )}
             <div className="session-main-body">
               {fileTabs.current && (
                 <div className="artifactpane task-artifact-view session-artifact-view">
@@ -1515,6 +1574,11 @@ export function SessionView({
                 </div>
               )}
               <div className="termhost" ref={termhostRef} hidden={Boolean(fileTabs.current)}>
+                {readingHistory && historyError && (
+                  <InlineStatus tone="error" detail={historyError}>
+                    Couldn't read session history.
+                  </InlineStatus>
+                )}
                 {vinculumCoding && Boolean(termIntent) && !liveRpc && !livePty && (
                   <div className="session-view-loading" role="status" aria-live="polite">
                     <LoadingState label="Opening session…" state="connecting" />
@@ -1695,7 +1759,10 @@ export function SessionView({
                       onStartFresh={leftover ? () => undefined : onStartFresh}
                       onArchive={handleArchive}
                       archiveBusy={archiveBusy}
-                      onViewHistory={() => setShowHistory(true)}
+                      onViewHistory={() => {
+                        follow?.pause();
+                        setShowHistory(true);
+                      }}
                       onKilled={() => setReclassifyTick((n) => n + 1)}
                       onRecover={canRecoverSession ? () => void recoverSession() : undefined}
                       recoverBusy={completionBusy}
@@ -1791,6 +1858,35 @@ export function SessionView({
                   <div className="sap-loading">
                     <LoadingState label="Checking session" state="connecting" />
                   </div>
+                )}
+                {lineageExecution && lineageView ? (
+                  <SessionLineage
+                    id={id}
+                    name={display?.session.name ?? ""}
+                    phase={lineageView.definition.step.find((s) => s.key === lineageExecution.candidate.step_key)?.title ?? phase}
+                    sessions={live.sessions ?? []}
+                    executionView={lineageView}
+                    observations={lineageObservations}
+                    error={executionFeed.error}
+                    artifactPaths={ownedPaths}
+                    readableArtifactPaths={readablePaths}
+                    followControl={followControl}
+                    onOpenSession={
+                      onOpenSession &&
+                      ((s) => {
+                        follow?.pause();
+                        navigateSession(s);
+                      })
+                    }
+                    onOpenArtifact={(path) => {
+                      const node = findOwnedArtifactNode(artifactTree, path);
+                      if (!node) return;
+                      if (onOpenPath) onOpenPath(`artifact:${path}`);
+                      else openArtifact(path, node);
+                    }}
+                  />
+                ) : (
+                  followControl
                 )}
               </div>
             </div>

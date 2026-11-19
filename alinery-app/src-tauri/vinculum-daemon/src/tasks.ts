@@ -90,8 +90,9 @@ export async function overlayStart(repo: string, reply: Request, requested: bool
       errors: [{ stage: "launch", code: "launch_failed", message: String(error) }],
     };
   }
-  const project = projectionContext(repo, slug);
-  const executions = engineExecutions(slug).map((execution) => projectExecution(execution, false, project));
+  const rows = engineExecutions(slug);
+  const project = projectionContext(repo, slug, rows);
+  const executions = rows.map((execution) => projectExecution(execution, false, project));
   const worktree = String(task?.worktree ?? repo);
   const sessions = executions
     .map((execution) => readMeta(repo, slug, String(execution.owner_session_id ?? "")))
@@ -265,11 +266,12 @@ export async function createExecutionSession(
   }
   if (target.kind === "primary") {
     await runTask(slug);
-    const match = engineExecutions(slug).find((execution) => execution.step === target.step_key && execution.sessionId);
+    const rows = engineExecutions(slug);
+    const match = rows.find((execution) => execution.step === target.step_key && execution.sessionId);
     if (!match?.sessionId) return { error: "that step is not reserved yet" };
     const session = readMeta(repo, slug, match.sessionId);
     if (!session) return { error: "missing session" };
-    return { session: sessionReply(session, String(session.worktree ?? repo)), execution: projectExecution(match, taskAutoApproveAll(repo, slug), projectionContext(repo, slug)), start: "started", errors: [] };
+    return { session: sessionReply(session, String(session.worktree ?? repo)), execution: projectExecution(match, taskAutoApproveAll(repo, slug), projectionContext(repo, slug, rows)), start: "started", errors: [] };
   }
   const id = randomUUID();
   const model = target.model ?? "";
@@ -311,11 +313,12 @@ export async function startSession(
       }
     }
   }
-  const execution = engineExecutions(slug).find((item) => item.sessionId === id);
+  const rows = engineExecutions(slug);
+  const execution = rows.find((item) => item.sessionId === id);
   if (!execution) await openSession(id, slug, String(session.model ?? ""), String(session.prompt ?? ""));
   return {
     session: sessionReply(session, String(session.worktree ?? repo)),
-    execution: execution ? projectExecution(execution, taskAutoApproveAll(repo, slug), projectionContext(repo, slug)) : null,
+    execution: execution ? projectExecution(execution, taskAutoApproveAll(repo, slug), projectionContext(repo, slug, rows)) : null,
     start: "started",
     errors: [],
   };

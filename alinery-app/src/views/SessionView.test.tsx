@@ -4,6 +4,7 @@ import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { daemonTransport } from "../daemon/transport";
+import { useSessionFollow } from "../FollowNextSession";
 import type { SessionMessageDraft } from "../sessionMessage";
 import { fakeArtifacts } from "../test/artifactHooks";
 import { fakeBoard } from "../test/boardHooks";
@@ -11,7 +12,7 @@ import { fakeExecution } from "../test/executionFeed";
 import { mockIpc } from "../test/mockIpc";
 import { sessionDaemon } from "../test/sessionDaemon";
 import { Toast, toast } from "../toast";
-import type { AgentState, ArtifactListItem, ArtifactTreeNode, BoardTask, SessionObservation } from "../types";
+import type { AgentState, ArtifactListItem, ArtifactTreeNode, BoardTask, SessionDisplayMeta, SessionObservation } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
 import { SessionView } from "./SessionView";
 
@@ -386,6 +387,105 @@ function sessionView(overrides: Partial<ComponentProps<typeof SessionView>> = {}
 function renderSession(overrides: Partial<ComponentProps<typeof SessionView>> = {}) {
   return render(sessionView(overrides));
 }
+
+describe("SessionView navigator", () => {
+  function View(props: Partial<ComponentProps<typeof SessionView>>) {
+    const follow = useSessionFollow();
+    return sessionView({ intent: "attach", active: true, ...props, follow });
+  }
+  const session = (id: string, executionId: string, created: number): SessionDisplayMeta => ({
+    id,
+    execution_id: executionId,
+    created,
+    started_at: created,
+    worktree: "/worktrees/task",
+    phase: "worker",
+    harness: "vinculum",
+    model: "",
+    playbook: "retained",
+    generic: false,
+    archived: false,
+    harness_resume_token: "",
+  });
+  beforeEach(() => {
+    resetDaemon();
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    fakeBoard.reset();
+    fakeBoard.set({ anyRepoTasks: [task] });
+  });
+  afterEach(() => {
+    cleanup();
+    fakeBoard.reset();
+    fakeExecution.reset();
+    getTaskExecution.mockReset();
+  });
+
+  it.each(["manual", "automatic"])("follows the one session that consumes this %s step's output, once and after confirmed exit", async (mode) => {
+    const open = vi.fn();
+    const draft = executionRecord({ id: "draft", owner_session_id: "session" });
+    const review = executionRecord({ id: "review", owner_session_id: "review-session", candidate: { ...draft.candidate, inputs: { "draft.md": ["out"] } } });
+    const other = executionRecord({ id: "other", owner_session_id: "newer-session" });
+    const sourceSession = session("session", draft.id, 1);
+    const reviewSession = session("review-session", review.id, 2);
+    const newestSession = session("newer-session", other.id, 99);
+    fakeBoard.set({ taskSessions: [sourceSession, reviewSession, newestSession] });
+    if (mode === "manual") draft.ready = { revision: 3, roles: ["draft.md"], destinations: ["worker"], endpoint: false };
+    else draft.permission = { kind: "automatic" };
+    const reply = executionReply([draft, other]);
+    reply.state.enabled_steps = mode === "automatic" ? ["worker"] : [];
+    getTaskExecution.mockImplementation(() => Promise.resolve(structuredClone(reply)));
+    render(<View onOpenSession={open} />);
+    expect((await screen.findByRole("button", { name: "Follow next session" })).getAttribute("aria-pressed")).toBe("true");
+    if (mode === "manual") {
+      fireEvent.click(await screen.findByRole("button", { name: "Continue to Retained worker" }));
+      await waitFor(() => expect(fakeExecution.continueReviewed).toHaveBeenCalledExactlyOnceWith("/repo", "task", draft.id, "session", 3));
+    }
+    draft.lifecycle = "finishing";
+    draft.receipt_id = "receipt";
+    delete draft.ready;
+    reply.state.executions = { [draft.id]: draft, [review.id]: review, [other.id]: other };
+    reply.state.occurrences = {
+      out: {
+        id: "out",
+        producer_execution_id: draft.id,
+        relative_path: "draft.md",
+        selector: "draft.md",
+        logical_path: "draft.md",
+        depth: 1,
+        discriminator: 0,
+        context_id: "root",
+        collection_ids: [],
+      },
+    };
+    await act(async () => fakeExecution.refresh());
+    expect(open).not.toHaveBeenCalled();
+    draft.lifecycle = "completed";
+    draft.shutdown_confirmed = true;
+    await act(async () => fakeExecution.refresh());
+    await waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith(reviewSession, "attach"));
+    await act(async () => fakeExecution.refresh());
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(fakeExecution.setStepContinuation).not.toHaveBeenCalled();
+  });
+
+  it("opens the selected parent as history and stays there while its successor is already running", async () => {
+    const open = vi.fn();
+    const parent = executionRecord({ id: "define", owner_session_id: "define-session", receipt_id: "receipt", lifecycle: "completed", shutdown_confirmed: true });
+    const current = executionRecord({ id: "draft", owner_session_id: "session", parent_execution_ids: [parent.id] });
+    const pastSession = { ...session(parent.owner_session_id, parent.id, 1), name: "Defined the brief", ended_at: 2 };
+    fakeBoard.set({ taskSessions: [pastSession, session(current.owner_session_id, current.id, 2)] });
+    getTaskExecution.mockResolvedValue(executionReply([parent, current]));
+    const view = render(<View onOpenSession={open} />);
+    const toggle = await screen.findByRole("button", { name: /Session Navigator/ });
+    if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "Defined the brief" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(pastSession, "history");
+    view.rerender(<View onOpenSession={open} intent="history" id={pastSession.id} />);
+    expect((await screen.findByRole("button", { name: "Follow next session" })).getAttribute("aria-pressed")).toBe("false");
+    await act(async () => fakeExecution.refresh());
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("session work names", () => {
   beforeEach(() => {
@@ -995,6 +1095,14 @@ describe("Vinculum session chat", () => {
     expect(await screen.findByText("Vinculum")).toBeDefined();
     expect(await screen.findByText("playbook prompt")).toBeDefined();
     expect(screen.queryByRole("button", { name: "Terminal" })).toBeNull();
+  });
+
+  it("opens the selected past conversation read-only through the transcript service", async () => {
+    daemon.setTranscript("past", [{ role: "assistant", text: "Recorded handoff from the first attempt" }]);
+    renderSession({ id: "past", intent: "history" });
+    expect(await screen.findByText("Recorded handoff from the first attempt")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", true);
+    expect(startSession).not.toHaveBeenCalled();
   });
 
   it("sends and aborts through the Vinculum ops", async () => {

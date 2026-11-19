@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
-import type { Playbook, Step } from "playbook-engine/src/playbook.ts";
+import type { Step } from "playbook-engine/src/playbook.ts";
 import { type Execution, occurrences, type State } from "playbook-engine/src/state.ts";
 
 function lifecycle(execution: Execution): string {
@@ -21,7 +21,12 @@ export function completionPermission(execution: Pick<Execution, "id" | "sessionI
   return { kind: "automatic" };
 }
 
-export function projectExecution(execution: Execution, autoApproveAll = false, project?: { steps: Step[]; artifactsDir: string }): Record<string, unknown> {
+export function projectExecution(execution: Execution, autoApproveAll: boolean, project: ReturnType<typeof projectionContext>): Record<string, unknown> {
+  const parents = new Set<string>();
+  for (const id of Object.values(execution.inputs).flat()) {
+    const producer = project.producers.get(id);
+    if (producer) parents.add(producer);
+  }
   return {
     id: execution.id,
     binding_key: execution.id,
@@ -34,11 +39,11 @@ export function projectExecution(execution: Execution, autoApproveAll = false, p
       each_member_id: null,
       manual: false,
     },
-    outputs: project ? projectOutputs(execution, project.steps, project.artifactsDir) : [],
-    parent_execution_ids: [],
+    outputs: projectOutputs(execution, project.steps, project.artifactsDir),
+    parent_execution_ids: [...parents],
     depth: execution.depth,
     owner_session_id: execution.sessionId ?? "",
-    previous_session_ids: [],
+    previous_session_ids: execution.previousSessionIds ?? [],
     launch: { harness: "vinculum", model: "" },
     is_coding_step: false,
     start_requested: true,
@@ -94,13 +99,19 @@ export function projectOccurrences(state: State, artifactsDir: string): Record<s
   return projected;
 }
 
-export function projectionContext(repo: string, slug: string): { steps: Step[]; artifactsDir: string } {
+export function projectionContext(repo: string, slug: string, executions: Iterable<Execution>) {
   const artifactsDir = join(repo, ".alinery", "tasks", slug, "artifacts");
+  const producers = new Map<string, string>();
+  for (const execution of executions) {
+    for (const occurrence of execution.receipt ?? []) {
+      if (occurrence.producer) producers.set(occurrence.id, occurrence.producer);
+    }
+  }
   try {
     const parsed = parsePlaybookMd(readFileSync(join(repo, ".alinery", "tasks", slug, "playbook.md"), "utf8"));
-    return { steps: parsed.playbook?.steps ?? [], artifactsDir };
+    return { steps: parsed.playbook?.steps ?? [], artifactsDir, producers };
   } catch {
-    return { steps: [], artifactsDir };
+    return { steps: [], artifactsDir, producers };
   }
 }
 

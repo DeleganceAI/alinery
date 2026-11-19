@@ -130,9 +130,31 @@ test('a resumed owner reusing the session id cannot continue its previous attemp
   await engine.tick();
   await engine.resume(e.id);
   assert.equal(e.sessionId, owner);
+  assert.deepEqual(e.previousSessionIds ?? [], []);
   assert.equal((await previousLaunch.requestCompletion()).kind, 'stale');
   assert.equal((await engine.continueReviewed(e.id, owner, old.revision)).kind, 'stale');
   assert.ok(report(await engine.requestCompletion(e.id, owner)).revision > old.revision);
+});
+
+test('replacing an owner retains its conversation across reopen and only the replacement can publish', async () => {
+  const dir = taskDir();
+  const harness = idle();
+  harness.resume = (_id, launch) => harness.start(launch);
+  const open = () => openEngine(branch, harness, dir);
+  const engine = open();
+  await engine.tick();
+  const [execution] = byStep(engine, 'choose');
+  const previous = execution.sessionId!;
+  harness.crash(previous);
+  await engine.tick();
+  await engine.resume(execution.id);
+  const reopened = open();
+  const [current] = byStep(reopened, 'choose');
+  assert.notEqual(current.sessionId, previous);
+  assert.deepEqual(current.previousSessionIds, [previous]);
+  writeText(join(current.outDir, 'next.md'), 'for review');
+  assert.equal((await reopened.requestCompletion(current.id, previous)).kind, 'stale');
+  assert.equal((await reopened.requestCompletion(current.id, current.sessionId!)).kind, 'ready');
 });
 
 test('a policy change waits for a genuine outstanding question; admitted work invalidates the old report while the check is pending', async () => {

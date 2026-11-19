@@ -40,6 +40,15 @@ export type TranscriptReply = {
   at?: number;
 };
 
+export function appendEntryMessages(messages: TranscriptSource[], entry: { id: unknown; model?: unknown }) {
+  if (!Array.isArray(entry.model)) return;
+  for (const [index, message] of entry.model.entries()) {
+    if (!message || typeof message !== "object") continue;
+    const id = entry.model.length === 1 ? String(entry.id) : `${entry.id}:${index}`;
+    messages.push(transcriptSource(id, message));
+  }
+}
+
 export function transcriptSource(id: string, message: object, streaming = false): TranscriptSource {
   const record = message as {
     role?: unknown;

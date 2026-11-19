@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { daemonTransport } from "../daemon/transport";
+import { SessionLineage } from "../SessionLineage";
 import { PRIORITY_SESSION_SORT } from "../sessionAttention";
 import { ExecutionConflict } from "../sync/execution";
 import { fakeArtifacts } from "../test/artifactHooks";
@@ -432,6 +433,63 @@ async function renderDetail(slug = "parent", sessionView: "controls" | "graph" =
 }
 
 describe("task run graph", () => {
+  it("opens a navigator destination in the same task and preserves both embedded tabs and their shared display choice", async () => {
+    const source = { ...session({ id: "define", phase: "define", harness: "vinculum" }), name: "Define" };
+    const next = { ...session({ id: "write", phase: "write", harness: "vinculum" }), name: "Draft" };
+    const produced = executionRecord({ id: "definition", owner_session_id: source.id, lifecycle: "completed", shutdown_confirmed: true });
+    const consumed = executionRecord({ id: "draft", owner_session_id: next.id, parent_execution_ids: [produced.id] });
+    const run = executionReply([produced, consumed]);
+    scenario.sessions = [source, next];
+    mocks.getTaskExecution.mockResolvedValue(run);
+    const stored = new Map<string, string>();
+    vi.mocked(localStorage.getItem).mockImplementation((key) => stored.get(key) ?? null);
+    vi.mocked(localStorage.setItem).mockImplementation((key, value) => {
+      stored.set(key, value);
+    });
+    renderSeededDetail({
+      initialTask: parentTask,
+      slug: parentTask.slug,
+      repoPath: "/repo",
+      renderSession: (target, { active, onOpenSession }) => (
+        <section aria-label={`Conversation ${target.id}`} data-active={active}>
+          <input aria-label="Message draft" />
+          <SessionLineage
+            id={target.id}
+            name={target.id}
+            phase={target.phase}
+            sessions={scenario.sessions}
+            executionView={run}
+            observations={{}}
+            error=""
+            artifactPaths={[]}
+            readableArtifactPaths={[]}
+            onOpenSession={(s) => onOpenSession(s, "attach")}
+            onOpenArtifact={noop}
+          />
+        </section>
+      ),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Open session Define" }));
+    const original = await screen.findByRole("region", { name: "Conversation define" });
+    expect(original.dataset.active).toBe("true");
+    fireEvent.change(within(original).getByRole("textbox"), { target: { value: "a note for later" } });
+    fireEvent.click(within(original).getByRole("button", { name: /Session Navigator/ }));
+    fireEvent.click(within(original).getByRole("button", { name: /Draft/ }));
+
+    const draft = await screen.findByRole("region", { name: "Conversation write" });
+    expect(draft.dataset.active).toBe("true");
+    expect(original.dataset.active).toBe("false");
+    expect(original.closest("[hidden]")).toBeTruthy();
+    expect(mocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", parentTask.slug, next.id);
+    fireEvent.click(within(draft).getByRole("button", { name: /Session Navigator/, expanded: true }));
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    fireEvent.click(tabs.getByRole("button", { name: "Define" }));
+    expect(original.dataset.active).toBe("true");
+    expect(draft.dataset.active).toBe("false");
+    expect(within(original).getByRole("textbox")).toHaveProperty("value", "a note for later");
+    expect(within(original).getByRole("button", { name: /Session Navigator/, expanded: false })).toBeDefined();
+  });
+
   it.each([true, false])("preserves attention when switching graph/list with live observations: %s", async (observed) => {
     scenario.sessions = [
       { ...session({ id: "unread" }), name: "Unread work", semantic: { phase_completed_at: 100 } },

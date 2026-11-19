@@ -88,6 +88,8 @@ export interface Execution {
   origin: string | null;
   status: ExecutionStatus;
   sessionId: string | null;
+  /** Earlier conversations that owned this execution, in order. Resuming the same conversation adds no entry. */
+  previousSessionIds?: string[];
   /**
    * Whether this execution may finish without a person, snapshotted when it was reserved.
    * Absent on a log written before the snapshot: the playbook default still applies.
@@ -160,6 +162,9 @@ export function apply(state: State, ev: Event): void {
     case 'started':
     case 'resumed':
       if (!e) return;
+      if (e.sessionId && e.sessionId !== ev.sessionId) {
+        e.previousSessionIds = [...(e.previousSessionIds ?? []).filter((id) => id !== ev.sessionId), e.sessionId];
+      }
       e.sessionId = ev.sessionId;
       if (ev.consumed && !e.manifest) e.manifest = { consumed: ev.consumed, published: [] };
       e.status = 'live';

@@ -3,6 +3,11 @@
 // a scrollback, a chunk or a journal as a git symlink aimed anywhere this process can read.
 import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
+import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
+import type { SessionControls } from "../sessionControls.ts";
+import { appendEntryMessages, formatTranscript, type TranscriptSource } from "../transcript.ts";
 import { replayRanges } from "../terminal.ts";
 import { DomainError } from "../platform/lock.ts";
 import { type Json, metaPathOf } from "./sessionOps.ts";
@@ -80,6 +85,38 @@ function readMetaChecked(repo: string, slug: string, id: string): Json {
   }
   if (meta.id !== id) throw new DomainError("failed_precondition", `session metadata id '${String(meta.id)}' does not match '${id}'`);
   return meta;
+}
+
+/** Read committed entries even after an interrupted owner. Opening Pi storage normally would run schema migrations. */
+export function retainedTranscript(repo: string, slug: string, id: string, controls?: SessionControls) {
+  if (!safeComponent(id) || (slug && !safeComponent(slug))) throw new DomainError("invalid_argument", "invalid session reference");
+  const dir = dirOf(repo, slug);
+  const path = join(dir, `${id}.pi.sqlite`);
+  if (!lstatSync(path, { throwIfNoEntry: false })) return undefined;
+  if (realpathSync(dir) !== dirOf(realpathSync(repo), slug)) throw new DomainError("failed_precondition", "session directory redirects elsewhere");
+  for (const file of [metaPathOf(repo, slug, id), path, `${path}-wal`, `${path}-shm`, `${path}-journal`]) {
+    const st = lstatSync(file, { throwIfNoEntry: false });
+    if (st && (!st.isFile() || st.nlink !== 1)) throw new DomainError("failed_precondition", "session history requires regular files in its own directory");
+  }
+  const meta = readMetaChecked(repo, slug, id);
+  const url = pathToFileURL(path);
+  // SQLite can read a checkpointed WAL database without creating new -wal/-shm files.
+  // A retained WAL still holds committed entries, so use normal read-only locking while it exists.
+  if (!isRegular(`${path}-wal`) && !isRegular(`${path}-journal`)) url.searchParams.set("immutable", "1");
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(url.href, { readOnly: true });
+    db.exec("PRAGMA trusted_schema = OFF");
+    const messages: TranscriptSource[] = [];
+    for (const { record } of db.prepare("SELECT record FROM entries WHERE conversation_id = ? ORDER BY id").iterate(ROOT_CONVERSATION_ID)) {
+      appendEntryMessages(messages, JSON.parse(String(record)));
+    }
+    return { items: formatTranscript(messages), controls: controls ?? { model: String(meta.model ?? ""), thinking: "", thinking_levels: [] } };
+  } catch (error) {
+    throw new DomainError("failed_precondition", `Cannot read the retained conversation for ${id}: ${(error as Error).message}`);
+  } finally {
+    db?.close();
+  }
 }
 
 /** The scrollback path of a session whose meta proves it exists, and which resolves inside `.alinery`. */

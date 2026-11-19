@@ -63,7 +63,8 @@ import { renderPage } from "./domain/rendered.ts";
 import { canvasEnabled } from "./domain/canvas.ts";
 import { runMcp } from "./mcpServer/server.ts";
 import { skillCatalog, vinculumAgentDir } from "./skills.ts";
-import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
+import { retainedTranscript } from "./domain/history.ts";
+import { appendEntryMessages, formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 // Bundled at compile time, so the daemon reports the app release it was built with.
 import appPackage from "../../../package.json" with { type: "json" };
 
@@ -574,16 +575,7 @@ async function committedMessages(readPage: (cursor: EntryPage["next"]) => Promis
   let cursor: EntryPage["next"];
   for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
     const page = await readPage(cursor);
-    for (const entry of page.items) {
-      const model = entry.model;
-      if (!Array.isArray(model)) continue;
-      for (let index = 0; index < model.length; index += 1) {
-        const message = model[index];
-        if (!message || typeof message !== "object") continue;
-        const id = model.length === 1 ? String(entry.id) : `${String(entry.id)}:${index}`;
-        messages.push(transcriptSource(id, message));
-      }
-    }
+    for (const entry of page.items) appendEntryMessages(messages, entry);
     cursor = page.next;
     if (!cursor) break;
   }
@@ -1194,26 +1186,21 @@ await serveRpc({
   artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
   transcripts: async (taskSlug, id) => {
     const row = live.get(id);
-    if (!row || row.taskSlug !== taskSlug) return undefined;
-    const readClosed = async () => {
-      const path = sqlitePath(taskSlug, id);
-      if (!existsSync(path) || !row.closedControls) throw new Error("the session history is unavailable");
-      const storage = await openNodeSqliteStorage(path);
-      try {
-        const messages = await committedMessages((cursor) => storage.scanEntries({ conversationId: row.conversationId, order: "ascending" }, 200, cursor, context));
-        return { items: formatTranscript(messages), controls: row.closedControls };
-      } finally {
-        await storage.close(context);
-      }
-    };
-    if (row.closedControls) return { read: readClosed, subscribe: () => () => {} };
-    if (!row.harness) return undefined;
+    if (row && row.taskSlug !== taskSlug) return undefined;
+    if (!row?.harness || !row.conversationId || row.closedControls) {
+      const history = retainedTranscript(repo, taskSlug, id, row?.closedControls);
+      return history ? { read: async () => history } : undefined;
+    }
     const conversation = await conversationFor(row);
     if (!conversation) return undefined;
     return {
       read: async () => {
         if (row.stopping) await row.stopping.catch(() => {});
-        if (row.closedControls) return readClosed();
+        if (row.closedControls) {
+          const history = retainedTranscript(repo, taskSlug, id, row.closedControls);
+          if (!history) throw new DomainError("not_found", "the session history is unavailable");
+          return history;
+        }
         const { messages, tools } = await transcriptMessages(row, conversation);
         return { items: formatTranscript(messages, tools), controls: await sessionControls(conversation) };
       },

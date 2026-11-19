@@ -1,9 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
-import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { createRegistry, Harness } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { DomainError } from "../platform/lock.ts";
-import { HISTORY_WINDOW_MAX, newestVinculumJsonl, readHistory, readVinculumWindow, sessionArtifactReady } from "./history.ts";
+import { HISTORY_WINDOW_MAX, newestVinculumJsonl, readHistory, readVinculumWindow, retainedTranscript, sessionArtifactReady } from "./history.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -28,6 +33,53 @@ const refusal = (fn: () => unknown) => {
   }
   return "no refusal";
 };
+
+test("a previous task session's committed Pi conversation remains readable after shutdown and daemon restart", async () => {
+  const { repo, alinery } = rig();
+  const sessions = join(alinery, "tasks", "draft", "sessions");
+  mkdirSync(sessions, { recursive: true });
+  const path = join(sessions, "first.pi.sqlite");
+  const harness = await Harness.open(await openNodeSqliteStorage(path), { models: createModels(), registry: createRegistry() } as never, BACKGROUND_CONTEXT);
+  const meta = join(sessions, "first.meta.json");
+  writeFileSync(meta, JSON.stringify({ id: "first", started_at: 1, model: "local" }));
+  let itemId: string;
+  try {
+    const root = await harness.root(BACKGROUND_CONTEXT);
+    const entry = await root.commit((tx) => tx.appendEntry(root.id, {
+      kind: "message", model: [{ role: "user", content: "Keep this original draft.", timestamp: 10 }],
+    }), BACKGROUND_CONTEXT);
+    itemId = String(entry.id);
+    expect(existsSync(path + "-wal")).toBe(true);
+    expect(retainedTranscript(repo, "draft", "first")?.items[0]?.content).toEqual([{ type: "text", text: "Keep this original draft." }]);
+  } finally {
+    await harness.close(BACKGROUND_CONTEXT);
+  }
+  const copy = join(sessions, "checkpointed.pi.sqlite");
+  const db = new DatabaseSync(path);
+  try {
+    db.prepare("VACUUM INTO ?").run(copy);
+  } finally {
+    db.close();
+  }
+  chmodSync(copy, 0o400);
+  writeFileSync(join(sessions, "checkpointed.meta.json"), JSON.stringify({ id: "checkpointed", ended_at: 30 }));
+  const original = readFileSync(copy);
+  expect(existsSync(copy + "-wal")).toBe(false);
+  expect(existsSync(copy + "-shm")).toBe(false);
+  expect(retainedTranscript(repo, "draft", "first")).toMatchObject({
+    items: [{ id: itemId, role: "user", content: [{ type: "text", text: "Keep this original draft." }] }],
+    controls: { model: "local" },
+  });
+  expect(retainedTranscript(repo, "draft", "checkpointed")?.items[0]?.id).toBe(itemId);
+  expect(readFileSync(copy)).toEqual(original);
+  expect(existsSync(copy + "-wal")).toBe(false);
+  expect(existsSync(copy + "-shm")).toBe(false);
+  expect(retainedTranscript(repo, "draft", "missing")).toBeUndefined();
+  expect(existsSync(join(sessions, "missing.pi.sqlite"))).toBe(false);
+  symlinkSync(path, join(sessions, "other.pi.sqlite"));
+  expect(refusal(() => retainedTranscript(repo, "draft", "other"))).toStartWith("failed_precondition");
+  expect(refusal(() => retainedTranscript(repo, "../draft", "first"))).toStartWith("invalid_argument");
+});
 
 test("a window of the scrollback comes back with where to read next, and at most 1 MiB", () => {
   const { repo, root, meta } = rig();

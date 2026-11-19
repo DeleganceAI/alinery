@@ -1,5 +1,5 @@
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
-import type { ServiceImpl } from "@connectrpc/connect";
+import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect";
 import {
   type SessionService,
   type TranscriptItem,
@@ -41,6 +41,49 @@ const replies = () => {
 const until = (fn: () => boolean) => vi.waitFor(() => expect(fn()).toBe(true));
 
 describe("watchSessionTranscript", () => {
+  it("retries a dropped history connection and reads the legacy journal only when the daemon reports a missing Pi transcript", async () => {
+    const requests = serve(async function* (_req, call) {
+      if (call === 0) throw new ConnectError("disconnected", Code.Unavailable);
+      yield* [];
+      throw new ConnectError("no retained Pi transcript", Code.NotFound);
+    });
+    const legacy = vi.fn().mockResolvedValue(undefined);
+    const stop = watchSessionTranscript("/repo", { taskSlug: "t", id: "s1" }, vi.fn(), 1, { onMissing: legacy, onError: vi.fn() });
+    await until(() => legacy.mock.calls.length > 0);
+    stop();
+    expect(requests).toHaveLength(2);
+    expect(legacy).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a finished history stream without reopening the database", async () => {
+    const requests = serve(async function* () {
+      yield frame([item("past", "handoff")], 1);
+    });
+    const { got, apply } = replies();
+    const history = { onMissing: vi.fn(), onError: vi.fn() };
+    const stop = watchSessionTranscript("/repo", { taskSlug: "t", id: "s1" }, apply, 1, history);
+    await until(() => got.length > 0);
+    await new Promise((resolve) => setTimeout(resolve, 12));
+    stop();
+    expect(requests).toHaveLength(1);
+    expect(history.onMissing).not.toHaveBeenCalled();
+    expect(history.onError).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a permanent history read failure", async () => {
+    const requests = serve(async function* () {
+      yield* [];
+      throw new ConnectError("history cannot be read", Code.DataLoss);
+    });
+    const history = { onMissing: vi.fn(), onError: vi.fn() };
+    const stop = watchSessionTranscript("/repo", { taskSlug: "t", id: "s1" }, vi.fn(), 1, history);
+    await until(() => history.onError.mock.calls.length > 0);
+    stop();
+    expect(requests).toHaveLength(1);
+    expect(history.onMissing).not.toHaveBeenCalled();
+    expect(history.onError.mock.calls[0]?.[0].message).toContain("history cannot be read");
+  });
+
   it("asks for item 0, appends a new item, and replaces from the index a frame names", async () => {
     const requests = serve(async function* (_req, _call, signal) {
       yield frame([item("u1", "hi"), item("live", "He")], 2, false, { model: "p/m", thinking: "low", thinkingLevels: ["off", "low"] });

@@ -11,7 +11,6 @@ import { stepObjectBlob } from "./blobs.ts";
 import { setSessionName } from "./sessionOps.ts";
 import { addExecution, getTaskExecution } from "../tasks.ts";
 import { provisionTask } from "./tasks.ts";
-import { projectExecution } from "./executionProjection.ts";
 import { executionPath, historyDir, loadEngineState, saveEngineState } from "./executionStore.ts";
 
 // A four-step fork and join: seed, then sum and product, then combine.
@@ -87,9 +86,15 @@ describe("recovery from execution.json alone", () => {
     // The lineage a view draws from: which occurrence each execution produced and consumed.
     const lineageOf = (repo: string) => {
       const file = JSON.parse(readFileSync(executionPath(repo, "fj"), "utf8"));
-      return { occurrences: file.occurrences, inputs: Object.fromEntries(Object.entries(file.executions as Record<string, { candidate: { inputs: unknown } }>).map(([id, e]) => [id, e.candidate.inputs])) };
+      const rows = Object.entries(file.executions as Record<string, { candidate: { inputs: unknown }; parent_execution_ids: string[] }>);
+      return {
+        occurrences: file.occurrences,
+        inputs: Object.fromEntries(rows.map(([id, e]) => [id, e.candidate.inputs])),
+        parents: Object.fromEntries(rows.map(([id, e]) => [id, e.parent_execution_ids])),
+      };
     };
     const referenceLineage = lineageOf(refRepo);
+    expect(referenceLineage.parents).toEqual({ e1: [], e2: ["e1"], e3: ["e1"], e4: ["e2", "e3"] });
 
     const repo = mkdtempSync(join(tmpdir(), "vinculum-kill-"));
     const dir = forkJoin(repo, "fj");
@@ -132,7 +137,7 @@ describe("recovery from execution.json alone", () => {
     const owner = engineExecutions("fj")[0];
     observed = false;
     await tickGraphs();
-    expect(projectExecution(owner)).toMatchObject({ lifecycle: "failed", shutdown_confirmed: false });
+    expect(owner).toMatchObject({ status: "failed", unconfirmed: true });
     const file = JSON.parse(readFileSync(executionPath(repo, "fj"), "utf8"));
     expect(file.executions[owner.id].shutdown_confirmed).toBe(false);
     const row = getTaskExecution(repo, "fj", "lane", "identity") as { state: typeof file };
@@ -183,6 +188,12 @@ describe("a task from before this change", () => {
       { t: "seeded", occurrences: [{ id: "seed/ticket.md", role: "ticket.md", path: join(artifacts, "ticket.md"), producer: null }] },
       { t: "reserved", execution: { id: "e1", step: "seed", depth: 1, inputs: { "ticket.md": ["seed/ticket.md"] }, outDir: join(artifacts, "1-seed-1"), origin: null, automatic: true } },
       { t: "started", execId: "e1", sessionId: "old-session" },
+      { t: "failed", execId: "e1", reason: "stopped" },
+      { t: "resumed", execId: "e1", sessionId: "retry" },
+      { t: "failed", execId: "e1", reason: "stopped" },
+      { t: "resumed", execId: "e1", sessionId: "retry" },
+      { t: "failed", execId: "e1", reason: "stopped" },
+      { t: "resumed", execId: "e1", sessionId: "final-owner" },
       { t: "accepted", execId: "e1", published: [{ id: "e1/numbers.md", role: "numbers.md", path: join(artifacts, "1-seed-1", "numbers.md"), producer: "e1" }] },
       { t: "exited", execId: "e1" },
     ];
@@ -198,6 +209,9 @@ describe("a task from before this change", () => {
 
     await saveEngineState(repo, "old", loaded.state);
     expect(loadEngineState(repo, "old").kind).toBe("stored");
+    const reply = getTaskExecution(repo, "old", "lane", "identity") as { state: { executions: Record<string, unknown>; occurrences: Record<string, unknown> } };
+    expect(reply.state.executions.e1).toMatchObject({ owner_session_id: "final-owner", previous_session_ids: ["old-session", "retry"], parent_execution_ids: [] });
+    expect(reply.state.occurrences["e1/numbers.md"]).toMatchObject({ producer_execution_id: "e1" });
     expect(readFileSync(join(dir, "engine.jsonl"), "utf8")).toBe(text);
     // The stored copy now wins even if the log is changed: it is never read again.
     writeFileSync(join(dir, "engine.jsonl"), "this is not json\n");
