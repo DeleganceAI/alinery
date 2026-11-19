@@ -40,12 +40,12 @@ import {
   NEXT_TURN_MODEL_TITLE,
   NEXT_TURN_THINKING_TITLE,
 } from "../chatTranscript";
-import { completionPrompt } from "../completionPrompt";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PaneResizer } from "../PaneResizer";
+import { ReviewedCompletion } from "../ReviewedCompletion";
 import { revealPath } from "../revealPath";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
@@ -81,7 +81,7 @@ import {
 } from "../sync/artifacts";
 import { useBoardTask, useSessionDisplay } from "../sync/board";
 import { readChatImage } from "../sync/chat";
-import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
+import { useTaskExecution } from "../sync/execution";
 import { listWorktreeFilesForRepo } from "../sync/git";
 import { observationNow, useSessionObservation } from "../sync/sessionObservation";
 import {
@@ -118,6 +118,7 @@ import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
 import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
 import { SessionActionPanel } from "./SessionActionPanel";
+import { StepContinuationMode } from "./StepContinuationMode";
 
 // ---- session view -------------------------------------------------------------
 
@@ -281,10 +282,14 @@ export function SessionView({
   const [executionError, setExecutionError] = useState("");
   const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only;
   const [completionBusy, setCompletionBusy] = useState(false);
-  const [dismissedCompletionId, setDismissedCompletionId] = useState("");
+  const [invalidatedReview, setInvalidatedReview] = useState("");
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
   const executionStep = executionView?.definition.step.find((step) => step.key === execution?.candidate.step_key);
-  const completionAvailable = executionAvailable && execution?.owner_session_id === id && execution.lifecycle === "running";
+  const review =
+    execution?.owner_session_id === id && execution.lifecycle === "running" && !execution.receipt_id && !executionView?.state.history_only ? execution.ready : undefined;
+  const reviewKey = review ? JSON.stringify([repoPath, taskSlug, id, execution?.id, review.revision]) : "";
+  const reviewCurrent = Boolean(review && reviewKey !== invalidatedReview);
+  const finishingStep = Boolean(execution?.owner_session_id === id && execution.lifecycle === "finishing" && execution.receipt_id);
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalStatus, setApprovalStatus] = useState("");
   const hasTask = Boolean(taskSlug);
@@ -304,7 +309,6 @@ export function SessionView({
   const [hostedLoaded, setHostedLoaded] = useState(false);
   const [grokReady, setGrokReady] = useState(false);
   const vinculumStartRef = useRef<string | null>(null);
-  const handledUiRef = useRef(new Set<string>());
   const setupOpenedRef = useRef(false);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const archivePending = useRef(false);
@@ -477,7 +481,6 @@ export function SessionView({
     setModelError(null);
     setModelRoles({});
     vinculumStartRef.current = null;
-    handledUiRef.current.clear();
     setupOpenedRef.current = false;
   }, [id, taskSlug, repoPath, intent]);
 
@@ -763,7 +766,7 @@ export function SessionView({
   const sendCurrentMessage = async (text?: string) => {
     const caption = (text ?? messageDraftRef.current.body).trim();
     const attachments = messageDraftRef.current.attachments ?? [];
-    if (messageSending || (caption.length === 0 && attachments.length === 0)) return;
+    if (finishingStep || messageSending || (caption.length === 0 && attachments.length === 0)) return;
     if (caption.startsWith("/") && attachments.length > 0) {
       toast.error("Remove attachments or clear the slash command");
       return;
@@ -785,6 +788,7 @@ export function SessionView({
       if (transport === "rpc") {
         const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
         await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
+        if (reviewKey) setInvalidatedReview(reviewKey);
         const next = appendOptimisticUser(chatRef.current, caption, busy ? "follow_up" : "prompt");
         chatRef.current = next;
         setChat(next);
@@ -808,7 +812,7 @@ export function SessionView({
   const sendNow = async () => {
     const caption = messageDraftRef.current.body.trim();
     const attachments = messageDraftRef.current.attachments ?? [];
-    if (messageSending || (caption.length === 0 && attachments.length === 0)) return;
+    if (finishingStep || messageSending || (caption.length === 0 && attachments.length === 0)) return;
     if (observation?.transport !== "rpc") {
       setMessageError("The session is still connecting.");
       return;
@@ -819,6 +823,7 @@ export function SessionView({
       const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
       await abortSession(repoPath, id);
       await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
+      if (reviewKey) setInvalidatedReview(reviewKey);
       const rowAttachments = draftToRowAttachments(attachments);
       updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
       const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
@@ -909,6 +914,7 @@ export function SessionView({
   const liveRpc = observation?.transport === "rpc";
   // Exited RPC sessions still support replay, but their processes cannot accept commands.
   const rpcProcessLive = liveRpc && observation?.lifecycle.state === "live" && observation.state?.process.state === "alive";
+  const readyEndpoint = reviewCurrent && review?.endpoint && executionAvailable && rpcProcessLive && !messageSending;
   const livePty = observation?.transport === "pty";
   const vinculumCoding = vinculum && !leftover && !navHistory && !showPanel;
   const showChat = vinculumCoding && Boolean(termIntent) && !livePty;
@@ -1044,26 +1050,7 @@ export function SessionView({
     }
   };
 
-  const completionCopy = useMemo(() => completionPrompt(executionView?.definition, execution), [executionView?.definition, execution]);
-  // Vinculum has no extension confirm card. The locked execution itself is the request.
-  const vinculumCompletionRequestId =
-    vinculum && completionAvailable && execution?.permission.kind === "locked" && dismissedCompletionId !== `vinculum-completion:${execution.id}`
-      ? `vinculum-completion:${execution.id}`
-      : "";
   const chatVisibility = useMemo(() => chatVisibilityFromAppearance(appearance), [appearance]);
-  const chatEntries = useMemo(() => {
-    const entries = [...chat.entries];
-    if (!vinculumCompletionRequestId) return entries;
-    entries.push({
-      id: vinculumCompletionRequestId,
-      type: "approval",
-      requestId: vinculumCompletionRequestId,
-      actor: { kind: "system", name: "Alinery" },
-      ...completionCopy,
-      disabled: navHistory || completionBusy,
-    });
-    return entries;
-  }, [chat.entries, completionCopy, navHistory, completionBusy, vinculumCompletionRequestId]);
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
@@ -1116,40 +1103,6 @@ export function SessionView({
       {sessionStats}
     </div>
   ) : null;
-
-  const approveChat = async (requestId: string, allow: boolean) => {
-    // The row stays mounted across the await, so without this a double-click sends two responses.
-    if (handledUiRef.current.has(requestId)) return;
-    handledUiRef.current.add(requestId);
-    if (vinculumCompletionRequestId && requestId === vinculumCompletionRequestId) {
-      if (!allow) {
-        setDismissedCompletionId(requestId);
-        handledUiRef.current.delete(requestId);
-        return;
-      }
-      if (!execution || !completionAvailable || completionBusy) {
-        handledUiRef.current.delete(requestId);
-        return;
-      }
-      setCompletionBusy(true);
-      try {
-        await allowExecutionCompletion(repoPath, taskSlug, execution.id, executionView?.revision);
-        setExecutionError("");
-      } catch (error) {
-        setExecutionError(String(error));
-      } finally {
-        handledUiRef.current.delete(requestId);
-        setCompletionBusy(false);
-      }
-      return;
-    }
-  };
-  // approveChat is rebuilt every render, so a useCallback keyed on it would be no more stable
-  // than the arrow it replaces. The ref keeps one identity for the life of the component while
-  // always calling the current closure — which is what lets memo on ChatPane actually hold.
-  const approveChatRef = useRef(approveChat);
-  approveChatRef.current = approveChat;
-  const onApproveChat = useCallback((requestId: string, allow: boolean) => void approveChatRef.current(requestId, allow), []);
 
   const applyChatModel = async (provider: string, modelId: string) => {
     setModelError(null);
@@ -1288,7 +1241,7 @@ export function SessionView({
       )}
       {executionError && (
         <InlineStatus tone="warning" detail={executionError}>
-          Execution state unavailable; queued starts and completion grants are disabled.
+          Execution state unavailable. Queued starts and reviewed completion are disabled.
         </InlineStatus>
       )}
       <div
@@ -1575,10 +1528,9 @@ export function SessionView({
                     {liveRpc || vinculum ? (
                       <>
                         <ChatPane
-                          entries={chatEntries}
+                          entries={chat.entries}
                           status={chatStatus}
                           visibility={chatVisibility}
-                          onApprove={onApproveChat}
                           onLoadOlder={loadOlder}
                           loadingOlder={loadingOlder}
                           atStart={chat.fileStart === 0}
@@ -1620,10 +1572,10 @@ export function SessionView({
                         {sessionControls && !showChatComposer ? <div className="chat-meta">{sessionControls}</div> : null}
                         <div className="terminal-frame">
                           <ChatPane
-                            entries={chatEntries}
+                            entries={chat.entries}
                             status={chatStatus}
+                            stepActivity={finishingStep ? "Finishing step…" : readyEndpoint ? "Ready for review" : undefined}
                             visibility={chatVisibility}
-                            onApprove={onApproveChat}
                             onLoadOlder={loadOlder}
                             loadingOlder={loadingOlder}
                             atStart={chat.fileStart === 0}
@@ -1632,12 +1584,46 @@ export function SessionView({
                         {showChatComposer ? (
                           <>
                             <ChatComposer
+                              besideSend={
+                                reviewCurrent && review && !review.endpoint && execution && executionView ? (
+                                  <ReviewedCompletion
+                                    repo={repoPath}
+                                    slug={taskSlug}
+                                    execution={execution}
+                                    steps={executionView.definition.step}
+                                    disabled={
+                                      !executionAvailable ||
+                                      !rpcProcessLive ||
+                                      completionBusy ||
+                                      messageSending ||
+                                      turnActive ||
+                                      chat.sessionMeta.isCompacting === true ||
+                                      agentState === "waiting_for_approval" ||
+                                      agentState === "waiting_for_input" ||
+                                      Boolean(messageDraft.body || messageDraft.attachments?.length) ||
+                                      queuedMeta > 0
+                                    }
+                                  />
+                                ) : undefined
+                              }
                               actions={chatVisibility.showMeta ? sessionStats : undefined}
                               center={chatVisibility.showMeta ? modelBar : undefined}
+                              end={
+                                vinculum &&
+                                executionView &&
+                                execution &&
+                                executionAvailable &&
+                                execution.owner_session_id === id &&
+                                execution.lifecycle === "running" &&
+                                !execution.ready?.endpoint ? (
+                                  <StepContinuationMode key={execution.id} repo={repoPath} slug={taskSlug} step={execution.candidate.step_key} view={executionView} />
+                                ) : undefined
+                              }
                               body={messageDraft.body}
                               status={chatStatus}
                               catalog={chat.commands}
                               sending={messageSending}
+                              readOnly={finishingStep}
                               showHints={false}
                               attachments={messageDraft.attachments ?? []}
                               dropping={dropping}

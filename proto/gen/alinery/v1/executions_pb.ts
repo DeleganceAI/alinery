@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/executions.proto.
  */
 export const file_alinery_v1_executions: GenFile = /*@__PURE__*/
-  fileDesc("ChthbGluZXJ5L3YxL2V4ZWN1dGlvbnMucHJvdG8SCmFsaW5lcnkudjEihAEKFkFsbG93Q29tcGxldGlvblJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRhc2tfc2x1ZxgCIAEoCRIUCgxleGVjdXRpb25faWQYAyABKAkSGQoRZXhwZWN0ZWRfcmV2aXNpb24YBCABKAQiPwoXQWxsb3dDb21wbGV0aW9uUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZDJuChBFeGVjdXRpb25TZXJ2aWNlEloKD0FsbG93Q29tcGxldGlvbhIiLmFsaW5lcnkudjEuQWxsb3dDb21wbGV0aW9uUmVxdWVzdBojLmFsaW5lcnkudjEuQWxsb3dDb21wbGV0aW9uUmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common]);
+  fileDesc("ChthbGluZXJ5L3YxL2V4ZWN1dGlvbnMucHJvdG8SCmFsaW5lcnkudjEihAEKFkFsbG93Q29tcGxldGlvblJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRhc2tfc2x1ZxgCIAEoCRIUCgxleGVjdXRpb25faWQYAyABKAkSGQoRZXhwZWN0ZWRfcmV2aXNpb24YBCABKAQiPwoXQWxsb3dDb21wbGV0aW9uUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCKXAQoaU2V0U3RlcENvbnRpbnVhdGlvblJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRhc2tfc2x1ZxgCIAEoCRIQCghzdGVwX2tleRgDIAEoCRIRCglhdXRvbWF0aWMYBCABKAgSGQoRZXhwZWN0ZWRfcmV2aXNpb24YBSABKAQiQwobU2V0U3RlcENvbnRpbnVhdGlvblJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQilQEKF0NvbnRpbnVlUmV2aWV3ZWRSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIRCgl0YXNrX3NsdWcYAiABKAkSFAoMZXhlY3V0aW9uX2lkGAMgASgJEhIKCnNlc3Npb25faWQYBCABKAkSFQoNd29ya19yZXZpc2lvbhgFIAEoBCJAChhDb250aW51ZVJldmlld2VkUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZDK1AgoQRXhlY3V0aW9uU2VydmljZRJmChNTZXRTdGVwQ29udGludWF0aW9uEiYuYWxpbmVyeS52MS5TZXRTdGVwQ29udGludWF0aW9uUmVxdWVzdBonLmFsaW5lcnkudjEuU2V0U3RlcENvbnRpbnVhdGlvblJlc3BvbnNlEl0KEENvbnRpbnVlUmV2aWV3ZWQSIy5hbGluZXJ5LnYxLkNvbnRpbnVlUmV2aWV3ZWRSZXF1ZXN0GiQuYWxpbmVyeS52MS5Db250aW51ZVJldmlld2VkUmVzcG9uc2USWgoPQWxsb3dDb21wbGV0aW9uEiIuYWxpbmVyeS52MS5BbGxvd0NvbXBsZXRpb25SZXF1ZXN0GiMuYWxpbmVyeS52MS5BbGxvd0NvbXBsZXRpb25SZXNwb25zZWIGcHJvdG8z", [file_alinery_v1_common]);
 
 /**
  * Lets one live execution finish: the engine marks it permitted and tells its agent to wrap up.
@@ -72,12 +72,145 @@ export const AllowCompletionResponseSchema: GenMessage<AllowCompletionResponse> 
   messageDesc(file_alinery_v1_executions, 1);
 
 /**
+ * Update this task’s continuation choice for a step, including its current and future attempts.
+ *
+ * @generated from message alinery.v1.SetStepContinuationRequest
+ */
+export type SetStepContinuationRequest = Message<"alinery.v1.SetStepContinuationRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string task_slug = 2;
+   */
+  taskSlug: string;
+
+  /**
+   * @generated from field: string step_key = 3;
+   */
+  stepKey: string;
+
+  /**
+   * @generated from field: bool automatic = 4;
+   */
+  automatic: boolean;
+
+  /**
+   * @generated from field: uint64 expected_revision = 5;
+   */
+  expectedRevision: bigint;
+};
+
+/**
+ * Describes the message alinery.v1.SetStepContinuationRequest.
+ * Use `create(SetStepContinuationRequestSchema)` to create a new message.
+ */
+export const SetStepContinuationRequestSchema: GenMessage<SetStepContinuationRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_executions, 2);
+
+/**
+ * @generated from message alinery.v1.SetStepContinuationResponse
+ */
+export type SetStepContinuationResponse = Message<"alinery.v1.SetStepContinuationResponse"> & {
+  /**
+   * @generated from field: alinery.v1.Applied applied = 1;
+   */
+  applied?: Applied | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.SetStepContinuationResponse.
+ * Use `create(SetStepContinuationResponseSchema)` to create a new message.
+ */
+export const SetStepContinuationResponseSchema: GenMessage<SetStepContinuationResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_executions, 3);
+
+/**
+ * The person accepts the assessment for this owner and work revision. A later message or
+ * a changed output requires a new assessment, even if the session still owns the same step.
+ *
+ * @generated from message alinery.v1.ContinueReviewedRequest
+ */
+export type ContinueReviewedRequest = Message<"alinery.v1.ContinueReviewedRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string task_slug = 2;
+   */
+  taskSlug: string;
+
+  /**
+   * @generated from field: string execution_id = 3;
+   */
+  executionId: string;
+
+  /**
+   * @generated from field: string session_id = 4;
+   */
+  sessionId: string;
+
+  /**
+   * @generated from field: uint64 work_revision = 5;
+   */
+  workRevision: bigint;
+};
+
+/**
+ * Describes the message alinery.v1.ContinueReviewedRequest.
+ * Use `create(ContinueReviewedRequestSchema)` to create a new message.
+ */
+export const ContinueReviewedRequestSchema: GenMessage<ContinueReviewedRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_executions, 4);
+
+/**
+ * @generated from message alinery.v1.ContinueReviewedResponse
+ */
+export type ContinueReviewedResponse = Message<"alinery.v1.ContinueReviewedResponse"> & {
+  /**
+   * @generated from field: alinery.v1.Applied applied = 1;
+   */
+  applied?: Applied | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.ContinueReviewedResponse.
+ * Use `create(ContinueReviewedResponseSchema)` to create a new message.
+ */
+export const ContinueReviewedResponseSchema: GenMessage<ContinueReviewedResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_executions, 5);
+
+/**
  * Execution approvals. The read side is the `execution/<slug>/<slug>` entity (entities.proto).
  * The engine decides everything else about an execution; the daemon only passes the person's permission on.
  *
  * @generated from service alinery.v1.ExecutionService
  */
 export const ExecutionService: GenService<{
+  /**
+   * APPROVE
+   *
+   * @generated from rpc alinery.v1.ExecutionService.SetStepContinuation
+   */
+  setStepContinuation: {
+    methodKind: "unary";
+    input: typeof SetStepContinuationRequestSchema;
+    output: typeof SetStepContinuationResponseSchema;
+  },
+  /**
+   * APPROVE
+   *
+   * @generated from rpc alinery.v1.ExecutionService.ContinueReviewed
+   */
+  continueReviewed: {
+    methodKind: "unary";
+    input: typeof ContinueReviewedRequestSchema;
+    output: typeof ContinueReviewedResponseSchema;
+  },
   /**
    * APPROVE
    *

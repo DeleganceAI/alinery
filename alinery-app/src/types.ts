@@ -141,7 +141,7 @@ export type Task = {
   max_live_sessions?: number;
   launch_defaults?: LaunchChoices;
   auto_advance: string[];
-  /** When true, every playbook step may complete automatically. Absent or false keeps `auto_advance`. */
+  /** When true, intermediate steps continue automatically. Final steps stay open for review. */
   auto_approve_all?: boolean;
   step_models?: Record<string, string>;
   /** M6: true while still being drafted on CreateTaskPage. */
@@ -897,6 +897,7 @@ export type ExecutionRecord = {
   start_requested: boolean;
   lifecycle: ExecutionLifecycle;
   permission: CompletionPermission;
+  ready?: { revision: number; endpoint: boolean; destinations: string[]; roles: string[] };
   receipt_id: string | null;
   exit_code: number | null;
   shutdown_confirmed: boolean;

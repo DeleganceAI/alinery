@@ -20,6 +20,7 @@ import { PaneResizer } from "../PaneResizer";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import { RepoFileTree } from "../RepoFileTree";
+import { ReviewedCompletion } from "../ReviewedCompletion";
 import { relatedRepoKey, relatedStoredPath, sameMachine } from "../remoteRepo";
 import { revealPath } from "../revealPath";
 import {
@@ -72,7 +73,7 @@ import {
   useTaskArtifacts,
 } from "../sync/artifacts";
 import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
-import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
+import { useTaskExecution } from "../sync/execution";
 import { type GitDiffTarget, pushAndCompareUrlForRepo } from "../sync/git";
 import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
 import { abortSession, archiveSession, markSessionNotificationRead, renameSession } from "../sync/sessions";
@@ -430,18 +431,6 @@ export function TaskDetail({
   const commitFetchedTask = (fetched: Task | null) => {
     setTask((current) => (current && fetched && sameTask(current, fetched) ? current : fetched));
   };
-  const allowCompletion = async (executionId: string) => {
-    if (executionView?.live?.status !== "available" || executionView.state.history_only || executionError || busy) return;
-    setBusy(`allow:${executionId}`);
-    try {
-      await allowExecutionCompletion(repoPath, slug, executionId, executionView.revision);
-    } catch (error) {
-      setExecutionError(String(error));
-    } finally {
-      setBusy("");
-    }
-  };
-
   const load = async () => {
     const isCurrent = beginNameRead();
     const managerResult = await fetchSubtaskState(repoPath, slug).then(
@@ -1011,7 +1000,7 @@ export function TaskDetail({
 
         {executionError && (
           <InlineStatus tone="error" detail={executionError}>
-            Execution request failed. {executionView ? "The last successful read is shown, not current live state. " : ""}Completion grants are disabled.
+            Execution request failed. {executionView ? "The last successful read is shown, not current live state. " : ""}Reviewed completion is unavailable.
           </InlineStatus>
         )}
 
@@ -1151,8 +1140,8 @@ export function TaskDetail({
                 disabled={!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve"}
                 title={
                   autoApproveAll
-                    ? "Auto Approval All is on. Every playbook step may complete without an approval card. Turn off to restore the steps chosen at creation."
-                    : "Auto Approval All is off. This task keeps the automatic-completion steps chosen at creation."
+                    ? "Intermediate steps continue automatically. Turn off to use each step’s saved choice. Final steps stay open for review."
+                    : "Each step uses its saved continuation choice. Final steps stay open for review."
                 }
                 onClick={() => setAutoApproveAll(!autoApproveAll)}
               >
@@ -1269,15 +1258,17 @@ export function TaskDetail({
                         Completion permission: {execution.permission.kind}
                         {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
                       </p>
-                      {execution.permission.kind === "locked" && execution.lifecycle === "running" && !executionView.state.history_only && (
-                        <button
-                          type="button"
-                          className="btn small"
-                          disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
-                          onClick={() => void allowCompletion(execution.id)}
-                        >
-                          Allow this session to complete · {execution.owner_session_id}
-                        </button>
+                      {!executionView.state.history_only && execution.ready && (
+                        <>
+                          {execution.ready.endpoint && execution.lifecycle === "running" && <p>Ready for review</p>}
+                          <ReviewedCompletion
+                            repo={repoPath}
+                            slug={slug}
+                            execution={execution}
+                            steps={steps}
+                            disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
+                          />
+                        </>
                       )}
                     </article>
                   ))}

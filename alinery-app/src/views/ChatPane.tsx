@@ -13,6 +13,7 @@ import { SubagentDrawer } from "./SubagentDrawer";
 function ChatPaneImpl({
   entries,
   status = "idle",
+  stepActivity,
   onApprove,
   visibility = DEFAULT_CHAT_VISIBILITY,
   onLoadOlder,
@@ -21,6 +22,7 @@ function ChatPaneImpl({
 }: {
   entries: ChatEntry[];
   status?: SessionChatStatus;
+  stepActivity?: "Ready for review" | "Finishing step…";
   onApprove?: (id: string, allow: boolean) => void;
   visibility?: ChatPrefs;
   /** Ask the owner for the page of journal rows before the ones currently loaded. */
@@ -33,7 +35,7 @@ function ChatPaneImpl({
   const stick = useRef(visibility.autoScroll);
   const anchor = useRef<{ id: string; top: number } | null>(null);
   const shown = useMemo(() => visibleChatEntries(entries, visibility), [entries, visibility]);
-  const activity = chatActivityLabel(status, shown);
+  const activity = chatActivityLabel(status, shown) ?? stepActivity;
   const items = useMemo(() => journalItems(entries, status !== "idle", (entry) => isChatEntryVisible(entry, visibility)), [entries, status, visibility]);
   const stepOpen = useCallback((entry: ChatEntry) => workRailDefaultExpanded(entry, visibility), [visibility]);
 

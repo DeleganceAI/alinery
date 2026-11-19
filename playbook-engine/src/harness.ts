@@ -67,8 +67,9 @@ export interface Launch {
 export type CompletionReply =
   /** Outputs validated and durably recorded. Agent should finish without starting more work. */
   | { kind: 'accepted'; published: string[] }
-  /** The human gate is closed. Session stays interactive; agent waits for direction. */
-  | { kind: 'permission-required' }
+  /** An assessed revision remains open for conversation. Only the owner of this review may continue it. */
+  | { kind: 'ready'; revision: number; endpoint: boolean; destinations: string[] }
+  | { kind: 'stale'; reason: string }
   /**
    * Something assigned was present but invalid (empty file, a directory), or
    * nothing valid was published at all. Nothing was recorded. Fix and call again.

@@ -36,8 +36,8 @@ type Json = Record<string, unknown>;
 function mapPaths(json: StateJson, fn: (path: string) => string): StateJson {
   const file = <T extends { path: string }>(f: T): T => ({ ...f, path: fn(f.path) });
   return {
+    ...json,
     seeds: json.seeds.map(file),
-    ambiguities: json.ambiguities,
     executions: json.executions.map((e) => ({
       ...e,
       outDir: fn(e.outDir),
@@ -94,6 +94,14 @@ export function saveEngineState(repo: string, slug: string, state: State): Promi
   return withTaskMutation(repo, "engine_save", async () => {
     const file = JSON.parse(readFileSync(executionPath(repo, slug), "utf8")) as Json;
     file.engine = engine;
+    if (engine.stepModes) {
+      const enabled = new Set<string>(Array.isArray(file.enabled_steps) ? file.enabled_steps : []);
+      for (const [step, automatic] of Object.entries(engine.stepModes)) {
+        if (automatic) enabled.add(step);
+        else enabled.delete(step);
+      }
+      file.enabled_steps = [...enabled].sort();
+    }
     Object.assign(file, mergedRecords(file, frozen, repo, slug));
     file.revision = (typeof file.revision === "number" ? file.revision : 0) + 1;
     await writeDurable(executionPath(repo, slug), JSON.stringify(file));

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
-import { Engine } from "playbook-engine/src/engine.ts";
+import { Engine, StepContinuationRefusal } from "playbook-engine/src/engine.ts";
 import type { CompletionReply, Harness, Launch, SessionStatus } from "playbook-engine/src/harness.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
 import type { Execution } from "playbook-engine/src/state.ts";
@@ -13,12 +13,14 @@ import { DomainError } from "./platform/lock.ts";
 import { readLaunchModel } from "./sessionControls.ts";
 import { recordWorktreeTree } from "./domain/gitActions.ts";
 import { requirementsFor } from "./domain/repoSpecs.ts";
+import { readTaskChecked } from "./domain/taskFiles.ts";
 
 export type SessionHooks = {
   open(id: string, taskSlug: string, model: string, prompt: string): Promise<void>;
   status(id: string): Promise<SessionStatus>;
+  reviewBlocker?(id: string, human: boolean): Promise<string | undefined>;
   send(id: string, text: string): Promise<void>;
-  stop(id: string): Promise<void>;
+  stop(id: string, taskSlug: string): Promise<void>;
   /** A session the engine launched: it stands for this execution of this step. */
   bind(id: string, executionId: string, step: string): void;
   /** A task's playbook engine saved its state to `execution.json`, so its execution entity may have changed. */
@@ -48,7 +50,7 @@ const engineReady = new Promise<void>((resolve) => {
 
 function playbookView(execution: Execution): PlaybookView {
   if (execution.status === "done") return { state: "completed" };
-  if (execution.status === "finishing") return { state: "ready_to_advance" };
+  if (execution.ready || execution.status === "finishing") return { state: "ready_to_advance" };
   if (execution.status === "failed") return { state: "failed", reason: execution.failure ?? "failed" };
   return { state: "in_progress" };
 }
@@ -73,15 +75,72 @@ export function engineAxis(): Array<{ id: string; playbook: PlaybookView }> {
 
 function phaseReply(reply: CompletionReply, execId: string): Record<string, unknown> {
   if (reply.kind === "accepted") return { ok: true, outcome: "accepted", published: reply.published, playbook: "ready_to_advance" };
-  if (reply.kind === "permission-required") return { ok: true, outcome: "waiting_for_approval", correlation_id: `completion-permission:${execId}` };
+  if (reply.kind === "ready") return { ok: true, outcome: "ready_for_review", work_revision: reply.revision, endpoint: reply.endpoint, destinations: reply.destinations };
+  if (reply.kind === "stale") return { error: reply.reason };
   return { ok: true, outcome: "waiting_for_input", diagnostics: reply.problems, correlation_id: `completion-outputs:${execId}` };
 }
 
-export async function completeSession(sessionId: string): Promise<Record<string, unknown> | undefined> {
+export async function completeSession(sessionId: string, currentOwner = () => true, expectedExecution?: string): Promise<Record<string, unknown> | undefined> {
   const link = bound.get(sessionId);
   const engine = link ? running.get(link.slug)?.engine : undefined;
-  if (!link || !engine) return undefined;
-  return phaseReply(await engine.requestCompletion(link.execId), link.execId);
+  const execution = link ? engine?.state.executions.get(link.execId) : undefined;
+  if (!link || !engine || !execution) return undefined;
+  const attempt = execution.attempt ?? 0;
+  return withSessionAction(sessionId, async () => {
+    if (!currentOwner() || bound.get(sessionId) !== link || (expectedExecution !== undefined && expectedExecution !== execution.id)) return { error: "The execution owner changed." };
+    if (!execution.receipt) {
+      const blocker = await hooks?.reviewBlocker?.(sessionId, false);
+      if (blocker) return { ok: true, outcome: "pending_work", reason: blocker };
+    }
+    return phaseReply(await engine.requestCompletion(link.execId, sessionId, attempt), link.execId);
+  });
+}
+
+// A human's message and Continue can arrive from different clients. Keep Continue out
+// until readiness is durably invalidated and Pi has admitted the new input.
+const sessionActions = new Map<string, Promise<unknown>>();
+
+async function withSessionAction<T>(id: string, run: () => Promise<T>): Promise<T> {
+  const previous = sessionActions.get(id);
+  const next = previous ? previous.then(run, run) : Promise.resolve().then(run);
+  sessionActions.set(id, next);
+  try {
+    return await next;
+  } finally {
+    if (sessionActions.get(id) === next) sessionActions.delete(id);
+  }
+}
+
+export async function submitSessionWork(slug: string, sessionId: string, submit: () => Promise<void>): Promise<void> {
+  if (!slug) return submit();
+  await engineReady;
+  if (hooks) openTask(repoRoot, slug, hooks);
+  return withSessionAction(sessionId, async () => {
+    const link = bound.get(sessionId);
+    if (link) {
+      const engine = running.get(slug)?.engine;
+      if (link.slug !== slug || !engine) throw new DomainError("failed_precondition", "the owning execution is unavailable");
+      await engine.invalidateReadiness(link.execId, sessionId);
+    }
+    await submit();
+  });
+}
+
+export async function continueReviewed(slug: string, executionId: string, sessionId: string, revision: number): Promise<void> {
+  return withSessionAction(sessionId, async () => {
+    const engine = running.get(slug)?.engine;
+    if (!engine?.state.executions.has(executionId)) throw new DomainError("not_found", `task ${slug} has no active execution ${executionId}`);
+    const execution = engine.state.executions.get(executionId)!;
+    if (execution.sessionId === sessionId && execution.ready?.revision === revision) {
+      const task = readTaskChecked(repoRoot, slug);
+      if (task.archived || task.draft || task.engine_version !== 2) throw new DomainError("failed_precondition", "only an active playbook task can continue");
+      const blocker = await hooks?.reviewBlocker?.(sessionId, true);
+      if (blocker) throw new DomainError("failed_precondition", blocker);
+    }
+    const reply = await engine.continueReviewed(executionId, sessionId, revision);
+    if (reply.kind === "stale") throw new DomainError("aborted", reply.reason);
+    if (reply.kind !== "accepted") throw new DomainError("failed_precondition", reply.kind === "rejected" ? reply.problems.join("\n") : "the execution is awaiting review");
+  });
 }
 
 /** The person lets one live execution finish. Not found, or not live, is a precondition failure the caller reports. */
@@ -91,7 +150,24 @@ export async function permitExecution(slug: string, execId: string): Promise<voi
   const execution = engine.state.executions.get(execId);
   if (!execution) throw new DomainError("not_found", `task ${slug} has no execution ${execId}`);
   if (execution.status !== "live" || !execution.sessionId) throw new DomainError("failed_precondition", `execution ${execId} is ${execution.status}; only a live execution can be permitted`);
-  await engine.permit(execId);
+  const sessionId = execution.sessionId;
+  await withSessionAction(sessionId, async () => {
+    await engine.invalidateReadiness(execId, sessionId);
+    await engine.permit(execId);
+  });
+}
+
+export async function setStepContinuation(slug: string, stepKey: string, automatic: boolean, checkRevision: () => void): Promise<void> {
+  const task = readTaskChecked(repoRoot, slug);
+  if (task.archived || task.draft) throw new DomainError("failed_precondition", "only an active task can change step continuation");
+  const engine = running.get(slug)?.engine;
+  if (!engine) throw new DomainError("failed_precondition", "this task has no active playbook engine");
+  try {
+    await engine.setStepContinuation(stepKey, automatic, checkRevision);
+  } catch (error) {
+    if (error instanceof StepContinuationRefusal) throw new DomainError(error.reason === "unknown-step" ? "not_found" : "failed_precondition", error.message);
+    throw error;
+  }
 }
 
 /** Step override, then the playbook, then the task default, then Settings. A blank is not the hosted fallback. */
@@ -154,7 +230,7 @@ export function handoffForStep(sessionsDir: string, artifactsDir: string, step: 
 
 export function sessionHarnessStatus(row: { process: "starting" | "alive" | "exited"; playbook: { state: string }; agent: { state: string }; liveRun: boolean } | undefined): SessionStatus {
   if (!row) return { kind: "unknown" };
-  if (row.playbook.state === "failed") return { kind: "failed", reason: SESSION_FAILED };
+  if (row.playbook.state === "failed") return row.process === "exited" ? { kind: "failed", reason: SESSION_FAILED } : { kind: "unknown" };
   if (row.process === "exited") return { kind: "exited", exitCode: null };
   if (row.process === "starting") return { kind: "starting" };
   if (row.agent.state === "busy" || row.liveRun) return { kind: "running" };
@@ -231,14 +307,16 @@ function harnessFor(slug: string, hooks: SessionHooks, taskDir: string): Harness
       hooks.bind(id, launch.executionId, launch.step);
       return id;
     },
-    status(id: string) {
-      return hooks.status(id);
+    async status(id: string) {
+      const status = await hooks.status(id);
+      if (status.kind === "unknown" && typeof readSessionMeta(taskDir, id)?.ended_at === "number") return { kind: "exited", exitCode: null };
+      return status;
     },
     send(id: string, text: string) {
       return hooks.send(id, text);
     },
     stop(id: string) {
-      return hooks.stop(id);
+      return hooks.stop(id, slug);
     },
   };
 }
@@ -295,6 +373,16 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
       return Array.isArray(steps) ? steps.filter((step): step is string => typeof step === "string") : [];
     },
     autoApproveAll: () => readExecutionFile(taskDir)?.auto_approve_all === true,
+    canAdvanceReviewed: async (sessionId) => {
+      try {
+        const current = readTaskChecked(repo, slug);
+        return !current.archived && !current.draft && current.engine_version === 2 && !(await hooks.reviewBlocker?.(sessionId, true));
+      } catch (error) {
+        // Retry this owner's review on the next tick; the other repositories' tasks can still advance.
+        console.error(`vinculum: ${slug} continuation check failed: ${error}`);
+        return false;
+      }
+    },
     tokens: {
       TICKET_FILE: ticketPath(taskDir) ?? "",
       TASK_SLUG: slug,

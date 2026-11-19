@@ -73,7 +73,7 @@ export async function* watchTranscript(source: TranscriptFeed, fromItem: number,
 
 /**
  * Change signal from pi-durable's `watchEvents` (one batch per commit). It is experimental, so if it
- * cannot attach or its stream ends before we stop it, a 250 ms poll takes over.
+ * cannot attach or is interrupted, a 250 ms poll takes over. A closed harness has one final read.
  */
 export function eventsChanges(harness: Harness, conversationId: string, context: Context, pollMs = POLL_MS): (notify: () => void) => () => void {
   return (notify) => {
@@ -93,7 +93,11 @@ export function eventsChanges(harness: Harness, conversationId: string, context:
         }
         stream = opened;
         opened.start(async () => notify());
-        void opened.closed.then((end) => poll(end.reason));
+        void opened.closed.then((end) => {
+          if (stopped) return;
+          if (end.reason === "session_closed") notify();
+          else poll(end.reason);
+        });
         // A commit between the caller's first read and this registration would otherwise be missed.
         notify();
       },

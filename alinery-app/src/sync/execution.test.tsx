@@ -2,11 +2,11 @@ import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, type Transport } from "@connectrpc/connect";
 import { renderHook, waitFor } from "@testing-library/react";
 import { type Entity, EntitySchema } from "alinery-proto/alinery/v1/entities_pb";
-import type { AllowCompletionRequest } from "alinery-proto/alinery/v1/executions_pb";
+import type { ContinueReviewedRequest } from "alinery-proto/alinery/v1/executions_pb";
 import { afterEach, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
 import { cursor, daemonHarness, put, scriptedSync, snapshot, untilAborted } from "../test/daemonHarness";
-import { allowExecutionCompletion, ExecutionConflict, executionKey, readTaskExecution, readTaskExecutions, replyOf, useTaskExecution } from "./execution";
+import { continueReviewed, ExecutionConflict, executionKey, readTaskExecution, readTaskExecutions, replyOf, useTaskExecution } from "./execution";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 afterEach(() => vi.resetAllMocks());
@@ -36,7 +36,7 @@ const row = (permission: { kind: string }, revision: bigint, slug = "task"): Ent
     value: { case: "execution", value: { slug, state: state(permission), definition } as never },
   });
 
-function serve(rows: Entity[], execution?: { allowCompletion: (req: AllowCompletionRequest) => Promise<{ applied: { cursor: ReturnType<typeof cursor> } }> }, later?: Entity) {
+function serve(rows: Entity[], execution?: { continueReviewed: (req: ContinueReviewedRequest) => Promise<{ applied: { cursor: ReturnType<typeof cursor> } }> }, later?: Entity) {
   const h = scriptedSync(async function* (_req, _call, signal) {
     yield snapshot(rows, 1);
     if (later) {
@@ -55,6 +55,29 @@ it("reads the row as the reply the views already use, with the revision it was r
   expect(reply.live).toEqual({ status: "available" });
   expect(reply.definition.title).toBe("Fork join");
   expect(reply.state.executions?.e1).toMatchObject({ owner_session_id: "s1", lifecycle: "running", permission: { kind: "locked" } });
+});
+
+it("marks a retained execution offline when its stream drops", async () => {
+  let disconnect!: () => void;
+  const down = new Promise<void>((resolve) => {
+    disconnect = resolve;
+  });
+  const h = scriptedSync(async function* (_req, call, signal) {
+    if (call > 0) {
+      await untilAborted(signal);
+      return;
+    }
+    yield snapshot([row({ kind: "locked" }, 5n)], 1);
+    await down;
+    throw new ConnectError("offline", Code.Unavailable);
+  });
+  vi.mocked(daemonTransport).mockReturnValue(daemonHarness({ sync: h.sync }).transport);
+  const view = renderHook(() => useTaskExecution("/stale-review", "task"));
+  await waitFor(() => expect(view.result.current.reply?.live.status).toBe("available"));
+  disconnect();
+  await waitFor(() => expect(view.result.current.reply?.live.status).toBe("offline"));
+  expect(view.result.current.reply?.state.executions?.e1.owner_session_id).toBe("s1");
+  view.unmount();
 });
 
 it("a task with no row, and a daemon that does not answer, are errors with a reason", async () => {
@@ -78,13 +101,20 @@ it("a task with no row, and a daemon that does not answer, are errors with a rea
   await expect(readTaskExecution("/c", "task", 40)).rejects.toMatch("did not answer");
 });
 
-it("an approval carries the task, the execution, the revision seen and a mutation id; the card moves once the delta arrives", async () => {
-  const calls: { slug: string; execution: string; expected: bigint; client: string; mutation: string }[] = [];
+it("reviewed continuation identifies the execution, owner and work revision and waits for its applied cursor", async () => {
+  const calls: { slug: string; execution: string; owner: string; expected: bigint; client: string; mutation: string }[] = [];
   serve(
     [row({ kind: "locked" }, 5n)],
     {
-      allowCompletion: async (req) => {
-        calls.push({ slug: req.taskSlug, execution: req.executionId, expected: req.expectedRevision, client: req.meta?.clientId ?? "", mutation: req.meta?.mutationId ?? "" });
+      continueReviewed: async (req) => {
+        calls.push({
+          slug: req.taskSlug,
+          execution: req.executionId,
+          owner: req.sessionId,
+          expected: req.workRevision,
+          client: req.meta?.clientId ?? "",
+          mutation: req.meta?.mutationId ?? "",
+        });
         return { applied: { cursor: cursor(2) } };
       },
     },
@@ -92,12 +122,11 @@ it("an approval carries the task, the execution, the revision seen and a mutatio
   );
   const { result } = renderHook(() => useTaskExecution("/d", "task"));
   await waitFor(() => expect(result.current.reply?.state.executions?.e1.permission.kind).toBe("locked"));
-  const seen = result.current.reply?.revision;
-  expect(seen).toBe(5n);
+  expect(result.current.reply?.revision).toBe(5n);
 
-  await allowExecutionCompletion("/d", "task", "e1", seen);
+  await continueReviewed("/d", "task", "e1", "s1", 3);
   expect(calls).toHaveLength(1);
-  expect(calls[0]).toMatchObject({ slug: "task", execution: "e1", expected: 5n });
+  expect(calls[0]).toMatchObject({ slug: "task", execution: "e1", owner: "s1", expected: 3n });
   expect(calls[0].client).not.toBe("");
   expect(calls[0].mutation).not.toBe("");
   // The promise waited for the replica to pass the write's cursor, so the row is already the new one.
@@ -107,23 +136,23 @@ it("an approval carries the task, the execution, the revision seen and a mutatio
 
 it("a row that moved on is refused as a conflict and the card stays as the daemon has it", async () => {
   serve([row({ kind: "locked" }, 7n)], {
-    allowCompletion: async () => {
+    continueReviewed: async () => {
       throw new ConnectError("the execution changed since revision 5 (now 7)", Code.Aborted);
     },
   });
-  await expect(allowExecutionCompletion("/e", "task", "e1", 5n)).rejects.toBeInstanceOf(ExecutionConflict);
-  await expect(allowExecutionCompletion("/e", "task", "e1", 5n)).rejects.toThrow("changed since revision 5");
+  await expect(continueReviewed("/e", "task", "e1", "s1", 5)).rejects.toBeInstanceOf(ExecutionConflict);
+  await expect(continueReviewed("/e", "task", "e1", "s1", 5)).rejects.toThrow("changed since revision 5");
   const reply = await readTaskExecution("/e", "task");
   expect(reply.state.executions?.e1.permission.kind).toBe("locked");
 });
 
 it("any other refusal keeps its message and is not a conflict", async () => {
   serve([row({ kind: "locked" }, 7n)], {
-    allowCompletion: async () => {
+    continueReviewed: async () => {
       throw new ConnectError("execution e1 is done; only a live execution can be permitted", Code.FailedPrecondition);
     },
   });
-  const error = await allowExecutionCompletion("/f", "task", "e1").catch((e) => e);
+  const error = await continueReviewed("/f", "task", "e1", "s1", 7).catch((e) => e);
   expect(error).not.toBeInstanceOf(ExecutionConflict);
   expect(String(error.message)).toContain("only a live execution can be permitted");
 });

@@ -6505,8 +6505,18 @@ header:has(~ main .task-info-panel) nav.tabs {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
 }
-.chat-composer-footer.has-center > .chat-composer-context {
+.chat-composer-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: end;
+  gap: 6px;
   justify-self: end;
+}
+.step-continuation-mode {
+  max-width: 100%;
+  color: var(--text-muted);
+  font: inherit;
 }
 .chat-session-controls {
   display: flex;
@@ -6654,6 +6664,13 @@ header:has(~ main .task-info-panel) nav.tabs {
 .chat-composer-icon {
   width: 14px;
   height: 14px;
+}
+.chat-composer-row .reviewed-completion {
+  max-width: min(42%, 22rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
 }
 .chat-composer-send,
 .chat-composer-abort {

@@ -6,6 +6,7 @@ import { fromBinary, toBinary } from "@bufbuild/protobuf";
 import { EntitySchema } from "alinery-proto/alinery/v1/entities_pb";
 import { Engine } from "playbook-engine/src/engine.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
+import { settle } from "playbook-engine/test/helpers.ts";
 import { complete, FakeHarness } from "playbook-engine/test/fake-harness.ts";
 import { forgetTask, prepareGraphs, resetGraphs, tickGraphs } from "../graph.ts";
 import { Replica, taskScope } from "../sync/testkit.ts";
@@ -34,17 +35,6 @@ function fixture(slug: string) {
   writeFileSync(join(dir, "task.md"), `name = "Fork join"\nworktree = ${JSON.stringify(repo)}\nhas_worktree = true\n`);
   writeFileSync(join(dir, "execution.json"), JSON.stringify({ creation: "ready", initial_start_requested: true, max_live_sessions: 10, enabled_steps: KEYS, auto_approve_all: false }));
   return { repo, dir };
-}
-
-async function settle(engine: Engine) {
-  for (let quiet = 0, i = 0; quiet < 2; i++) {
-    if (i > 200) throw new Error("did not settle");
-    await engine.tick();
-    await Bun.sleep(0);
-    await Bun.sleep(0);
-    const busy = [...engine.state.executions.values()].some((e) => ["reserved", "live", "finishing"].includes(e.status));
-    quiet = busy ? 0 : quiet + 1;
-  }
 }
 
 test("every engine save commits the execution, and the last one is getTaskExecution", async () => {

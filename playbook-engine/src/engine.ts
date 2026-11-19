@@ -32,8 +32,8 @@ import { inspectOutputs } from './accept.ts';
 import type { CompletionReply, Harness, Launch } from './harness.ts';
 import { type Playbook, type Step, validatePlaybook } from './playbook.ts';
 import { type Blocked, schedule, SchedulerCache } from './schedule.ts';
-import { snapshotOccurrence } from './history.ts';
-import { type Ambiguity, apply, emptyState, type Event, type Execution, type FileRecord, type Occurrence, occurrences, type State } from './state.ts';
+import { sha256Of, snapshotOccurrence } from './history.ts';
+import { type Ambiguity, apply, emptyState, type Event, type Execution, type FileRecord, type Occurrence, occurrences, type ReadyAssessment, type State } from './state.ts';
 
 export interface EngineOptions {
   playbook: Playbook;
@@ -73,6 +73,8 @@ export interface EngineOptions {
   autoAdvance?: Record<string, boolean>;
   /** Read on every completion. True lets a locked execution finish. It does not change the snapshot. */
   autoApproveAll?: () => boolean;
+  /** A policy change may advance an earlier report only after subsequent agent activity and input have settled. */
+  canAdvanceReviewed?: (sessionId: string) => Promise<boolean>;
   /**
    * Prompt tokens that belong to one launch. Called while rendering that step.
    * When set, it replaces `PROMPT_EXTRA` and `REVIEW_HANDOFF_FILE` for that launch, including with empty strings.
@@ -95,7 +97,16 @@ export interface EngineOptions {
   };
 }
 
-const WRAP_UP = 'Permission to finish granted. Complete your writes, give a brief handoff, then call the completion tool once and finish without starting more work.';
+const WRAP_UP = 'Permission to finish granted. Complete your writes, give a brief handoff, then call the completion tool. If it reports readiness for review, remain available for follow-up requests. Finish only after acceptance.';
+
+export class StepContinuationRefusal extends Error {
+  readonly reason: 'unknown-step' | 'task-override';
+
+  constructor(reason: StepContinuationRefusal['reason'], message: string) {
+    super(message);
+    this.reason = reason;
+  }
+}
 
 export class Engine {
   readonly #opts: EngineOptions;
@@ -107,6 +118,8 @@ export class Engine {
   #saveError: unknown;
   /** Tick and resume run one at a time: a launch awaits the harness while its execution is still `reserved`, so an overlapping pass would start it twice. */
   #turn: Promise<unknown> = Promise.resolve();
+  /** Prevent two concurrent Continue requests from recording the same worktree twice. */
+  readonly #accepting = new Map<string, Promise<CompletionReply>>();
   /** Derived ancestry, kept across ticks. Purely an optimisation; see schedule.ts. */
   readonly #cache = new SchedulerCache();
 
@@ -144,6 +157,9 @@ export class Engine {
   tick(): Promise<void> {
     return this.#exclusive(async () => {
       await this.#observe();
+      await this.#advanceReady();
+      // A lost save must not release the owner or launch successors from an in-memory receipt.
+      await this.flush();
       this.#requestShutdowns();
       this.#reserve();
       await this.#launch();
@@ -177,34 +193,138 @@ export class Engine {
     }
   }
 
-  /**
-   * The agent's completion call. Validates the human gate and the assigned
-   * outputs, records an immutable receipt, and returns the same receipt on
-   * repeat. The session is asked to stop on the next tick, after the agent
-   * has seen this reply.
-   */
-  async requestCompletion(execId: string): Promise<CompletionReply> {
+  /** A report validates outputs. A ready manual step or endpoint stays live with its current owner. */
+  async requestCompletion(execId: string, sessionId?: string, attempt?: number): Promise<CompletionReply> {
     const e = this.#state.executions.get(execId);
     if (!e) return { kind: 'rejected', problems: [`unknown execution ${execId}`] };
-    if (e.receipt) {
-      await this.flush(); // never answer "accepted" for a receipt that is only in memory
-      return { kind: 'accepted', published: e.receipt.map((o) => o.path) };
+    if ((sessionId !== undefined && sessionId !== e.sessionId) || (attempt !== undefined && attempt !== (e.attempt ?? 0))) {
+      return { kind: 'stale', reason: 'The execution owner changed.' };
     }
-    if (e.status !== 'live') return { kind: 'rejected', problems: [`execution is ${e.status}, not live`] };
-    if (!this.#permitted(e)) return { kind: 'permission-required' };
-    const result = inspectOutputs(e.outDir, this.#step(e.step).outputs);
-    if (!result.ok) return { kind: 'rejected', problems: result.problems };
-    const published: Occurrence[] = result.published.map((p) => ({ id: `${e.id}/${p.role}`, role: p.role, path: p.path, producer: e.id }));
-    const worktree = this.#step(e.step).isCodingStep && this.#opts.recordWorktree ? await this.#opts.recordWorktree(e) : undefined;
-    // The record above can await: a duplicate request may have been accepted meanwhile, and nothing below may run twice.
-    if (e.receipt) {
+    if (e.receipt) return this.#receipt(e.receipt);
+    if (e.status !== 'live' || !e.sessionId) return { kind: 'rejected', problems: [`execution is ${e.status}, not live`] };
+    const check = this.#assess(e);
+    if ('problems' in check) {
+      if (e.ready) this.#append({ t: 'work-changed', execId });
       await this.flush();
-      return { kind: 'accepted', published: e.receipt.map((o) => o.path) };
+      return { kind: 'rejected', problems: check.problems };
     }
-    if (e.status !== 'live') return { kind: 'rejected', problems: [`execution is ${e.status}, not live`] };
-    this.#append({ t: 'accepted', execId: e.id, published, ...(this.#opts.historyDir ? { files: published.map((o) => snapshotOccurrence(this.#opts.historyDir!, e.id, o)) } : {}), ...(worktree ? { worktree } : {}) });
+    let ready = e.ready;
+    if (!ready || !sameAssessment(ready, check.assessment)) {
+      const revision = ready ? ready.revision + 1 : Math.max(1, e.workRevision ?? 0);
+      ready = { ...check.assessment, revision };
+      this.#append({ t: 'ready', execId, assessment: ready });
+    }
+    if (!ready.endpoint && this.#permitted(e)) return this.#acceptReviewed(e, ready, false);
     await this.flush();
-    return { kind: 'accepted', published: published.map((o) => o.path) };
+    if (e.receipt) return this.#receipt(e.receipt);
+    if (e.ready !== ready) return { kind: 'stale', reason: 'Work changed while recording readiness.' };
+    return readyReply(ready);
+  }
+
+  /** The caller names the reviewed owner and revision. A retry after acceptance reads its durable receipt. */
+  async continueReviewed(execId: string, sessionId: string, revision: number): Promise<CompletionReply> {
+    const e = this.#state.executions.get(execId);
+    if (!e || !sessionId || e.sessionId !== sessionId || !Number.isSafeInteger(revision) || revision < 1) {
+      return { kind: 'stale', reason: 'The reviewed execution or owner changed.' };
+    }
+    if (e.receipt && e.acceptedRevision === revision) return this.#receipt(e.receipt);
+    if (e.status !== 'live' || !e.ready || e.ready.revision !== revision) return { kind: 'stale', reason: 'This revision is no longer ready.' };
+    return this.#acceptReviewed(e, e.ready, true);
+  }
+
+  /** Admit work before delivering it, including when no readiness has yet been reported. */
+  async invalidateReadiness(execId: string, sessionId: string): Promise<void> {
+    const e = this.#must(execId);
+    if (!sessionId || e.sessionId !== sessionId || e.status !== 'live' || e.receipt) throw new Error('The execution no longer accepts work from this owner.');
+    this.#append({ t: 'work-changed', execId });
+    await this.flush();
+  }
+
+  async setStepContinuation(stepKey: string, automatic: boolean, checkRevision?: () => void): Promise<void> {
+    await this.#exclusive(async () => {
+      await this.flush(); // The caller compares against the published result of any preceding write.
+      checkRevision?.();
+      if (!this.#step(stepKey)) throw new StepContinuationRefusal('unknown-step', `unknown step ${stepKey}`);
+      if (!automatic && this.#opts.autoApproveAll?.()) {
+        throw new StepContinuationRefusal('task-override', 'Turn off task-wide automatic approval before selecting manual continuation.');
+      }
+      this.#append({ t: 'step-mode', step: stepKey, automatic });
+      await this.flush();
+    });
+    if (automatic) await this.#advanceReady(stepKey);
+  }
+
+  async #advanceReady(stepKey?: string): Promise<void> {
+    for (const e of this.#state.executions.values()) {
+      const ready = e.ready;
+      if ((stepKey && e.step !== stepKey) || e.status !== 'live' || !e.sessionId || !ready || ready.endpoint || !this.#permitted(e)) continue;
+      if (this.#opts.canAdvanceReviewed && !(await this.#opts.canAdvanceReviewed(e.sessionId))) continue;
+      if (e.ready === ready && this.#permitted(e)) await this.#acceptReviewed(e, ready, false);
+    }
+  }
+
+  #assess(e: Execution): { assessment: Omit<ReadyAssessment, 'revision'>; published: Occurrence[] } | { problems: string[] } {
+    const inspected = inspectOutputs(e.outDir, this.#step(e.step).outputs);
+    if (!inspected.ok) return { problems: inspected.problems };
+    const published = inspected.published.map((p) => ({ ...p, id: `${e.id}/${p.role}`, producer: e.id }));
+    const roles = published.map((p) => p.role);
+    // Preview the same scheduler that will bind these occurrences after exit, without modifying the run.
+    const projected = new Map(this.#state.executions);
+    projected.set(e.id, { ...e, status: 'done', receipt: published });
+    const ids = new Set(published.map((p) => p.id));
+    const trace = { contributed: ids, waiting: false, ambiguous: false };
+    const preview = schedule(this.#opts.playbook, { ...this.#state, executions: projected }, this.#cache, trace);
+    const destinations = [...new Set(preview.reservations.filter((r) => Object.values(r.inputs).some((slot) => slot.some((id) => ids.has(id)))).map((r) => r.step))].sort();
+    const endpoint = destinations.length === 0 && !trace.waiting;
+    if (!this.#permitted(e) && trace.ambiguous) {
+      return { problems: ['The destinations for these artifacts are ambiguous.'] };
+    }
+    try {
+      return { published, assessment: { roles, hashes: published.map((p) => sha256Of(p.path).sha256), destinations, endpoint } };
+    } catch (error) {
+      return { problems: [`Unable to verify the assigned files: ${message(error)}`] };
+    }
+  }
+
+  #acceptReviewed(e: Execution, ready: ReadyAssessment, human: boolean): Promise<CompletionReply> {
+    const key = `${e.id}/${ready.revision}`;
+    const pending = this.#accepting.get(key);
+    if (pending) return pending;
+    const result = this.#finishReviewed(e, ready, human).finally(() => this.#accepting.delete(key));
+    this.#accepting.set(key, result);
+    return result;
+  }
+
+  async #finishReviewed(e: Execution, ready: ReadyAssessment, human: boolean): Promise<CompletionReply> {
+    const stale = () => e.status !== 'live' || e.ready !== ready;
+    const changed = (): CompletionReply => ({ kind: 'stale', reason: 'These files or their destinations changed. Report readiness again.' });
+    const rejectChanged = async (problems?: string[]): Promise<CompletionReply> => {
+      if (e.ready === ready) this.#append({ t: 'work-changed', execId: e.id });
+      await this.flush();
+      return problems ? { kind: 'rejected', problems } : changed();
+    };
+    if (stale()) return changed();
+    let check = this.#assess(e);
+    if ('problems' in check) return rejectChanged(check.problems);
+    if (!sameAssessment(ready, check.assessment)) return rejectChanged();
+    let worktree;
+    if (this.#step(e.step).isCodingStep && this.#opts.recordWorktree) {
+      worktree = await this.#opts.recordWorktree(e);
+      if (stale()) return changed();
+      check = this.#assess(e);
+      if ('problems' in check) return rejectChanged(check.problems);
+      if (!sameAssessment(ready, check.assessment)) return rejectChanged();
+    }
+    if (!human && !this.#permitted(e)) return readyReply(ready);
+    const files = this.#opts.historyDir ? check.published.map((o) => snapshotOccurrence(this.#opts.historyDir!, e.id, o)) : undefined;
+    if (files?.some((file, i) => file.sha256 !== ready.hashes[i])) return rejectChanged();
+    this.#append({ t: 'accepted', execId: e.id, revision: ready.revision, published: check.published, files, worktree });
+    return this.#receipt(check.published);
+  }
+
+  async #receipt(receipt: Occurrence[]): Promise<CompletionReply> {
+    await this.flush();
+    return { kind: 'accepted', published: receipt.map((o) => o.path) };
   }
 
   /** Human gate: allow this one execution to finish, and tell the agent so. */
@@ -224,6 +344,7 @@ export class Engine {
   async #resume(execId: string): Promise<void> {
     const e = this.#must(execId);
     if (e.status !== 'failed') throw new Error(`${execId} is ${e.status}; only a failed execution can be resumed`);
+    if (e.unconfirmed) throw new Error(`${execId} cannot resume until its previous owner is confirmed stopped`);
     if (e.receipt) throw new Error(`${execId} already published; use confirmExited once its process has stopped`);
     const step = this.#step(e.step);
     if (this.#occupying().length >= this.#liveCap()) throw new Error('task is at its live-session cap');
@@ -307,6 +428,7 @@ export class Engine {
 
   async #launchFor(e: Execution, step: Step): Promise<Launch> {
     const byId = new Map(occurrences(this.#state).map((o) => [o.id, o]));
+    const attempt = (e.attempt ?? 0) + (e.status === 'failed' ? 1 : 0);
     const inputs = Object.fromEntries(Object.entries(e.inputs).map(([slot, ids]) => [slot, ids.map((id) => byId.get(id)!.path)]));
     const outputs = Object.fromEntries(step.outputs.map((o) => [o.path, join(e.outDir, o.path)]));
     return {
@@ -317,7 +439,7 @@ export class Engine {
       inputs,
       outputs,
       prompt: this.#render(step, e, inputs, outputs, (await this.#opts.requirements?.()) ?? ''),
-      requestCompletion: () => this.requestCompletion(e.id),
+      requestCompletion: () => this.requestCompletion(e.id, undefined, attempt),
     };
   }
 
@@ -346,7 +468,7 @@ export class Engine {
     lines.push(...(bound.length ? bound : ['  (none)']));
     lines.push('', 'Write only these outputs. At least one must be a nonempty file. A required output must be present:');
     lines.push(...step.outputs.map((output) => `  ${output.path} -> ${outputs[output.path]}${output.required ? ' (required)' : ''}`));
-    lines.push('', 'When the files are written and verified, give a brief handoff, then call the completion tool once and finish without starting more work.');
+    lines.push('', 'When the files are written and verified, give a brief handoff, then call the completion tool. If it reports readiness for review, remain available for follow-up requests. Finish only after acceptance.');
     return lines.join('\n');
   }
 
@@ -359,6 +481,7 @@ export class Engine {
 
   /** The gate stored on the reserved event. A provided task set wins over the playbook default. */
   #gateAtReserve(step: Step): boolean {
+    if (this.#state.stepModes && Object.hasOwn(this.#state.stepModes, step.key)) return this.#state.stepModes[step.key];
     if (this.#opts.enabledSteps) return this.#opts.enabledSteps().includes(step.key);
     return this.#opts.autoAdvance?.[step.key] ?? step.autoAdvanceDefault;
   }
@@ -433,4 +556,13 @@ export class Engine {
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function readyReply(ready: ReadyAssessment): CompletionReply {
+  return { kind: 'ready', revision: ready.revision, endpoint: ready.endpoint, destinations: [...ready.destinations] };
+}
+
+function sameAssessment(left: ReadyAssessment, right: Omit<ReadyAssessment, 'revision'>): boolean {
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every((value, i) => value === b[i]);
+  return left.endpoint === right.endpoint && same(left.destinations, right.destinations) && same(left.roles, right.roles) && same(left.hashes, right.hashes);
 }

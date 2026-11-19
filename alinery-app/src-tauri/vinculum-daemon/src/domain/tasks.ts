@@ -380,7 +380,7 @@ export function duplicatePackage(repo: string, sourceSlug: string): CreateTaskPa
     branchName: identityBase(String(source.branch)),
     worktreeName: worktreeLeaf ? identityBase(worktreeLeaf) : undefined,
     launchDefaults: (source.launch_defaults as { harness: string; model: string } | undefined) ?? { harness: "", model: "" },
-    autoAdvanceSteps: (source.auto_advance as string[] | undefined) ?? [],
+    autoAdvanceSteps: (state.enabled_steps as string[] | undefined) ?? (source.auto_advance as string[] | undefined) ?? [],
     maxLiveSessions: Number(source.max_live_sessions ?? 10),
     stepModels: (source.step_models as Record<string, string> | undefined) ?? {},
     start: true,

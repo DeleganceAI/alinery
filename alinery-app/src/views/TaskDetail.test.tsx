@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { daemonTransport } from "../daemon/transport";
 import { PRIORITY_SESSION_SORT } from "../sessionAttention";
+import { ExecutionConflict } from "../sync/execution";
 import { fakeArtifacts } from "../test/artifactHooks";
 import { fakeBoard } from "../test/boardHooks";
 import { fakeExecution } from "../test/executionFeed";
@@ -1688,20 +1689,21 @@ describe("authoritative task execution", () => {
   it("grants the displayed execution owner without granting a replacement after stale ownership", async () => {
     const fixture = task();
     scenario.task = fixture;
-    mocks.getTaskExecution.mockResolvedValue(executionReply());
-    fakeExecution.allow.mockRejectedValue(new Error("owner changed"));
+    mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ ready: { revision: 3, endpoint: true, destinations: [], roles: ["result.md"] } })]));
+    fakeExecution.continueReviewed.mockRejectedValue(new ExecutionConflict("owner changed"));
     renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "History" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Allow this session to complete · owner-a" }));
-    await waitFor(() => expect(fakeExecution.allow).toHaveBeenCalledWith("/r", "a-task", "execution-a", undefined));
-    await waitFor(() => expect(within(screen.getByRole("alert")).getByText("Error: owner changed")).toBeDefined());
-    expect((screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Finish step" }));
+    await waitFor(() => expect(fakeExecution.continueReviewed).toHaveBeenCalledWith("/r", "a-task", "execution-a", "owner-a", 3));
+    await waitFor(() => expect(within(screen.getByRole("alert")).getByText("owner changed")).toBeDefined());
+    expect((screen.getByRole("button", { name: "Finish step" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("retains saved execution details while live authority changes and only grants completion after recovery", async () => {
     vi.useFakeTimers();
     const fixture = task();
-    const retained = executionReply();
+    const ready = { revision: 3, endpoint: true, destinations: [], roles: ["result.md"] };
+    const retained = executionReply([executionRecord({ ready })]);
     let live: ExecutionAvailability = { status: "offline", detail: "Daemon socket disconnected" };
     let corrupt = false;
     scenario.task = fixture;
@@ -1717,13 +1719,13 @@ describe("authoritative task execution", () => {
     fireEvent.click(within(screen.getByRole("group", { name: "Task side panel" })).getByRole("button", { name: "Playbook" }));
     expect(screen.getByRole("group", { name: "Task playbook view" })).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "History" }));
-    const completion = () => screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement;
+    const completion = () => screen.getByRole("button", { name: /Finish step|Continuing…/ }) as HTMLButtonElement;
     const assignments = within(screen.getByRole("article", { name: "Execution execution-a" }));
     fireEvent.click(assignments.getByText("Inputs and outputs"));
     expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
     expect(completion().disabled).toBe(true);
     fireEvent.click(completion());
-    expect(fakeExecution.allow).not.toHaveBeenCalled();
+    expect(fakeExecution.continueReviewed).not.toHaveBeenCalled();
     expect((screen.getByText("Daemon socket disconnected").closest("details") as HTMLDetailsElement).open).toBe(false);
 
     live = { status: "foreign_owner", detail: "Different app configuration owns this lane" };
@@ -1733,7 +1735,7 @@ describe("authoritative task execution", () => {
     });
     expect(completion().disabled).toBe(true);
     fireEvent.click(completion());
-    expect(fakeExecution.allow).not.toHaveBeenCalled();
+    expect(fakeExecution.continueReviewed).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();
     expect((screen.getByText(live.detail).closest("details") as HTMLDetailsElement).open).toBe(false);
     expect(assignments.getByText("research/2-result-10.md")).toBeDefined();
@@ -1748,7 +1750,7 @@ describe("authoritative task execution", () => {
     await act(async () => {
       fireEvent.click(completion());
     });
-    expect(fakeExecution.allow).toHaveBeenCalledExactlyOnceWith("/r", "a-task", "execution-a", undefined);
+    expect(fakeExecution.continueReviewed).toHaveBeenCalledExactlyOnceWith("/r", "a-task", "execution-a", "owner-a", 3);
 
     corrupt = true;
     await act(async () => {
@@ -1759,9 +1761,10 @@ describe("authoritative task execution", () => {
     expect(completion().disabled).toBe(true);
     expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
     fireEvent.click(completion());
-    expect(fakeExecution.allow).toHaveBeenCalledTimes(1);
+    expect(fakeExecution.continueReviewed).toHaveBeenCalledTimes(1);
 
     corrupt = false;
+    ready.revision++;
     await act(async () => {
       fakeExecution.refresh();
       await vi.advanceTimersByTimeAsync(0);

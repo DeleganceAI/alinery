@@ -139,10 +139,11 @@ test('human gate: a locked step stays interactive until permitted', async () => 
   const [review] = byStep(engine, 'review');
   assert.equal(review.status, 'live');
   assert.equal((await harness.status(review.sessionId!)).kind, 'idle');
-  await engine.permit(review.id);
+  assert.ok(review.ready?.endpoint);
+  assert.equal((await engine.continueReviewed(review.id, review.sessionId!, review.ready.revision)).kind, 'accepted');
   await settle(engine);
   assert.equal(byStep(engine, 'review')[0].status, 'done');
-  assert.match(harness.sessions.get(review.sessionId!)!.inbox[0], /Permission to finish granted/);
+  assert.deepEqual(harness.sessions.get(review.sessionId!)!.inbox, []);
 });
 
 test('acceptance: an empty assigned file rejects the attempt; nothing published rejects; the receipt is fixed', async () => {
@@ -166,7 +167,10 @@ test('acceptance: an empty assigned file rejects the attempt; nothing published 
   assert.deepEqual(await launch.requestCompletion(), { kind: 'rejected', problems: ['b.md is empty'] });
   writeText(launch.outputs['b.md'], 'ok');
   writeText(launch.outputs['c-*.md'].replace('*', '1'), 'ok');
-  const accepted = await launch.requestCompletion();
+  const reported = await launch.requestCompletion();
+  assert.equal(reported.kind, 'ready');
+  const [execution] = byStep(engine, 's');
+  const accepted = await engine.continueReviewed(execution.id, execution.sessionId!, execution.ready!.revision);
   assert.equal(accepted.kind, 'accepted');
   writeText(launch.outputs['c-*.md'].replace('*', '2'), 'late');
   assert.deepEqual(await launch.requestCompletion(), accepted); // files written after acceptance never join the receipt
@@ -219,7 +223,7 @@ test('acceptance: a link on the way to an output rejects the attempt, and an unl
   } finally {
     chmodSync(family, 0o755);
   }
-  assert.equal((await launch.requestCompletion()).kind, 'accepted');
+  assert.equal((await launch.requestCompletion()).kind, 'ready');
 });
 
 test('a required output rejects until that exact file exists', async () => {
@@ -240,7 +244,7 @@ test('a required output rejects until that exact file exists', async () => {
   assert.equal(rejected.kind, 'rejected');
   if (rejected.kind === 'rejected') assert.ok(rejected.problems.some((p) => p.includes('must.md')));
   writeText(launch.outputs['must.md'], 'ok');
-  assert.equal((await launch.requestCompletion()).kind, 'accepted');
+  assert.equal((await launch.requestCompletion()).kind, 'ready');
 });
 
 test('a session that exits without completing is failed, not done, and its binding is not re-reserved', async () => {
@@ -322,6 +326,7 @@ test('task gate: a step left out of the set stays locked even when the playbook 
   const pb = playbook([
     step('locked', { autoAdvanceDefault: true, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'locked.md' }] }),
     step('open', { autoAdvanceDefault: false, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'open.md' }] }),
+    step('end', { inputs: [{ path: 'open.md', mode: 'single' }, { path: 'locked.md', mode: 'single' }], outputs: [{ path: 'final.md' }] }),
   ]);
   const dir = taskDir();
   let enabled = ['open'];
@@ -339,7 +344,7 @@ test('task gate: a step left out of the set stays locked even when the playbook 
   writeText(join(open.outDir, 'open.md'), 'x');
   assert.equal(locked.automatic, false);
   assert.equal(open.automatic, true);
-  assert.equal((await engine.requestCompletion(locked.id)).kind, 'permission-required');
+  assert.equal((await engine.requestCompletion(locked.id)).kind, 'ready');
   approveAll = true;
   assert.equal((await engine.requestCompletion(locked.id)).kind, 'accepted');
   enabled = [];
@@ -347,7 +352,10 @@ test('task gate: a step left out of the set stays locked even when the playbook 
 });
 
 test('task gate: turning approve-all off rejects the next attempt, and a grant still finishes a locked step', async () => {
-  const pb = playbook([step('review', { autoAdvanceDefault: true, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'r.md' }] })]);
+  const pb = playbook([
+    step('review', { autoAdvanceDefault: true, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'r.md' }] }),
+    step('end', { inputs: [{ path: 'r.md', mode: 'single' }], outputs: [{ path: 'final.md' }] }),
+  ]);
   const dir = taskDir();
   let approveAll = true;
   const engine = openEngine(pb, new FakeHarness(async () => {}), dir, { enabledSteps: () => [], autoApproveAll: () => approveAll });
@@ -357,13 +365,16 @@ test('task gate: turning approve-all off rejects the next attempt, and a grant s
   const [review] = byStep(engine, 'review');
   writeText(join(review.outDir, 'r.md'), 'x');
   approveAll = false;
-  assert.equal((await engine.requestCompletion(review.id)).kind, 'permission-required');
+  assert.equal((await engine.requestCompletion(review.id)).kind, 'ready');
   await engine.permit(review.id);
   assert.equal((await engine.requestCompletion(review.id)).kind, 'accepted');
 });
 
 test('task gate: a step in the set completes with no grant', async () => {
-  const pb = playbook([step('build', { autoAdvanceDefault: false, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'b.md' }] })]);
+  const pb = playbook([
+    step('build', { autoAdvanceDefault: false, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'b.md' }] }),
+    step('end', { inputs: [{ path: 'b.md', mode: 'single' }], outputs: [{ path: 'final.md' }] }),
+  ]);
   const dir = taskDir();
   const engine = openEngine(pb, new FakeHarness(async () => {}), dir, { enabledSteps: () => ['build'], autoApproveAll: () => false });
   engine.seed(seedTicket(dir));

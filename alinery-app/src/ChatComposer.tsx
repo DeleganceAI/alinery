@@ -33,10 +33,13 @@ export type ChatComposerProps = {
   onRemoveAttachment?: (id: string) => void;
   onClear?: () => void;
   onPasteFiles?: (files: File[]) => void;
+  /** The reviewed playbook action, adjacent to Send. */
+  besideSend?: ReactNode;
   /** Session controls and stats at the left of the footer, under the input. */
   actions?: ReactNode;
   /** Centered in the footer, under the input. */
   center?: ReactNode;
+  end?: ReactNode;
 };
 
 export function ChatComposer({
@@ -62,7 +65,9 @@ export function ChatComposer({
   onClear,
   onPasteFiles,
   actions,
+  besideSend,
   center,
+  end,
 }: ChatComposerProps) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -238,6 +243,7 @@ export function ChatComposer({
                 Send now
               </button>
             ) : null}
+            {besideSend}
             <button type="button" className="btn primary small" onClick={submit} disabled={sendDisabled} aria-label={sendLabel}>
               {sendLabel}
             </button>
@@ -315,6 +321,7 @@ export function ChatComposer({
                 Send now
               </button>
             ) : null}
+            {besideSend}
             <button type="button" className="btn primary small chat-composer-send" onClick={submit} disabled={sendDisabled} aria-label={sendLabel} title="Enter send">
               <ArrowUp className="chat-composer-icon" strokeWidth={2.2} />
             </button>
@@ -370,7 +377,10 @@ export function ChatComposer({
           </div>
         </div>
         {center ? <div className="chat-composer-center">{center}</div> : null}
-        <span className={`chat-composer-context${metrics.overLimit ? " over" : ""}`}>{formatComposerStats(metrics.codePoints)}</span>
+        <div className="chat-composer-end">
+          <span className={`chat-composer-context${metrics.overLimit ? " over" : ""}`}>{formatComposerStats(metrics.codePoints)}</span>
+          {end}
+        </div>
       </div>
     </div>
   );

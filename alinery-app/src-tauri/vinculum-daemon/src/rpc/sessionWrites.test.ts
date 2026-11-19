@@ -109,7 +109,7 @@ async function start() {
     nodeOptions: { createConnection: () => connect(socketPath) } as never,
     interceptors: [(next) => (req) => (req.header.set("authorization", `Bearer ${SECRET}`), next(req))],
   });
-  return { canvasCalls, turnCalls, repo, alinery, task, store, feed: f, events, running, metaAtKill, storeAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport) };
+  return { runner, canvasCalls, turnCalls, repo, alinery, task, store, feed: f, events, running, metaAtKill, storeAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport) };
 }
 type Ctx = Awaited<ReturnType<typeof start>>;
 
@@ -179,6 +179,31 @@ test("archiving a session puts the stamp in the file and the store before the pr
   await c.feed.refresh("tasks/t/sessions/t-s2.meta.json");
   expect((await c.session.archiveSession({ meta: meta(), session: ref("t", "t-s2") })).killedLive).toBe(false);
   expect(await code(c.session.archiveSession({ meta: meta(), session: ref("", "c1") }))).toBe(Code.InvalidArgument);
+});
+
+test("a failed archive stop leaves the live owner retryable after the archive stamp", async () => {
+  const c = await start();
+  const id = "t-s1";
+  sessionMeta(c, "t", id);
+  c.running.add(id);
+  const stop = c.runner.stop;
+  let attempts = 0;
+  c.runner.stop = async (session) => {
+    attempts++;
+    if (attempts === 1) throw new Error("harness close failed");
+    await stop(session);
+  };
+  const archive = () => c.session.archiveSession({ meta: meta(), session: ref("t", id) });
+  await expect(archive()).rejects.toThrow("harness close failed");
+  const stamped = JSON.parse(readFileSync(metaPathOf(c.repo, "t", id), "utf8"));
+  expect(stamped.archived).toBe(true);
+  expect(stamped.ended_at).toBeUndefined();
+  expect(c.running.has(id)).toBe(true);
+  expect(c.events).toHaveLength(0);
+  expect((await archive()).killedLive).toBe(true);
+  expect(attempts).toBe(2);
+  expect(c.running.has(id)).toBe(false);
+  expect(c.events).toHaveLength(1);
 });
 
 test("killing a session reports session.kill, and clearing notifications marks the checkpoints read", async () => {

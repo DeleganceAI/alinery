@@ -870,11 +870,6 @@ describe("session-scoped completion permission", () => {
     fakeArtifacts.set("task", { items: [] });
     sessionStatus.mockReset().mockResolvedValue(liveObservation("rpc"));
     getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
-    fakeExecution.allow.mockReset().mockImplementation(async (_repo: string, _slug: string, executionId: string) => {
-      getTaskExecution.mockResolvedValue(
-        executionReply([executionRecord({ owner_session_id: "session", permission: { kind: "human_granted", execution_id: executionId, session_id: "session" } })]),
-      );
-    });
   });
   afterEach(() => {
     cleanup();
@@ -1086,17 +1081,88 @@ describe("Vinculum session chat", () => {
     expect(screen.queryByRole("button", { name: "os.path" })).toBeNull();
   });
 
-  it("shows Finish step for a locked Vinculum execution and grants it without a Vinculum reply", async () => {
-    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", permission: { kind: "locked" } })]));
-    fakeExecution.allow.mockImplementation(async () => {
-      getTaskExecution.mockResolvedValue(
-        executionReply([executionRecord({ owner_session_id: "session", permission: { kind: "human_granted", execution_id: "execution-a", session_id: "session" } })]),
-      );
+  it("reopens a manual step with its conversation and without a generated completion prompt", async () => {
+    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
+    const first = renderSession({ intent: "attach" });
+    await screen.findByRole("combobox", { name: "Step continuation" });
+    expect(screen.queryByText("Ready to finish this step?")).toBeNull();
+    const question = "Should the report include archived tasks?";
+    daemon.setTranscript("session", [{ id: "scope-question", role: "assistant", content: [{ type: "text", text: question }] }]);
+    await screen.findByText(question);
+    expect(screen.queryByText("Ready to finish this step?")).toBeNull();
+    first.unmount();
+    renderSession({ intent: "attach" });
+    await screen.findByText(question);
+    expect(screen.queryByText("Ready to finish this step?")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Continue (playbook|to)|Finish step/ })).toBeNull();
+  });
+
+  it("only offers Continue after the owner reports ready, beside Send and once per work revision", async () => {
+    const record = executionRecord({ owner_session_id: "session" });
+    getTaskExecution.mockResolvedValue(executionReply([record]));
+    renderSession({ intent: "attach" });
+    const send = await screen.findByRole("button", { name: "Send" });
+    expect(screen.queryByText("Ready to finish this step?")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Finish step|Continue (playbook|to)/ })).toBeNull();
+
+    const ready = { revision: 9, endpoint: false, destinations: ["worker"], roles: ["result.md"] };
+    getTaskExecution.mockResolvedValue(executionReply([{ ...record, ready }]));
+    await act(async () => fakeExecution.refresh());
+    const next = await screen.findByRole("button", { name: "Continue to Retained worker" });
+    expect(next.parentElement).toBe(send.parentElement);
+    const pending = deferred<void>();
+    fakeExecution.continueReviewed.mockReturnValue(pending.promise);
+    fireEvent.click(next);
+    fireEvent.click(next);
+    expect(fakeExecution.continueReviewed).toHaveBeenCalledExactlyOnceWith("/repo", "task", "execution-a", "session", 9);
+    await act(async () => pending.resolve());
+    expect(screen.getByRole("button", { name: "Continuing…" })).toHaveProperty("disabled", true);
+
+    getTaskExecution.mockResolvedValue(executionReply([{ ...record, lifecycle: "finishing", receipt_id: record.id }]));
+    await act(async () => fakeExecution.refresh());
+    expect(await within(await screen.findByTestId("chat-activity")).findByText("Finishing step…")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", true);
+
+    // A replacement session owns the next revision. Viewing the original session cannot accept it.
+    getTaskExecution.mockResolvedValue(executionReply([{ ...record, owner_session_id: "replacement", previous_session_ids: ["session"], ready: { ...ready, revision: 10 } }]));
+    await act(async () => fakeExecution.refresh());
+    expect(screen.queryByRole("button", { name: /Continue to|Continuing…/ })).toBeNull();
+  });
+
+  it("persists the running step's mode and respects task-wide automatic continuation", async () => {
+    const reply = executionReply([executionRecord({ owner_session_id: "session" })]);
+    reply.revision = 8n;
+    getTaskExecution.mockResolvedValue(reply);
+    fakeExecution.setStepContinuation.mockImplementation(async () => {
+      getTaskExecution.mockResolvedValue({ ...reply, state: { ...reply.state, enabled_steps: ["worker"] } });
     });
-    renderSession({ intent: "attach", harness: "vinculum" });
-    fireEvent.click(await screen.findByRole("button", { name: "Finish step" }));
-    await waitFor(() => expect(fakeExecution.allow).toHaveBeenCalledExactlyOnceWith("/repo", "task", "execution-a", undefined));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Finish step" })).toBeNull());
-    expect(screen.getByLabelText("Message or /command")).toBeDefined();
+    renderSession({ intent: "attach" });
+    const mode = await screen.findByRole("combobox", { name: "Step continuation" });
+    expect(mode).toHaveProperty("value", "manual");
+    fireEvent.change(mode, { target: { value: "automatic" } });
+    await waitFor(() => expect(fakeExecution.setStepContinuation).toHaveBeenCalledExactlyOnceWith("/repo", "task", "worker", true, 8n));
+    await waitFor(() => expect(mode).toHaveProperty("value", "automatic"));
+    getTaskExecution.mockResolvedValue({ ...reply, state: { ...reply.state, auto_approve_all: true } });
+    await act(async () => fakeExecution.refresh());
+    expect(mode).toHaveProperty("value", "automatic");
+    expect(mode).toHaveProperty("disabled", true);
+  });
+
+  it("keeps a ready endpoint open for ordinary conversation and waits for a fresh review after sending", async () => {
+    const ready = { revision: 4, endpoint: true, destinations: [], roles: ["result.md"] };
+    const record = executionRecord({ owner_session_id: "session", ready });
+    getTaskExecution.mockResolvedValue(executionReply([record]));
+    renderSession({ intent: "attach", messageDraft: { body: "Please revise the last paragraph", pendingActions: [], attachments: [] } });
+    expect(await within(await screen.findByTestId("chat-activity")).findByText("Ready for review")).toBeDefined();
+    expect(screen.queryByRole("button", { name: /Continue (playbook|to)|Finish step/ })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Step continuation" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("/repo", "session", "Please revise the last paragraph", undefined));
+    await waitFor(() => expect(screen.queryByText("Ready for review")).toBeNull());
+    daemon.setTranscript("session", [{ id: "reviewed-again", role: "assistant", content: [{ type: "text", text: "Updated the paragraph." }] }]);
+    getTaskExecution.mockResolvedValue(executionReply([{ ...record, ready: { ...ready, revision: 5 } }]));
+    await act(async () => fakeExecution.refresh());
+    expect(await within(await screen.findByTestId("chat-activity")).findByText("Ready for review")).toBeDefined();
+    expect(fakeExecution.continueReviewed).not.toHaveBeenCalled();
   });
 });

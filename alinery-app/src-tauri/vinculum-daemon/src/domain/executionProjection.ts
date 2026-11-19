@@ -44,9 +44,10 @@ export function projectExecution(execution: Execution, autoApproveAll = false, p
     start_requested: true,
     lifecycle: lifecycle(execution),
     permission: completionPermission(execution, autoApproveAll),
+    ...(execution.ready ? { ready: { revision: execution.ready.revision, endpoint: execution.ready.endpoint, destinations: execution.ready.destinations, roles: execution.ready.roles } } : {}),
     receipt_id: execution.receipt ? execution.id : null,
     exit_code: null,
-    shutdown_confirmed: execution.status === "done" || execution.status === "failed",
+    shutdown_confirmed: execution.status === "done" || (execution.status === "failed" && !execution.unconfirmed),
     error: execution.failure,
   };
 }

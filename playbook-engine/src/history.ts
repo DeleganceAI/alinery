@@ -13,7 +13,7 @@ export const objectsDir = (historyDir: string, execId: string): string => join(h
 
 let seq = 0;
 
-function sha256Of(path: string): { sha256: string; size: number } {
+export function sha256Of(path: string): { sha256: string; size: number } {
   const hash = createHash('sha256');
   const buf = Buffer.allocUnsafe(1 << 20);
   const fd = openSync(path, 'r');

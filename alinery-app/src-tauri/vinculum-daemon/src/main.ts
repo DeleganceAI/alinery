@@ -5,18 +5,19 @@ import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
-import { AgentDoc, Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, section, type Conversation, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
+import { AgentDoc, Harness, InboxDoc, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, section, type Conversation, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { readCompactionSettings } from "./compaction.ts";
-import { completeSession, engineAxis, enginePlaybook, sessionHarnessStatus, startGraphs } from "./graph.ts";
+import { completeSession, engineAxis, enginePlaybook, sessionHarnessStatus, startGraphs, submitSessionWork } from "./graph.ts";
 import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
 import { writeAtomic } from "./platform/fs.ts";
 import { agentShellEnv, libreOfficeDir, runtimePart, writeShims } from "./agentShell.ts";
 import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
+import { stopOwningHarness } from "./runtime/sessionStop.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
 import { removeBoxRecord, writeBoxRecord } from "./domain/boxRegistry.ts";
@@ -67,7 +68,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 51;
+const PROTOCOL = 52;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -102,6 +103,8 @@ type Live = {
   executionId: string;
   titledBucket: number;
   titleInFlight: boolean;
+  stopping?: Promise<void>;
+  closedControls?: Awaited<ReturnType<typeof sessionControls>>;
   wait?: { kind: string; correlationId: string; prompt?: string };
 };
 
@@ -511,7 +514,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
       settings: () => readCompactionSettings(appConfig, models),
       env: () => {
         const env = new NodeExecutionEnv({ cwd: sessionCwd(taskSlug, id), shellEnv: agentEnv });
-        rememberSessionEnv(env, id);
+        rememberSessionEnv(env, row);
         return env;
       },
       conversationCreated: async (tx, conversation) => {
@@ -565,11 +568,12 @@ async function seedPrompt(conversation: Conversation, prompt: string) {
 }
 
 // conversation.context() is the next model request. It drops assistant messages whose stop reason is error, aborted, or deferred, so a failed turn never reaches the pane. The transcript is the stored entries, plus the in-flight partial. Nested tool slots stay out.
-async function transcriptMessages(row: Live, conversation: Conversation): Promise<{ messages: TranscriptSource[]; tools: TranscriptToolSlot[] }> {
+type EntryPage = Awaited<ReturnType<Conversation["entries"]>>;
+async function committedMessages(readPage: (cursor: EntryPage["next"]) => Promise<EntryPage>): Promise<TranscriptSource[]> {
   const messages: TranscriptSource[] = [];
-  let cursor: Awaited<ReturnType<Conversation["entries"]>>["next"];
+  let cursor: EntryPage["next"];
   for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-    const page = await conversation.entries({ order: "ascending" }, 200, cursor, context);
+    const page = await readPage(cursor);
     for (const entry of page.items) {
       const model = entry.model;
       if (!Array.isArray(model)) continue;
@@ -583,6 +587,11 @@ async function transcriptMessages(row: Live, conversation: Conversation): Promis
     cursor = page.next;
     if (!cursor) break;
   }
+  return messages;
+}
+
+async function transcriptMessages(row: Live, conversation: Conversation): Promise<{ messages: TranscriptSource[]; tools: TranscriptToolSlot[] }> {
+  const messages = await committedMessages((cursor) => conversation.entries({ order: "ascending" }, 200, cursor, context));
   const live = row.harness ? await row.harness.documentState(LiveDoc, conversation.id, context) : undefined;
   try {
     const partial = live?.value?.generation?.message;
@@ -658,7 +667,7 @@ async function sessionControls(conversation: Conversation) {
 }
 
 function watch(row: Live, harness: OpenedHarness, conversationId: string) {
-  const attach = <T>(pending: Promise<WatchHandle<T> | undefined>, apply: (value: T) => void) => {
+  const attach = <T>(pending: Promise<WatchHandle<T> | undefined>, apply: (value: T, initial?: boolean) => void) => {
     pending
       .then((state) => {
         if (!state) {
@@ -668,7 +677,7 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
         state.start(async (value) => {
           apply(value);
         });
-        apply(state.value);
+        apply(state.value, true);
       })
       .catch((error) => {
         console.error(`watch failed for ${row.id}: ${error}`);
@@ -697,10 +706,12 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
     commitSession(row.taskSlug, row.id);
     if (finished && !row.taskSlug) void maybeTitleChat(row);
   });
-  attach(harness.watchDoc(PhaseRequest, conversationId, context), (value) => {
+  attach(harness.watchDoc(PhaseRequest, conversationId, context), (value, initial) => {
     if (!value?.nonce || value.nonce === row.seenNonce) return;
     row.seenNonce = value.nonce;
-    if (!row.taskSlug) return;
+    // A retained nonce has no work revision. Only a fresh request naming this execution
+    // can describe the resumed owner's work; both current completion tools call directly.
+    if (initial || !row.taskSlug || !value.executionId) return;
     void forwardPhase(row, value).catch((error) => {
       console.error(`phase forward failed for ${row.id}: ${error}`);
     });
@@ -719,9 +730,8 @@ function sessionCwd(taskSlug: string, id: string): string {
 function phaseResultText(reply: Record<string, unknown>): string {
   if (typeof reply.error === "string" && reply.error) return `Alinery rejected phase completion: ${reply.error}. Keep this session open and resolve the error.`;
   if (reply.outcome === "accepted") return "Alinery accepted phase completion. Do no further work; this session is finishing.";
-  if (reply.outcome === "waiting_for_approval") {
-    return "Completion permission is still locked. Keep this session open. Do not call the completion tool again until the user grants permission or tells you to continue the work.";
-  }
+  if (reply.outcome === "ready_for_review") return "Your handoff is ready for human review. Stay available for feedback. Only report readiness again after new work.";
+  if (reply.outcome === "pending_work") return `${reply.reason} Yield now, address the pending work, then report readiness again.`;
   if (reply.outcome === "waiting_for_input") {
     const diagnostics = Array.isArray(reply.diagnostics) ? reply.diagnostics.filter((item) => typeof item === "string").join("\n") : "";
     const detail = diagnostics ? `\n${diagnostics}` : "";
@@ -732,8 +742,8 @@ function phaseResultText(reply: Record<string, unknown>): string {
 }
 
 function applyPhaseReply(row: Live, reply: Record<string, unknown>) {
-  if (reply.outcome === "waiting_for_approval") row.agent = { state: "waiting_for_approval", correlation_id: String(reply.correlation_id ?? "") };
   if (reply.outcome === "waiting_for_input") row.agent = { state: "waiting_for_input", correlation_id: String(reply.correlation_id ?? "") };
+  if (reply.outcome === "ready_for_review" && !row.wait) row.agent = { state: row.liveRun ? "busy" : "idle" };
   if (reply.outcome === "accepted") row.agent = { state: "idle" };
   if (reply.playbook) row.playbook = { state: String(reply.playbook) };
   commitSession(row.taskSlug, row.id);
@@ -743,17 +753,14 @@ async function requestPhase(api: { conversationId: string; env?: unknown }) {
   const row = sessionForCall(api.env, api.conversationId);
   if (!row) return { output: [{ type: "text" as const, text: "No session is open for this completion." }], isError: true };
   if (!row.taskSlug) return { output: [{ type: "text" as const, text: phaseResultText({ forwarded: false }) }] };
-  const nonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  const local = await completeSession(row.id);
+  const local = await completeSession(row.id, () => live.get(row.id) === row);
   if (!local) return { output: [{ type: "text" as const, text: phaseResultText({ forwarded: false }) }], isError: true };
   applyPhaseReply(row, local);
-  row.seenNonce = nonce;
-  return { output: [{ type: "text" as const, text: phaseResultText(local) }], isError: local.outcome !== "accepted" };
+  return { output: [{ type: "text" as const, text: phaseResultText(local) }], isError: local.outcome !== "accepted" && local.outcome !== "ready_for_review" };
 }
 
 async function forwardPhase(row: Live, value: { phase: string; executionId: string; nonce: string }) {
-  void value;
-  const local = await completeSession(row.id);
+  const local = await completeSession(row.id, () => live.get(row.id) === row, value.executionId);
   if (local) applyPhaseReply(row, local);
 }
 
@@ -782,18 +789,51 @@ function ownershipRefusal(reply: Record<string, unknown>): Record<string, unknow
   return { error: "task execution ownership mismatch" };
 }
 
-/** Ends a session's process and stamps its exit; the same for the `kill` op and `SessionService.KillSession`. */
-function killSession(id: string) {
-  if (isPty(id)) killPty(id);
+/** A resolved stop is proof of exit for the engine. Keep the last controls so a closed
+ * harness can still serve its transcript directly from its SQLite database. */
+async function stopHarnessSession(id: string, taskSlug: string) {
   const row = live.get(id);
-  if (!row) return;
+  if (row && row.taskSlug !== taskSlug) throw new Error("session owner changed before shutdown");
+  if (row?.stopping) return row.stopping;
+  const ended = typeof readMeta(taskSlug, id).ended_at === "number";
+  if (!row) return stopOwningHarness(undefined, ended, context);
+  if (row.process === "exited" && ended) return;
+  const stopping = async () => {
+    if (row.harness || !row.closedControls) {
+      let controls: Live["closedControls"];
+      await stopOwningHarness(row, false, context, async (conversation) => {
+        controls = await sessionControls(conversation).catch(() => ({
+          ...turnControls(String(readMeta(taskSlug, id).model ?? ""), undefined, undefined), context_tokens: 0, context_window: 0,
+        }));
+      });
+      row.harness = null;
+      row.closedControls = controls;
+    }
+    if (live.get(id) !== row) throw new Error("session owner changed during shutdown");
+    writeMeta(taskSlug, id, { ended_at: Math.floor(Date.now() / 1000), exit_code: 0 });
+    row.process = "exited";
+    row.liveRun = false;
+    commitSession(taskSlug, id);
+  };
+  row.stopping = stopping();
   try {
-    if (row.harness) void row.harness.close(context);
-  } catch {
-    /* already closed */
+    await row.stopping;
+  } finally {
+    row.stopping = undefined;
   }
-  writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000), exit_code: 0 });
-  live.delete(id);
+}
+
+async function killSession(id: string) {
+  const row = live.get(id);
+  if (isPty(id)) {
+    killPty(id);
+    if (!row) return;
+    writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000), exit_code: 0 });
+  } else {
+    if (!row) return;
+    await stopHarnessSession(id, row.taskSlug);
+  }
+  if (live.get(id) === row) live.delete(id);
   commitSession(row.taskSlug, id);
 }
 
@@ -884,6 +924,7 @@ async function harnessSession(id: string): Promise<{ row: Live; conversation: Co
   const row = live.get(id);
   const conversation = row ? await conversationFor(row) : null;
   if (!row || !conversation) throw new DomainError("not_found", "unknown-session");
+  if (row.stopping || row.process === "exited") throw new DomainError("failed_precondition", "the session is stopping or exited");
   return { row, conversation };
 }
 
@@ -898,7 +939,10 @@ const rawTurns: TurnControl = {
     await ensureModel(conversation, resolved, context);
     // Images ride in the same user message; a model that reads none gets Pi's placeholder in their place.
     const content = images.length > 0 ? [{ type: "text" as const, text }, ...images] : text;
-    await conversation.submit({ type: "input", content, whenBusy: "followUp" }, context);
+    await submitSessionWork(row.taskSlug, id, async () => {
+      if (live.get(id) !== row || row.stopping || row.process === "exited") throw new DomainError("failed_precondition", "the session owner changed");
+      await conversation.submit({ type: "input", content, whenBusy: "followUp" }, context);
+    });
   },
   async abort(id) {
     const { row, conversation } = await harnessSession(id);
@@ -1150,11 +1194,26 @@ await serveRpc({
   artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
   transcripts: async (taskSlug, id) => {
     const row = live.get(id);
-    if (!row || row.taskSlug !== taskSlug || !row.harness) return undefined;
+    if (!row || row.taskSlug !== taskSlug) return undefined;
+    const readClosed = async () => {
+      const path = sqlitePath(taskSlug, id);
+      if (!existsSync(path) || !row.closedControls) throw new Error("the session history is unavailable");
+      const storage = await openNodeSqliteStorage(path);
+      try {
+        const messages = await committedMessages((cursor) => storage.scanEntries({ conversationId: row.conversationId, order: "ascending" }, 200, cursor, context));
+        return { items: formatTranscript(messages), controls: row.closedControls };
+      } finally {
+        await storage.close(context);
+      }
+    };
+    if (row.closedControls) return { read: readClosed, subscribe: () => () => {} };
+    if (!row.harness) return undefined;
     const conversation = await conversationFor(row);
     if (!conversation) return undefined;
     return {
       read: async () => {
+        if (row.stopping) await row.stopping.catch(() => {});
+        if (row.closedControls) return readClosed();
         const { messages, tools } = await transcriptMessages(row, conversation);
         return { items: formatTranscript(messages, tools), controls: await sessionControls(conversation) };
       },
@@ -1181,6 +1240,17 @@ void resumeInterrupted().then(() => startGraphs(repo, {
   status(id) {
     return Promise.resolve(sessionHarnessStatus(live.get(id)));
   },
+  async reviewBlocker(id, human) {
+    const row = live.get(id);
+    const conversation = row ? await conversationFor(row) : null;
+    if (!conversation || !row || row.process === "exited") return "The owning session is unavailable.";
+    return conversation.commit(async (tx) => {
+      if ((await tx.doc(InboxDoc, conversation.id)).items.some((item) => item.mode !== "write")) return "The session has queued user input.";
+      if ((await tx.doc(Attention, conversation.id)).wait) return "The session is waiting for a response.";
+      if (human && (await tx.doc(LiveDoc, conversation.id)).run) return "The current turn is still finishing.";
+      return undefined;
+    }, context);
+  },
   async send(id, text) {
     const row = live.get(id);
     const conversation = row ? await conversationFor(row) : null;
@@ -1190,21 +1260,7 @@ void resumeInterrupted().then(() => startGraphs(repo, {
     await ensureModel(conversation, resolved, context);
     await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
   },
-  async stop(id) {
-    const row = live.get(id);
-    if (!row || row.process === "exited") return;
-    const conversation = await conversationFor(row);
-    if (conversation) {
-      try {
-        await conversation.abort(context);
-      } catch {
-        /* already idle */
-      }
-    }
-    row.process = "exited";
-    writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000) });
-    commitSession(row.taskSlug, row.id);
-  },
+  stop: stopHarnessSession,
   bind(id, executionId, step) {
     const row = live.get(id);
     if (!row) return;

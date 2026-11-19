@@ -7,6 +7,8 @@ import "alinery/v1/common.proto";
 // Execution approvals. The read side is the `execution/<slug>/<slug>` entity (entities.proto).
 // The engine decides everything else about an execution; the daemon only passes the person's permission on.
 service ExecutionService {
+  rpc SetStepContinuation(SetStepContinuationRequest) returns (SetStepContinuationResponse);  // APPROVE
+  rpc ContinueReviewed(ContinueReviewedRequest) returns (ContinueReviewedResponse);  // APPROVE
   rpc AllowCompletion(AllowCompletionRequest) returns (AllowCompletionResponse);  // APPROVE
 }
 
@@ -18,5 +20,31 @@ message AllowCompletionRequest {
   uint64 expected_revision = 4;  // the execution entity's revision the person saw; 0: no check; a mismatch is ABORTED
 }
 message AllowCompletionResponse {
+  Applied applied = 1;
+}
+
+// Update this task’s continuation choice for a step, including its current and future attempts.
+message SetStepContinuationRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  string step_key = 3;
+  bool automatic = 4;
+  uint64 expected_revision = 5;
+}
+message SetStepContinuationResponse {
+  Applied applied = 1;
+}
+
+// The person accepts the assessment for this owner and work revision. A later message or
+// a changed output requires a new assessment, even if the session still owns the same step.
+message ContinueReviewedRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  string execution_id = 3;
+  string session_id = 4;
+  uint64 work_revision = 5;
+}
+
+message ContinueReviewedResponse {
   Applied applied = 1;
 }

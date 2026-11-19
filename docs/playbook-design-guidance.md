@@ -285,20 +285,13 @@ The ancestry value 0 is not permission to rename existing physical `00-ticket.md
 
 ## Human completion gate
 
-`auto_advance_default` initializes a task-level choice. It is not a hard designer lock and does not require another playbook schema flag.
+`auto_advance_default` initializes the task's choice for each step. The person can change that choice for current and future attempts. Task-wide automatic approval overrides the choice while enabled.
 
-- **Enabled:** the harness can request completion without human unlock.
-- **Disabled:** completion is locked and the session stays interactive. A premature call returns a nonfatal authorization-required result, not a failed execution or accepted checkpoint.
-- The chat completion prompt names the following step with **Move to <step>**, or offers **Finish step** when there is no automatic successor. **Continue working in this session** leaves the session open for another message. These actions grant or decline permission; they do not complete the execution immediately.
-  - Destinations come from the retained artifact-dependency graph, not definition order. Branches list their following steps; successor sessions still wait for required inputs, confirmed source shutdown and launch capacity.
-  - After permission is granted but reply delivery fails, **Retry handoff** resends the reply without granting again. The stay-in-session choice is disabled because it can no longer revoke that grant.
-- Permission applies only to that execution. It does not enable future auto-advance, authorize a replacement execution, or expose agent/MCP self-approval.
-- The human tells the harness to wrap up. The harness finishes its writes, verification and user-facing handoff, then calls completion.
-- The daemon checks ownership, permission and current outputs before accepting. Invalid outputs leave the session open for correction.
-
-The grant means “this execution may finish”, not approval of immutable artifact bytes. Human review precedes accepted completion, so review edits do not require rewriting a previously accepted checkpoint. Do not add content-hash approval/revocation machinery.
-
-Persistent auto-advance settings and one-execution permission are separate controls. Reconnect must not invent authorization; an unrelated settings update must not accidentally unlock a running execution.
+- The harness finishes its writes and verification and calls the completion tool. Invalid outputs leave the session open for correction.
+- On a manual step, validation records the current owner, work revision, outputs and downstream routing. The person can inspect the draft or send feedback. New work invalidates the review.
+- **Continue** beside Send accepts the observed revision. The engine rechecks the files and their routing and persists a receipt. Repeating that acceptance after a lost reply returns the recorded result.
+- Eligible automatic intermediate steps accept validated work directly. A ready endpoint stays open for questions under either policy. Session View shows **Ready for review** and Task Detail offers an explicit finish action.
+- A successor starts once its required inputs are available, the producing session has exited, and the task has capacity. Questions and substantive approvals keep their own meaning in the conversation.
 
 ## Completion and process shutdown are separate transitions
 

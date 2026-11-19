@@ -212,7 +212,7 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
         // The stamp first and in the store before the process goes, so a subscriber sees `archived` before the exit.
         stampSessionArchived(c().repo, slug, id);
         await c().refresh(metaRel(slug, id));
-        if (live) c().runner.stop(id);
+        if (live) await c().runner.stop(id);
         c().telemetry.record(() => ({ event: "session.archive", source: "alineryd", killedLive: live, sessionId: ids.session, taskId: ids.task }));
         return { applied: applied(), killedLive: live };
       });
@@ -223,7 +223,7 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
         const slug = refSlug(req.session);
         const id = req.session?.id ?? "";
         const ids = c().telemetryIds(slug, id);
-        c().runner.stop(id);
+        await c().runner.stop(id);
         c().telemetry.record(() => ({ event: "session.kill", source: "alineryd", sessionId: ids.session, taskId: ids.task }));
         return { applied: applied() };
       });
