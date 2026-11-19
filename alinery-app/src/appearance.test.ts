@@ -448,6 +448,14 @@ describe("contrast (WCAG AA)", () => {
     expect(rule(".terminal-drawer")).toMatch(/background:\s*var\(--terminal-bg\);/);
     expect(rule(".terminal-drawer-chrome")).toMatch(/background:\s*var\(--surface\);/);
   });
+
+  // The browser paints a number field's spinner in the page's colour scheme. With none
+  // declared it draws the light-mode one, which is black arrows on a dark field.
+  it("declares a colour scheme for number fields so the spinner follows the theme", () => {
+    // Dark is the default token set in this file, so the light scheme is the override.
+    expect(rule('input[type="number"]')).toMatch(/color-scheme:\s*dark;/);
+    expect(rule(':root[data-theme="light"] input[type="number"]')).toMatch(/color-scheme:\s*light;/);
+  });
 });
 
 describe("resolvedTheme", () => {
