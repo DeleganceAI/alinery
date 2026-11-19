@@ -31,6 +31,64 @@ const busy: SessionObservation = {
   checkpoint: {},
 };
 
+it("centers an open file in five slots and links the artifacts on either side of its sessions", () => {
+  const path = "1-roll-1/roll.md";
+  const nextOutput = "2-route-1/ticket.md";
+  const source = executionRecord({
+    id: "roll",
+    owner_session_id: "Roll",
+    outputs: [{ selector: "roll.md", relative_path: path, discriminator: 1 }],
+    lifecycle: "completed",
+    shutdown_confirmed: true,
+    receipt_id: "receipt-roll",
+  });
+  const next = executionRecord({ id: "route", owner_session_id: "Route", outputs: [{ selector: "ticket.md", relative_path: nextOutput, discriminator: 1 }] });
+  next.candidate.inputs = { "roll.md": ["rolled"] };
+  const view = executionReply([source, next]);
+  const occurrences = view.state.occurrences ?? {};
+  const sourceInput = occurrences["input-a"].relative_path;
+  occurrences.rolled = { ...occurrences["input-a"], id: "rolled", relative_path: path, producer_execution_id: source.id };
+  const props = {
+    id: "Roll",
+    name: "Roll",
+    phase: "roll",
+    sessions: [session("Roll", 1), session("Route", 2)],
+    executionView: view,
+    artifactPaths: [sourceInput, path, nextOutput],
+    readableArtifactPaths: [sourceInput, path, nextOutput],
+    error: "",
+    onOpenSession: vi.fn(),
+    onOpenArtifact: vi.fn(),
+  };
+  const renderFile = (isTaskArtifact: boolean) => <SessionLineage {...props} selectedFile={{ path, isTaskArtifact }} />;
+  const { rerender } = render(renderFile(true));
+  fireEvent.click(screen.getByRole("button", { name: "Session Navigator" }));
+  const flow = screen.getByRole("group", { name: "File handoff" });
+  const slots = flow.querySelectorAll<HTMLElement>(":scope > div");
+  expect(slots).toHaveLength(5);
+  const [inputs, before, file, after, outputs] = slots;
+  expect(flow.querySelectorAll(":scope > svg[aria-hidden='true']")).toHaveLength(4);
+  expect(within(file).getByTitle(path).getAttribute("aria-current")).toBe("page");
+  expect(flow.querySelectorAll("[aria-current]")).toHaveLength(1);
+  fireEvent.click(within(before).getByRole("button", { name: "Roll" }));
+  expect(props.onOpenSession).toHaveBeenLastCalledWith(props.sessions[0]);
+  fireEvent.click(within(after).getByRole("button", { name: /Route/ }));
+  expect(props.onOpenSession).toHaveBeenLastCalledWith(props.sessions[1]);
+  fireEvent.click(within(inputs).getByTitle(sourceInput));
+  expect(props.onOpenArtifact).toHaveBeenLastCalledWith(sourceInput);
+  const output = within(outputs).getByTitle(nextOutput);
+  expect(output.textContent).toContain("Not yet published");
+  fireEvent.click(output);
+  expect(props.onOpenArtifact).toHaveBeenLastCalledWith(nextOutput);
+  // A worktree file at the same relative path has its own identity.
+  rerender(renderFile(false));
+  expect(within(flow).getByText("No recorded producer")).toBeDefined();
+  expect(within(flow).getByText("No recorded consumers")).toBeDefined();
+  expect(within(flow).getByTitle(path).getAttribute("aria-current")).toBe("page");
+  expect(flow.querySelectorAll(":scope > div")).toHaveLength(5);
+  expect(within(flow).queryAllByRole("button")).toHaveLength(0);
+});
+
 it("shows actual fan-out separately from the newest task session and preserves artifact navigation", () => {
   const root = executionRecord({ id: "root", owner_session_id: "root", lifecycle: "completed", shutdown_confirmed: true });
   const left = executionRecord({ id: "left", owner_session_id: "left", parent_execution_ids: ["root"], lifecycle: "queued" });
@@ -63,6 +121,7 @@ it("shows actual fan-out separately from the newest task session and preserves a
   expect(collapsedLabel).toContain("Finished · 2 next sessions");
   fireEvent.click(screen.getByText("Session Navigator"));
   const neighborhood = screen.getByRole("group", { name: "Session neighborhood" });
+  expect(neighborhood.querySelectorAll(":scope > svg[aria-hidden='true']")).toHaveLength(4);
   expect(within(neighborhood).getByRole("button", { name: "left" })).toBeDefined();
   expect(within(neighborhood).getByRole("button", { name: /right\s*Working…/ })).toBeDefined();
   expect(within(neighborhood).queryByText("unrelated")).toBeNull();

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
-import { ArtifactTree, isDirectOwnedArtifactNode, treeArtifactImages } from "../ArtifactTree";
+import { ArtifactTree, artifactTabPath, isDirectOwnedArtifactNode, treeArtifactImages } from "../ArtifactTree";
 import { AttachmentPreview } from "../AttachmentPreview";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
@@ -41,6 +41,7 @@ import {
   NEXT_TURN_THINKING_TITLE,
 } from "../chatTranscript";
 import { confirmDanger } from "../confirm";
+import { lineageSessionIntent } from "../executionLineage";
 import { FollowNextSession, type SessionFollow } from "../FollowNextSession";
 import * as ipc from "../ipc";
 import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
@@ -211,7 +212,7 @@ export function SessionView({
   const selectedIsRepo = fileTabs.current?.repo === true;
   const selectedPreviewable = !selectedIsRepo || /\.(md|markdown)$/i.test(selectedArtifact);
   const openArtifact = (name: string, node: ArtifactTreeNode | null) => {
-    fileTabs.open({ key: node?.id ?? name, name, node, mode: "preview" });
+    fileTabs.open({ key: node?.id ?? name, name: artifactTabPath(artifactTree, node, name), node, mode: "preview" });
     setArtifactErr("");
   };
   const selectedArtifactImages = useMemo(() => treeArtifactImages(artifactTree, selectedArtifactNode), [artifactTree, selectedArtifactNode]);
@@ -269,7 +270,7 @@ export function SessionView({
     () => (live.sessions ?? []).filter((s) => !s.archived && s.ended_at == null).map((s) => ({ repo_path: repoPath, task_slug: taskSlug, id: s.id })),
     [live.sessions, repoPath, taskSlug],
   );
-  const observedSessions = useSessionObservations(sessionRefs, active && !fileTabs.current && live.sessionsCurrent);
+  const observedSessions = useSessionObservations(sessionRefs, active && live.sessionsCurrent);
   const lineageObservations = useMemo(
     () => Object.fromEntries(sessionRefs.map((r) => [r.id, observedSessions[sessionObservationKey(r.repo_path, r.task_slug, r.id)]])),
     [sessionRefs, observedSessions],
@@ -1195,10 +1196,7 @@ export function SessionView({
   const lineageView = executionFeed.reply;
   const lineageExecutions = Object.values(lineageView?.state.executions ?? {});
   const lineageExecution = lineageExecutions.find((e) => e.owner_session_id === id || e.previous_session_ids.includes(id));
-  const navigateSession = (s: SessionMeta) => {
-    const past = lineageExecutions.some((e) => e.previous_session_ids.includes(s.id) || (e.owner_session_id === s.id && e.lifecycle === "completed" && e.shutdown_confirmed));
-    onOpenSession?.(s, past || s.archived || s.ended_at != null ? "history" : "attach");
-  };
+  const navigateSession = (s: SessionMeta) => onOpenSession?.(s, lineageSessionIntent(lineageView?.state, s));
   const followControl = follow && hasTask && (
     <FollowNextSession
       follow={follow}
@@ -1590,30 +1588,14 @@ export function SessionView({
                   chat onto the PTY terminal and a `.scrollback` an RPC session never wrote. The
                   journal does not need the session to be alive. */}
                     {liveRpc || vinculum ? (
-                      <>
-                        <ChatPane
-                          entries={chat.entries}
-                          status={chatStatus}
-                          visibility={chatVisibility}
-                          onLoadOlder={loadOlder}
-                          loadingOlder={loadingOlder}
-                          atStart={chat.fileStart === 0}
-                        />
-                        {/* The history view is the live pane with the input switched off, so a finished
-                      session reads the same way as a running one. */}
-                        {liveRpc ? null : (
-                          <ChatComposer
-                            body=""
-                            status="idle"
-                            catalog={[]}
-                            showHints={false}
-                            readOnly
-                            onBodyChange={() => undefined}
-                            onSend={() => undefined}
-                            onAbort={() => undefined}
-                          />
-                        )}
-                      </>
+                      <ChatPane
+                        entries={chat.entries}
+                        status={chatStatus}
+                        visibility={chatVisibility}
+                        onLoadOlder={loadOlder}
+                        loadingOlder={loadingOlder}
+                        atStart={chat.fileStart === 0}
+                      />
                     ) : (
                       <SessionTerminal
                         sessionId={id}
@@ -1778,16 +1760,6 @@ export function SessionView({
                             loadingOlder={loadingOlder}
                             atStart={chat.fileStart === 0}
                           />
-                          <ChatComposer
-                            body=""
-                            status="idle"
-                            catalog={[]}
-                            showHints={false}
-                            readOnly
-                            onBodyChange={() => undefined}
-                            onSend={() => undefined}
-                            onAbort={() => undefined}
-                          />
                         </div>
                       ) : (
                         <div className="terminal-frame">
@@ -1805,6 +1777,9 @@ export function SessionView({
                         </div>
                       ))}
                   </>
+                )}
+                {readingHistory && vinculum && (!navHistory || !liveRpc) && (
+                  <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
                 )}
                 {modelDialog && (
                   <ChatModelDialog
@@ -1859,37 +1834,38 @@ export function SessionView({
                     <LoadingState label="Checking session" state="connecting" />
                   </div>
                 )}
-                {lineageExecution && lineageView ? (
-                  <SessionLineage
-                    id={id}
-                    name={display?.session.name ?? ""}
-                    phase={lineageView.definition.step.find((s) => s.key === lineageExecution.candidate.step_key)?.title ?? phase}
-                    sessions={live.sessions ?? []}
-                    executionView={lineageView}
-                    observations={lineageObservations}
-                    error={executionFeed.error}
-                    artifactPaths={ownedPaths}
-                    readableArtifactPaths={readablePaths}
-                    followControl={followControl}
-                    onOpenSession={
-                      onOpenSession &&
-                      ((s) => {
-                        follow?.pause();
-                        navigateSession(s);
-                      })
-                    }
-                    onOpenArtifact={(path) => {
-                      const node = findOwnedArtifactNode(artifactTree, path);
-                      if (!node) return;
-                      if (onOpenPath) onOpenPath(`artifact:${path}`);
-                      else openArtifact(path, node);
-                    }}
-                  />
-                ) : (
-                  followControl
-                )}
               </div>
             </div>
+            {hasTask && active && (
+              <SessionLineage
+                id={id}
+                name={display?.session.name ?? ""}
+                phase={lineageView?.definition.step.find((s) => s.key === lineageExecution?.candidate.step_key)?.title ?? phase}
+                sessions={live.sessions ?? []}
+                executionView={lineageView ?? null}
+                observations={lineageObservations}
+                error={executionFeed.error}
+                artifactPaths={ownedPaths}
+                readableArtifactPaths={readablePaths}
+                followControl={followControl}
+                viewingFile={Boolean(fileTabs.current)}
+                selectedFile={fileTabs.current && { path: selectedArtifactImages?.artifactPath || selectedArtifact, isTaskArtifact: selectedArtifactIsDirect }}
+                onOpenSession={
+                  onOpenSession &&
+                  ((s) => {
+                    follow?.pause();
+                    if (s.id === id && fileTabs.current) fileTabs.select("");
+                    else navigateSession(s);
+                  })
+                }
+                onOpenArtifact={(path) => {
+                  const node = findOwnedArtifactNode(artifactTree, path);
+                  if (!node) return;
+                  if (onOpenPath) onOpenPath(`artifact:${path}`);
+                  else openArtifact(path, node);
+                }}
+              />
+            )}
           </main>
         </PathLinksContext.Provider>
       </div>

@@ -415,6 +415,7 @@ describe("SessionView navigator", () => {
   });
   afterEach(() => {
     cleanup();
+    localStorage.removeItem("alinery.sessionNavigatorExpanded");
     fakeBoard.reset();
     fakeExecution.reset();
     getTaskExecution.mockReset();
@@ -484,6 +485,67 @@ describe("SessionView navigator", () => {
     expect((await screen.findByRole("button", { name: "Follow next session" })).getAttribute("aria-pressed")).toBe("false");
     await act(async () => fakeExecution.refresh());
     expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the navigator beneath an artifact while a handoff arrives and lets the reader open the successor", async () => {
+    const open = vi.fn();
+    const path = "1-roll-1/roll.md";
+    const source = executionRecord({ owner_session_id: "session", outputs: [{ selector: "roll.md", relative_path: path, discriminator: 1 }] });
+    const next = executionRecord({ id: "review", owner_session_id: "next", candidate: { ...source.candidate, inputs: { "roll.md": ["rolled"] } } });
+    const nextSession = { ...session("next", next.id, 2), name: "Review the result" };
+    fakeBoard.set({ taskSessions: [session("session", source.id, 1), nextSession] });
+    const reply = executionReply([source]);
+    if (!reply.state.occurrences) throw new Error("Missing fixture input");
+    fakeArtifacts.set("task", {
+      items: [{ name: path, playbook_step: "worker", session_id: "session", handoffs: [] }],
+      tree: [
+        {
+          id: "roll-folder",
+          label: "1-roll-1",
+          kind: "subtask_folder",
+          source: "owned",
+          owner_task_slug: "task",
+          children: [{ id: "roll", label: "roll.md", kind: "owned", source: "owned", owner_task_slug: "task", children: [] }],
+        },
+      ],
+    });
+    fakeArtifacts.texts[path] = "# Roll record";
+    getTaskExecution.mockImplementation(() => Promise.resolve(structuredClone(reply)));
+    render(<View onOpenSession={open} />);
+    const toggle = await screen.findByRole("button", { name: /Session Navigator/ });
+    if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
+    const navigator = within(screen.getByRole("region", { name: "Session lineage" }));
+    fireEvent.click(await navigator.findByRole("button", { name: /roll\.md/ }));
+    expect(await screen.findByRole("heading", { name: "Roll record" })).toBeDefined();
+    expect(navigator.getByTitle(path).getAttribute("aria-current")).toBe("page");
+    source.lifecycle = "completed";
+    source.receipt_id = "receipt";
+    source.shutdown_confirmed = true;
+    reply.state.occurrences.rolled = { ...reply.state.occurrences["input-a"], id: "rolled", producer_execution_id: source.id, relative_path: path };
+    reply.state.executions = { [source.id]: source, [next.id]: next };
+    await act(async () => fakeExecution.refresh());
+    expect(open).not.toHaveBeenCalled();
+    const visibleNavigator = within(screen.getByRole("region", { name: "Session lineage" }));
+    expect(visibleNavigator.getByTitle(path).getAttribute("aria-current")).toBe("page");
+    fireEvent.click(visibleNavigator.getByRole("button", { name: /Review the result/ }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(nextSession, "attach");
+  });
+
+  it("returns to an auxiliary conversation from a file even when the task has no execution", async () => {
+    const open = vi.fn();
+    fakeBoard.set({ taskSessions: [{ ...session("session", "", 1), name: "Research notes", generic: true }] });
+    const view = render(<View onOpenSession={open} />);
+    const toggle = await screen.findByRole("button", { name: /Session Navigator/ });
+    if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    fakeArtifacts.texts["00-ticket.md"] = "# The brief";
+    fireEvent.click(await screen.findByRole("button", { name: /00-ticket\.md/ }));
+    expect(await screen.findByRole("heading", { name: "The brief" })).toBeDefined();
+    fireEvent.click(within(screen.getByRole("region", { name: "Session lineage" })).getByRole("button", { name: /Research notes/ }));
+    expect(tabs.getByRole("button", { name: "Agent conversation" }).getAttribute("aria-pressed")).toBe("true");
+    expect(open).not.toHaveBeenCalled();
+    view.rerender(<View taskSlug="" onOpenSession={open} />);
+    expect(screen.queryByRole("region", { name: "Session lineage" })).toBeNull();
   });
 });
 
@@ -1097,11 +1159,15 @@ describe("Vinculum session chat", () => {
     expect(screen.queryByRole("button", { name: "Terminal" })).toBeNull();
   });
 
-  it("opens the selected past conversation read-only through the transcript service", async () => {
+  it.each(["navigator", "action panel"])("opens the past conversation read-only from the %s, with its composer outside the scrolling transcript", async (from) => {
+    daemon.show("/repo", "task", "past", EXITED);
     daemon.setTranscript("past", [{ role: "assistant", text: "Recorded handoff from the first attempt" }]);
-    renderSession({ id: "past", intent: "history" });
-    expect(await screen.findByText("Recorded handoff from the first attempt")).toBeDefined();
-    expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", true);
+    renderSession({ id: "past", intent: from === "navigator" ? "history" : undefined });
+    if (from === "action panel") fireEvent.click(await screen.findByRole("button", { name: "View history" }));
+    const message = await screen.findByText("Recorded handoff from the first attempt");
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toHaveProperty("disabled", true);
+    expect(message.closest(".terminal-frame")?.nextElementSibling).toBe(send.closest(".chat-composer"));
     expect(startSession).not.toHaveBeenCalled();
   });
 

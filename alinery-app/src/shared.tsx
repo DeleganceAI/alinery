@@ -1123,6 +1123,7 @@ export function StatusDot({
   exitAcknowledged = false,
   notifyTransitions = true,
   terminalLabel = null,
+  stepStatus,
 }: {
   id: string;
   slug?: string;
@@ -1137,6 +1138,8 @@ export function StatusDot({
   notifyTransitions?: boolean;
   /** Replaces Exited when the session is stopped: recoverable, completed, or a real exit. */
   terminalLabel?: "Recoverable" | "Completed" | "Ready to advance" | "Exited" | null;
+  /** The owning execution distinguishes a review request from accepted outputs awaiting shutdown. */
+  stepStatus?: "Ready for review" | "Ready to advance" | "Finishing step…";
 }) {
   const pollKey = `${slug ?? ""}\u0000${id}`;
   const prevKind = useRef<{ key: string; kind: ObservationDisplayKind } | null>(null);
@@ -1166,6 +1169,16 @@ export function StatusDot({
         <StateIcon state="failed" />
       </span>
     );
+  }
+
+  if (stepStatus && !unreadCompletion && (kind === "idle" || kind === "ready_to_advance" || (stepStatus === "Finishing step…" && kind === "exited"))) {
+    const title =
+      stepStatus === "Finishing step…"
+        ? "Outputs accepted; waiting for session shutdown"
+        : stepStatus === "Ready for review"
+          ? "Waiting for your review"
+          : "Ready to continue to the next step";
+    return <StatusMarker kind="ready_to_advance" label={stepStatus} title={title} minimal={minimal} />;
   }
 
   // An accepted completion the user has not opened outranks the bare "Exited" word.

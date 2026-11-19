@@ -220,6 +220,17 @@ describe("ChatPane", () => {
     expect(html).toContain("Thinking…");
   });
 
+  it("switches from a static review marker to the activity orb when the agent starts working again", () => {
+    const view = render(<ChatPane entries={[]} status="idle" stepActivity="Ready for review" />);
+    const strip = view.getByTestId("chat-activity");
+    expect(strip.textContent).toBe("Ready for review");
+    expect(strip.querySelector(".ind-dot")).toBeTruthy();
+    expect(strip.querySelector(".ind-orb")).toBeNull();
+    view.rerender(<ChatPane entries={[]} status="running" stepActivity="Ready for review" />);
+    expect(strip.textContent).toBe("Working…");
+    expect(strip.querySelector(".ind-orb")).toBeTruthy();
+  });
+
   it("hides journal stamps when date and time prefs are off", () => {
     const withStamp = pane([{ id: "1", at, actor: ACTOR.you, type: "prompt", text: "Hello" }]);
     expect(withStamp).toContain("chat-msg-time");

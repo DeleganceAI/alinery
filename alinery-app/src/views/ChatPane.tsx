@@ -5,7 +5,7 @@ import { type JournalItem, journalItems } from "../chat/journalRows";
 import { collectLiveSubagents } from "../chat/subagents";
 import type { ChatEntry, SessionChatStatus } from "../chat/types";
 import { type ChatPrefs, chatActivityLabel, DEFAULT_CHAT_VISIBILITY, isChatEntryVisible, visibleChatEntries, workRailDefaultExpanded } from "../chat/visibility";
-import { RunningIndicator } from "../Indicators";
+import { IdleDot, RunningIndicator } from "../Indicators";
 import { ChatEntryRow } from "./ChatEntryRow";
 import { ChatWorkStrip } from "./ChatWorkStrip";
 import { SubagentDrawer } from "./SubagentDrawer";
@@ -151,7 +151,7 @@ function ChatPaneImpl({
       </div>
       {activity ? (
         <div className="chat-activity" role="status" data-testid="chat-activity" aria-live="polite">
-          <RunningIndicator running={status === "running"} />
+          {status === "running" ? <RunningIndicator /> : <IdleDot />}
           <span>{activity}</span>
         </div>
       ) : null}

@@ -21,9 +21,12 @@ export function useOpenTabs<T extends OpenTab>(scope: string) {
     current: tabs.find((tab) => tab.key === active),
     setActive,
     /** `keep: false` opens it temporarily, in place of the current temporary tab. Opening an open tab with `keep` keeps it. */
-    open: (tab: T, keep = true) => {
+    open: (tab: T, keep = true, updateExisting?: Partial<Omit<T, keyof OpenTab>>) => {
       setTabs((open) => {
-        if (open.some((t) => t.key === tab.key)) return keep ? open.map((t) => (t.key === tab.key ? { ...t, temp: false } : t)) : open;
+        if (open.some((t) => t.key === tab.key)) {
+          if (!keep && !updateExisting) return open;
+          return open.map((t) => (t.key === tab.key ? { ...t, ...updateExisting, temp: keep ? false : t.temp } : t));
+        }
         if (keep) return [...open, tab];
         const temp = open.findIndex((t) => t.temp);
         const next = { ...tab, temp: true };

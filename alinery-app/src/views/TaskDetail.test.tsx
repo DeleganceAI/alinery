@@ -433,14 +433,40 @@ async function renderDetail(slug = "parent", sessionView: "controls" | "graph" =
 }
 
 describe("task run graph", () => {
-  it("opens a navigator destination in the same task and preserves both embedded tabs and their shared display choice", async () => {
+  it("centers the open artifact between its producing and consuming sessions from either direction", async () => {
     const source = { ...session({ id: "define", phase: "define", harness: "vinculum" }), name: "Define" };
     const next = { ...session({ id: "write", phase: "write", harness: "vinculum" }), name: "Draft" };
     const produced = executionRecord({ id: "definition", owner_session_id: source.id, lifecycle: "completed", shutdown_confirmed: true });
-    const consumed = executionRecord({ id: "draft", owner_session_id: next.id, parent_execution_ids: [produced.id] });
+    const resultPath = "1-roll-1/roll.md";
+    const paths = ["spec.md", resultPath];
+    const consumed = executionRecord({
+      id: "draft",
+      owner_session_id: next.id,
+      parent_execution_ids: [produced.id],
+      candidate: { ...executionRecord().candidate, inputs: { "roll.md": [resultPath] } },
+    });
     const run = executionReply([produced, consumed]);
+    const occurrence = run.state.occurrences?.["input-a"] as ArtifactOccurrence;
+    run.state.occurrences = Object.fromEntries(
+      paths.map((path) => [path, { ...occurrence, id: path, producer_execution_id: produced.id, logical_path: path, relative_path: path, selector: path }]),
+    );
     scenario.sessions = [source, next];
     mocks.getTaskExecution.mockResolvedValue(run);
+    fakeArtifacts.set(parentTask.slug, {
+      items: paths.map((name) => ({ name, playbook_step: source.phase, session_id: source.id, handoffs: [] })),
+      tree: [
+        { id: "spec", label: "spec.md", kind: "owned", source: "owned", owner_task_slug: parentTask.slug, children: [] },
+        {
+          id: "round",
+          label: "1-roll-1",
+          kind: "subtask_folder",
+          source: "owned",
+          owner_task_slug: parentTask.slug,
+          children: [{ id: "roll-file", label: "roll.md", kind: "owned", source: "owned", owner_task_slug: parentTask.slug, children: [] }],
+        },
+      ],
+    });
+    fakeArtifacts.readArtifact.mockImplementation(async (_repo, _slug, name) => `# Contents of ${name}`);
     const stored = new Map<string, string>();
     vi.mocked(localStorage.getItem).mockImplementation((key) => stored.get(key) ?? null);
     vi.mocked(localStorage.setItem).mockImplementation((key, value) => {
@@ -450,21 +476,21 @@ describe("task run graph", () => {
       initialTask: parentTask,
       slug: parentTask.slug,
       repoPath: "/repo",
-      renderSession: (target, { active, onOpenSession }) => (
+      renderSession: (target, { active, onOpenSession, onOpenPath }) => (
         <section aria-label={`Conversation ${target.id}`} data-active={active}>
           <input aria-label="Message draft" />
           <SessionLineage
             id={target.id}
-            name={target.id}
+            name={target.id === source.id ? source.name : next.name}
             phase={target.phase}
             sessions={scenario.sessions}
             executionView={run}
             observations={{}}
             error=""
-            artifactPaths={[]}
-            readableArtifactPaths={[]}
+            artifactPaths={paths}
+            readableArtifactPaths={paths}
             onOpenSession={(s) => onOpenSession(s, "attach")}
-            onOpenArtifact={noop}
+            onOpenArtifact={(path) => onOpenPath(`artifact:${path}`)}
           />
         </section>
       ),
@@ -473,16 +499,53 @@ describe("task run graph", () => {
     const original = await screen.findByRole("region", { name: "Conversation define" });
     expect(original.dataset.active).toBe("true");
     fireEvent.change(within(original).getByRole("textbox"), { target: { value: "a note for later" } });
-    fireEvent.click(within(original).getByRole("button", { name: /Session Navigator/ }));
-    fireEvent.click(within(original).getByRole("button", { name: /Draft/ }));
+    const lineage = () => within(screen.getByRole("region", { name: "Session lineage" }));
+    const slot = (index: number) => {
+      const flow = lineage().getByRole("group", { name: /Session neighborhood|File handoff/ });
+      const slots = flow.querySelectorAll<HTMLElement>(":scope > div");
+      expect(slots).toHaveLength(5);
+      return within(slots[index]);
+    };
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    fireEvent.click(lineage().getByRole("button", { name: /Session Navigator/ }));
+    for (const path of paths) {
+      expect(slot(2).getByText("Define").closest("[aria-current='step']")).toBeTruthy();
+      const filename = path.slice(path.lastIndexOf("/") + 1);
+      fireEvent.click(slot(3).getByRole("button", { name: filename }));
+      expect(await screen.findByRole("heading", { name: `Contents of ${path}` })).toBeDefined();
+      expect(tabs.getByRole("button", { name: filename }).getAttribute("aria-pressed")).toBe("true");
+      expect(slot(2).getByTitle(path).getAttribute("aria-current")).toBe("page");
+      const producer = slot(1).getByRole("button", { name: /Define/ });
+      expect(producer.getAttribute("aria-current")).toBeNull();
+      if (path === "spec.md") {
+        expect(lineage().queryByRole("button", { name: "Draft" })).toBeNull();
+        fireEvent.click(producer);
+      }
+    }
+    expect(original.dataset.active).toBe("false");
+    fireEvent.click(slot(3).getByRole("button", { name: /Draft/ }));
 
     const draft = await screen.findByRole("region", { name: "Conversation write" });
     expect(draft.dataset.active).toBe("true");
     expect(original.dataset.active).toBe("false");
     expect(original.closest("[hidden]")).toBeTruthy();
     expect(mocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", parentTask.slug, next.id);
-    fireEvent.click(within(draft).getByRole("button", { name: /Session Navigator/, expanded: true }));
-    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    expect(slot(2).getByText("Draft").closest("[aria-current='step']")).toBeTruthy();
+    fireEvent.click(slot(1).getByRole("button", { name: "roll.md" }));
+    expect(await screen.findByRole("heading", { name: `Contents of ${resultPath}` })).toBeDefined();
+    expect(slot(2).getByTitle(resultPath).getAttribute("aria-current")).toBe("page");
+    expect(slot(3).getByRole("button", { name: /Draft/ }).getAttribute("aria-current")).toBeNull();
+    expect(
+      slot(1)
+        .getByRole("button", { name: /Define/ })
+        .getAttribute("aria-current"),
+    ).toBeNull();
+    fireEvent.click(tabs.getByRole("button", { name: "Sessions" }));
+    expect(screen.queryByRole("region", { name: "Session lineage" })).toBeNull();
+    fireEvent.click(tabs.getByRole("button", { name: "spec.md" }));
+    expect(await screen.findByRole("heading", { name: "Contents of spec.md" })).toBeDefined();
+    expect(lineage().getByTitle("spec.md").getAttribute("aria-current")).toBe("page");
+    fireEvent.click(lineage().getByRole("button", { name: /Session Navigator/, expanded: true }));
     fireEvent.click(tabs.getByRole("button", { name: "Define" }));
     expect(original.dataset.active).toBe("true");
     expect(draft.dataset.active).toBe("false");
@@ -523,7 +586,7 @@ describe("task run graph", () => {
 
   it("defaults to actual sessions and opens the exact session and consumed artifact occurrence", async () => {
     const producer = { ...session({ id: "producer", phase: "worker" }), name: "Investigate the fault" };
-    const consumer = { ...session({ id: "consumer", phase: "worker" }), name: "Apply the finding" };
+    const consumer = { ...session({ id: "consumer", phase: "worker", created: 20 }), name: "Apply the finding" };
     const produced = executionRecord({
       id: "produced",
       owner_session_id: producer.id,
@@ -558,6 +621,7 @@ describe("task run graph", () => {
     scenario.sessions = [producer, consumer];
     mocks.getTaskExecution.mockResolvedValue(retained);
     fakeArtifacts.readArtifact.mockResolvedValue("# Accepted finding\n\nRead the recorded occurrence, not the assigned output path.");
+    vi.mocked(localStorage.getItem).mockImplementation((key) => (key === "alinery.sessionNavigatorExpanded" ? "true" : null));
 
     const { onOpenSession } = await renderDetail("parent", "graph");
     const graph = within(screen.getByRole("region", { name: "Task run graph" }));
@@ -585,6 +649,10 @@ describe("task run graph", () => {
     // The artifact scan intentionally has no entry: persisted occurrence provenance is enough.
     fireEvent.click(graph.getByRole("button", { name: /research\/2-result-10\.md/ }));
     expect(await screen.findByRole("heading", { name: "Accepted finding" })).toBeDefined();
+    const fileNavigator = within(screen.getByRole("region", { name: "Session lineage" }));
+    expect(fileNavigator.getByTitle("research/2-result-10.md").getAttribute("aria-current")).toBe("page");
+    expect(fileNavigator.getByRole("button", { name: producer.name }).getAttribute("aria-current")).toBeNull();
+    expect(fileNavigator.getByRole("button", { name: new RegExp(consumer.name) }).getAttribute("aria-current")).toBeNull();
     expect(fakeArtifacts.readArtifact).toHaveBeenCalledExactlyOnceWith("/repo", "parent", "research/2-result-10.md");
     const fileTabs = within(screen.getByRole("group", { name: "Open files" }));
     expect(fileTabs.getByRole("button", { name: "2-result-10.md" }).getAttribute("aria-pressed")).toBe("true");
@@ -1954,6 +2022,32 @@ const renderedSessionSteps = (container: HTMLElement) =>
   [...container.querySelectorAll(".task-session-table tbody .session-step-cell > :first-child")].map((node) => node.textContent);
 
 describe("session list without identifiers", () => {
+  it.each([
+    { agent: "idle", endpoint: true, accepted: false, label: "Ready for review" },
+    { agent: "idle", endpoint: false, accepted: false, label: "Ready to advance" },
+    { agent: "idle", endpoint: true, accepted: true, label: "Finishing step…" },
+    { agent: "busy", endpoint: true, accepted: false, label: "Running" },
+    { agent: "idle", endpoint: null, accepted: false, label: "Idle" },
+  ] as const)("shows $label in the status column without a second lifecycle badge", async ({ agent, endpoint, accepted, label }) => {
+    const fixture = task();
+    scenario.task = fixture;
+    scenario.sessions = [session({ id: "owner-a", harness: "vinculum" })];
+    const live = observation(agent);
+    if (live.state && endpoint !== null) live.state.playbook = { state: "ready_to_advance" };
+    sessionStatuses.mockResolvedValue({ "owner-a": live });
+    const execution = executionRecord(
+      accepted
+        ? { lifecycle: "finishing", receipt_id: "receipt" }
+        : { ready: endpoint === null ? undefined : { revision: 3, endpoint, destinations: endpoint ? [] : ["draft"], roles: ["result.md"] } },
+    );
+    mocks.getTaskExecution.mockResolvedValue(executionReply([execution]));
+    renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
+    const row = await screen.findByRole("row", { name: "Open session Retained playbook · Retained worker" });
+    await waitFor(() => expect(row.querySelector(".status-col")?.textContent).toBe(label));
+    expect(row.querySelector(".session-step-cell .pill")).toBeNull();
+  });
+
   it("keeps same-step sessions independently openable and preserves archived history and resumed state", async () => {
     const fixture = task();
     const archived = session({ id: "opaque-archived", archived: true, created: 10 });
@@ -2326,6 +2420,8 @@ describe("main pane file tabs", () => {
 
 describe("git tab", () => {
   it("lists the branch's commits and opens one as a diff tab without reading it as an artifact", async () => {
+    scenario.sessions = [session({ id: "owner-a", phase: "worker", harness: "vinculum" })];
+    mocks.getTaskExecution.mockResolvedValue(executionReply());
     mocks.worktreeLog.mockResolvedValue({
       commits: [{ oid: "b".repeat(40), subject: "Fix src/a.ts", author: "t", time_ms: 0 }],
       base: "main",
@@ -2342,6 +2438,7 @@ describe("git tab", () => {
     // The tab names the commit, not the tail of a path in its subject.
     expect(tabs.getByRole("button", { name: "bbbbbbb Fix src/a.ts" }).getAttribute("aria-pressed")).toBe("true");
     expect(await screen.findByRole("region", { name: "src/a.ts" })).toBeDefined();
+    expect(screen.getByRole("button", { name: /Session Navigator/ })).toBeDefined();
     expect(mocks.worktreeDiff).toHaveBeenCalledWith("/repo", "parent", { kind: "commit", oid: "b".repeat(40) });
     expect(fakeArtifacts.readArtifact).not.toHaveBeenCalledWith("/repo", "parent", "bbbbbbb Fix src/a.ts");
   });
@@ -2349,14 +2446,24 @@ describe("git tab", () => {
 
 describe("repository files", () => {
   it("lists the worktree under the artifacts and opens files as tabs: markdown previews, code shows as text", async () => {
+    scenario.sessions = [session({ id: "owner-a", phase: "worker", harness: "vinculum" })];
+    const run = executionReply();
+    if (!run.state.occurrences) throw new Error("Missing fixture input");
+    run.state.occurrences["input-a"].relative_path = "README.md";
+    mocks.getTaskExecution.mockResolvedValue(run);
     mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["README.md", "src/main.ts"], truncated: false });
     fakeArtifacts.worktreeTexts = { "README.md": "# Read me", "src/main.ts": "export const x = 1;" };
+    vi.mocked(localStorage.getItem).mockImplementation((key) => (key === "alinery.sessionNavigatorExpanded" ? "true" : null));
     await renderDetail();
     const repo = within(await screen.findByRole("region", { name: "Repository files" }));
     expect(mocks.listWorktreeFiles).toHaveBeenCalledWith("/repo", "parent");
 
     fireEvent.click(await repo.findByRole("button", { name: "README.md" }), { detail: 2 });
     expect(await screen.findByRole("heading", { name: "Read me" })).toBeDefined();
+    const navigator = within(screen.getByRole("region", { name: "Session lineage" }));
+    expect(navigator.getByTitle("README.md").getAttribute("aria-current")).toBe("page");
+    const consumers = navigator.getByRole("heading", { name: "Used by" }).parentElement;
+    expect(consumers?.querySelector("button")).toBeNull();
     expect(fakeArtifacts.readWorktree).toHaveBeenCalledWith("/repo", "parent", "README.md");
     expect(fakeArtifacts.readArtifact).not.toHaveBeenCalledWith("/repo", "parent", "README.md");
 
@@ -2364,6 +2471,7 @@ describe("repository files", () => {
     fireEvent.click(await repo.findByRole("button", { name: "main.ts" }));
     expect((await screen.findByText("const")).className).toBe("hljs-keyword");
     expect(document.querySelector(".codeview-code")?.textContent).toBe("export const x = 1;");
+    expect(screen.getByRole("button", { name: /Session Navigator/ })).toBeDefined();
     expect(screen.queryByRole("button", { name: "Preview" })).toBeNull();
 
     const tabs = within(screen.getByRole("group", { name: "Open files" }));
