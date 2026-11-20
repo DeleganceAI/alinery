@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use tauri_plugin_opener::OpenerExt;
 
 const DEFAULT_ACCOUNTS_URL: &str = "https://accounts.alinery.ai";
-const SUPABASE_URL: &str = "https://cppinfludeyomoyinrkl.supabase.co";
+const SUPABASE_URL: &str = "https://db.alinery.ai";
 // Publishable key, not a secret — safe to bake, same as Linear's OAuth client id. Never bake
 // SUPABASE_SERVICE_ROLE_KEY / sb_secret_… here.
 const SUPABASE_PUBLISHABLE_KEY: &str = "sb_publishable_BJ356xdHfbL0B0BeHfqf7A_QBDFiAto";

@@ -23,7 +23,7 @@ const RENEWAL_LEAD_SECS: u64 = 3600;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_ACCOUNTS_URL: &str = "https://accounts.alinery.ai";
 // Keep in sync with alinery-app `account.rs`. Publishable key, not a secret.
-const SUPABASE_URL: &str = "https://cppinfludeyomoyinrkl.supabase.co";
+const SUPABASE_URL: &str = "https://db.alinery.ai";
 const SUPABASE_PUBLISHABLE_KEY: &str = "sb_publishable_BJ356xdHfbL0B0BeHfqf7A_QBDFiAto";
 const REFRESH_SKEW_SECS: u64 = 120;
 
