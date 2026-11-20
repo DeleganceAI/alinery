@@ -2,7 +2,7 @@ import { UserRound, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { toast } from "./toast";
-import type { AccountStatus, DesktopCreditsView } from "./types";
+import type { AccountStatus, DesktopCreditsView, DesktopTeams } from "./types";
 
 const CREDITS_POLL_MS = 3 * 60 * 1000;
 
@@ -18,9 +18,10 @@ const SIGNED_OUT: AccountStatus = { signedIn: false, email: null, plan: null, pa
  *  Session is in auth.json; the pairing nonce is never persisted.
  *  Notifications and Settings live here (not the top-bar tabs); ⌘8 and ⌘9 / , still open
  *  them via hotkeys. */
-export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNotifications: () => void; onOpenSettings: () => void }) {
+export function AccountMenu({ onOpenNotifications, onOpenSettings, onOpenTeam }: { onOpenNotifications: () => void; onOpenSettings: () => void; onOpenTeam?: () => void }) {
   const [status, setStatus] = useState<AccountStatus | null>(null);
   const [credits, setCredits] = useState<DesktopCreditsView | null>(null);
+  const [teams, setTeams] = useState<DesktopTeams | null>(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement | null>(null);
@@ -87,7 +88,16 @@ export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNot
 
   useEffect(() => {
     if (!open) return;
-    if (status?.signedIn) pollCredits(generation.current);
+    if (status?.signedIn) {
+      const gen = generation.current;
+      pollCredits(gen);
+      ipc
+        .accountTeams()
+        .then((next) => {
+          if (gen === generation.current) setTeams(next);
+        })
+        .catch(() => {});
+    }
     menu.current?.querySelector<HTMLElement>("button")?.focus();
     const onDown = (e: MouseEvent) => {
       if (!box.current?.contains(e.target as Node)) setOpen(false);
@@ -157,7 +167,10 @@ export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNot
       .accountSignOut()
       .then((s) => {
         setStatus(s);
-        if (!s.signedIn) setCredits(null);
+        if (!s.signedIn) {
+          setCredits(null);
+          setTeams(null);
+        }
         setOpen(false);
         if (s.signedIn) {
           // A newer pairing replaced the session we signed out of. Keep that chip;
@@ -169,6 +182,16 @@ export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNot
         }
       })
       .catch((e) => toast.error(`Couldn't sign out: ${String(e)}`))
+      .finally(() => setBusy(false));
+  };
+
+  const joinTeam = (inviteId: string) => {
+    setBusy(true);
+    ipc
+      .accountAcceptInvite(inviteId)
+      .then(() => ipc.accountTeams())
+      .then((next) => setTeams(next))
+      .catch((e) => toast.error(`Couldn't join: ${String(e)}`))
       .finally(() => setBusy(false));
   };
 
@@ -245,6 +268,28 @@ export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNot
                 {status.plan ? <span className="account-chip-plan">{status.plan}</span> : null}
               </button>
               {creditsItem}
+              {teams?.pots.map((pot) => (
+                <button
+                  key={pot.teamId ?? "personal"}
+                  type="button"
+                  role="menuitem"
+                  className="account-chip-action"
+                  disabled={busy}
+                  onClick={run(pot.teamId && onOpenTeam ? onOpenTeam : openAccount)}
+                >
+                  {pot.name} {formatCreditUsd(pot.balanceCents)}
+                </button>
+              ))}
+              {teams?.pendingInvites.map((invite) => (
+                <button key={invite.id} type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(() => joinTeam(invite.id))}>
+                  Join {invite.teamName}
+                </button>
+              ))}
+              {onOpenTeam ? (
+                <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(onOpenTeam)}>
+                  Team
+                </button>
+              ) : null}
               {navItems}
               <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(signOut)}>
                 Sign out

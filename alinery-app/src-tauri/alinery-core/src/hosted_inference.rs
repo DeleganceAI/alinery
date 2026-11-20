@@ -3,6 +3,7 @@
 //! One home for mint/reuse/persist so app spawn, daemon auto-advance, restate, and MCP
 //! all refresh the same way. Never puts `inf_…` in the return value.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -56,6 +57,16 @@ pub struct HostedCatalog {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct PotToken {
+    token: String,
+    expires_at: u64,
+    #[serde(default)]
+    session_id: String,
+    #[serde(default)]
+    minted_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct InferenceFile {
     token: String,
     expires_at: u64,
@@ -64,6 +75,9 @@ struct InferenceFile {
     #[serde(default)]
     minted_at: u64,
     catalog: HostedCatalog,
+    /// One hosted token per team pot. The personal token stays `token`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pots: BTreeMap<String, PotToken>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -75,7 +89,28 @@ pub struct HostedApiError {
 
 pub fn is_hosted_model(model: &str) -> bool {
     let model = model.trim();
-    model.split_once('/').is_some_and(|(provider, id)| provider == HOSTED_PROVIDER && !id.is_empty())
+    let Some((provider, id)) = model.split_once('/') else {
+        return false;
+    };
+    !id.is_empty() && (provider == HOSTED_PROVIDER || hosted_team_id_of(provider).is_some())
+}
+
+/// `alinery:<team>/<model>` spends that team's pot. `alinery/<model>` spends the personal token.
+pub fn hosted_team_id(model: &str) -> Option<String> {
+    let (provider, id) = model.trim().split_once('/')?;
+    if id.is_empty() {
+        return None;
+    }
+    hosted_team_id_of(provider)
+}
+
+fn hosted_team_id_of(provider: &str) -> Option<String> {
+    let team = provider.strip_prefix("alinery:")?;
+    if team.is_empty() || team.chars().any(char::is_control) {
+        None
+    } else {
+        Some(team.to_string())
+    }
 }
 
 pub fn hosted_models_yml_unavailable(app_config: &Path) -> String {
@@ -277,15 +312,92 @@ fn reuse_cached_inference(inf_path: &Path, app_config: &Path, accounts_url: &str
 }
 
 pub fn write_inference_file(path: &Path, token: &str, expires_at: u64, session_id: &str, minted_at: u64, catalog: &HostedCatalog) -> Result<(), String> {
-    let file = InferenceFile {
-        token: token.to_string(),
-        expires_at,
-        session_id: session_id.to_string(),
-        minted_at,
-        catalog: catalog.clone(),
-    };
-    let bytes = serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?;
+    let pots = read_inference_raw(path).map(|file| file.pots).unwrap_or_default();
+    save_inference(
+        path,
+        &InferenceFile {
+            token: token.to_string(),
+            expires_at,
+            session_id: session_id.to_string(),
+            minted_at,
+            catalog: catalog.clone(),
+            pots,
+        },
+    )
+}
+
+fn read_inference_raw(path: &Path) -> Option<InferenceFile> {
+    let bytes = fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn save_inference(path: &Path, file: &InferenceFile) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(file).map_err(|e| e.to_string())?;
     write_owner_only_bytes(path, &bytes)
+}
+
+/// Mint or reuse the token that spends `team_id`. A member with no personal plan can still hold one.
+pub fn sync_hosted_pot(config_dir: &Path, _app_config: &Path, accounts_url: &str, access_token: &str, session_id: &str, team_id: &str) -> Result<(), String> {
+    let inf_path = inference_path(config_dir);
+    let lock_path = inf_path.with_extension("json.lock");
+    let _lock = lock_exclusive_blocking(&lock_path).map_err(|e| e.to_string())?;
+    let now = now_secs();
+    if let Some(pot) = read_inference_raw(&inf_path).and_then(|file| file.pots.get(team_id).cloned()) {
+        if now.saturating_add(INFERENCE_SKEW_SECS) < pot.expires_at && pot.expires_at.saturating_sub(now) >= RENEWAL_LEAD_SECS {
+            return Ok(());
+        }
+    }
+    let pot_session = format!("{session_id}:{team_id}");
+    let (token, expires_at, catalog) = mint_inference_session(accounts_url, access_token, &pot_session, Some(team_id)).map_err(|_| HOSTED_MODEL_UNAVAILABLE.to_string())?;
+    let mut file = read_inference_raw(&inf_path).unwrap_or(InferenceFile {
+        token: String::new(),
+        expires_at: 0,
+        session_id: session_id.to_string(),
+        minted_at: now,
+        catalog: catalog.clone(),
+        pots: BTreeMap::new(),
+    });
+    if file.catalog.models.is_empty() {
+        file.catalog = catalog;
+    }
+    file.pots.insert(
+        team_id.to_string(),
+        PotToken {
+            token,
+            expires_at,
+            session_id: pot_session,
+            minted_at: now,
+        },
+    );
+    save_inference(&inf_path, &file).map_err(|_| HOSTED_MODEL_UNAVAILABLE.to_string())?;
+    Ok(())
+}
+
+pub fn ensure_hosted_pot_for_spawn(app_config: &Path, team_id: &str) -> Result<(), String> {
+    ensure_hosted_pot_for_spawn_at(app_config, &accounts_url(), SUPABASE_URL, team_id)
+}
+
+pub fn ensure_hosted_pot_for_spawn_at(app_config: &Path, accounts_url: &str, supabase_url: &str, team_id: &str) -> Result<(), String> {
+    let config_dir = pairing_config_dir(app_config);
+    let auth_path = config_dir.join("auth.json");
+    let Some(mut tokens) = load_auth_value(&auth_path) else {
+        return Err(HOSTED_MODEL_UNAVAILABLE.into());
+    };
+    let now = now_secs();
+    let jwt_fresh = tokens
+        .get("expires_at")
+        .and_then(Value::as_u64)
+        .is_some_and(|expires_at| now.saturating_add(REFRESH_SKEW_SECS) < expires_at);
+    if !jwt_fresh {
+        refresh_jwt_access_token(supabase_url, &auth_path, &mut tokens)?;
+    }
+    let access = tokens
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| HOSTED_MODEL_UNAVAILABLE.to_string())?;
+    let session_id = tokens.get("session_id").and_then(Value::as_str).unwrap_or("").to_string();
+    sync_hosted_pot(&config_dir, app_config, accounts_url, access, &session_id, team_id)
 }
 
 fn top_level_key(seg: &str) -> Option<&str> {
@@ -451,9 +563,12 @@ fn fetch_live_catalog(accounts_url: &str) -> Result<HostedCatalog, HostedApiErro
     parse_hosted_catalog_body(&body).map_err(|error| HostedApiError { status, error, code: None })
 }
 
-fn mint_inference_session(accounts_url: &str, access_token: &str, session_id: &str) -> Result<(String, u64, HostedCatalog), HostedApiError> {
+fn mint_inference_session(accounts_url: &str, access_token: &str, session_id: &str, team_id: Option<&str>) -> Result<(String, u64, HostedCatalog), HostedApiError> {
     let url = format!("{}/api/desktop/inference-session", accounts_url.trim_end_matches('/'));
-    let body = json!({ "session_id": session_id }).to_string();
+    let body = match team_id {
+        Some(team) => json!({ "session_id": session_id, "team_id": team }).to_string(),
+        None => json!({ "session_id": session_id }).to_string(),
+    };
     let (status, bytes) = http_call("POST", &url, &hosted_headers(Some(access_token)), Some(&body)).map_err(|e| HostedApiError { status: 0, error: e, code: None })?;
     if !(200..300).contains(&status) {
         return Err(parse_hosted_error(status, &bytes));
@@ -485,12 +600,12 @@ pub fn sync_hosted_inference(config_dir: &Path, app_config: &Path, accounts_url:
         if !inference_due_for_renewal(&file, now) {
             return reuse_cached_inference(&inf_path, app_config, accounts_url, session_id, &file);
         }
-        return match mint_inference_session(accounts_url, access_token, session_id) {
+        return match mint_inference_session(accounts_url, access_token, session_id, None) {
             Ok((token, expires_at, catalog)) => persist_minted_inference(&inf_path, app_config, &token, expires_at, session_id, now, &catalog),
             Err(_) => reuse_cached_inference(&inf_path, app_config, accounts_url, session_id, &file),
         };
     }
-    match mint_inference_session(accounts_url, access_token, session_id) {
+    match mint_inference_session(accounts_url, access_token, session_id, None) {
         Ok((token, expires_at, catalog)) => persist_minted_inference(&inf_path, app_config, &token, expires_at, session_id, now, &catalog),
         Err(_) => Err(HOSTED_MODEL_UNAVAILABLE.into()),
     }
@@ -612,6 +727,9 @@ mod tests {
     fn is_hosted_model_trims_and_requires_alinery_id() {
         assert!(is_hosted_model("alinery/Qwen3.6-35B-A3B"));
         assert!(is_hosted_model(" alinery/Qwen3.6-35B-A3B "));
+        assert!(is_hosted_model("alinery:team-1/Qwen3.6-35B-A3B"));
+        assert_eq!(hosted_team_id("alinery:team-1/Qwen3.6-35B-A3B").as_deref(), Some("team-1"));
+        assert!(hosted_team_id("alinery/Qwen3.6-35B-A3B").is_none());
         assert!(!is_hosted_model("anthropic/claude"));
         assert!(!is_hosted_model("alinery"));
         assert!(!is_hosted_model("alinery/"));

@@ -328,6 +328,24 @@ export type DesktopCreditsView = {
   accountUrl: string | null;
   plansUrl: string | null;
 };
+/** account.rs — GET /api/desktop/teams. A null teamId is the personal pot. */
+export type TeamPot = { teamId: string | null; name: string; role: string; balanceCents: number };
+export type PendingTeamInvite = { id: string; teamId: string; teamName: string; role: string };
+export type DesktopTeams = { pots: TeamPot[]; pendingInvites: PendingTeamInvite[] };
+export type TeamShare = {
+  id: string;
+  team_id: string;
+  name: string;
+  online?: boolean;
+  last_seen_at?: string | null;
+  last_sync_error?: string | null;
+};
+export type TeamShareDetail = {
+  tasks: Array<{ slug?: string; body?: string; revision?: string }>;
+  artifacts: Array<{ task_slug?: string; filename?: string; body?: string }>;
+  comments: Array<{ id?: string; task_slug?: string; filename?: string; body?: string; created_at?: string }>;
+};
+export type RealtimeSession = { url: string; key: string; accessToken: string };
 /** hosted.rs — catalog for Providers/Models. Never includes `inf_…`. */
 export type HostedModel = {
   id: string;
@@ -1118,6 +1136,7 @@ export type View =
   | { kind: "sessions" }
   | { kind: "notifications" }
   | { kind: "playbooks" }
+  | { kind: "team" }
   | { kind: "settings"; section?: SettingsSectionKey }
   | { kind: "create"; from: View; draft?: BoardTask; initialPlaybook?: PlaybookRef; initialPreset?: { name: string; description: string; evidence?: string } }
   | { kind: "createSession"; from: View; initialTask?: { repo_path: string; slug: string } }
@@ -1138,7 +1157,7 @@ export type View =
     }
   | { kind: "reviewHandoff"; from: View; source: ReviewHandoffSource };
 
-export type Tab = "list" | "grid" | "chat" | "sessions" | "notifications" | "playbooks" | "settings";
+export type Tab = "list" | "grid" | "chat" | "sessions" | "notifications" | "playbooks" | "team" | "settings";
 
 export type ChatBranch = { label: string; checkout: boolean };
 

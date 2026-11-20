@@ -81,8 +81,13 @@ pub(crate) async fn refresh_hosted_inference_before_open(app: AppHandle, harness
     if !hosted_refresh_needed(harness, model) {
         return Ok(());
     }
+    let model = model.to_string();
     tauri::async_runtime::spawn_blocking(move || {
         refresh_hosted_inference_for_spawn(&app)?;
+        if let Some(team) = alinery_core::hosted_team_id(&model) {
+            let app_config = app_config_path(&app)?;
+            alinery_core::ensure_hosted_pot_for_spawn(&app_config, &team)?;
+        }
         // A remote repo's daemon reads the token on its own host: hand it the fresh one before it spawns (a failure is
         // logged there). Only the active repo's host waits here; the 30-minute refresh and each connect cover the rest.
         if let Ok(RepoRef::Remote { host_id, .. }) = active_repo_ref() {

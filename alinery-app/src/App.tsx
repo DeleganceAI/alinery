@@ -101,6 +101,7 @@ import { SessionsList } from "./views/SessionsList";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
 import { SetupScreen, type SetupTab } from "./views/SetupScreen";
 import { TaskList } from "./views/TaskList";
+import { TeamView } from "./views/Team";
 import { ResizeHandles, useWindowFullscreen, WindowControls } from "./WindowChrome";
 
 /** Per-install: asked once, then the Settings button is the way back. */
@@ -182,6 +183,7 @@ export default function App() {
   const [navInstant, setNavInstant] = useState(true);
   const playbooksReturnView = useRef<View | null>(null);
   const [playbooksVisited, setPlaybooksVisited] = useState(false);
+  const [teamVisited, setTeamVisited] = useState(false);
   const [chatVisited, setChatVisited] = useState(false);
   const [scope, setScope] = useState<RepoScope>("active");
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
@@ -271,6 +273,7 @@ export default function App() {
   useEffect(() => {
     if (view.kind === "chat") setChatVisited(true);
     if (view.kind === "playbooks") setPlaybooksVisited(true);
+    if (view.kind === "team") setTeamVisited(true);
   }, [view.kind]);
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
@@ -1261,6 +1264,7 @@ export default function App() {
         ]
       : []),
     action("playbooks", pi(List), "Go to Playbooks", "", () => switchTop("playbooks", { instant: true })),
+    action("team", pi(List), "Go to Team", "", () => switchTop("team", { instant: true })),
     action("onboarding-guide", pi(BookOpen), "Replay playbook onboarding guide", "", replayPlaybookGuide),
     action("appearance", pi(SunMoon), "Appearance: cycle system / light / dark", "⌘G", cycleAppearance),
     action("add-repo", pi(FolderPlus), "Add repo", "", () => openSetup()),
@@ -1408,6 +1412,11 @@ export default function App() {
                 {(playbooksVisited || view.kind === "playbooks") && (
                   <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
                     <Playbooks repoPath={appConfig?.active_repo || undefined} repos={appConfig?.known_repos} onCreateTask={(reference) => openCreate(reference)} />
+                  </div>
+                )}
+                {(teamVisited || view.kind === "team") && (
+                  <div className="view" hidden={view.kind !== "team" || daemon.repo_busy}>
+                    <TeamView active={view.kind === "team" && !daemon.repo_busy} />
                   </div>
                 )}
                 {/* Kept mounted once visited, like Playbooks: the open thread, per-thread drafts and the

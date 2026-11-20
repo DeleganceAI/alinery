@@ -1,0 +1,26 @@
+// proto/alinery/v1/share.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+
+// Sharing one daemon with one team. The shell mints the sync credential and delivers it here.
+// The daemon pushes to the accounts service. It never opens a Supabase socket.
+service ShareService {
+  rpc SetShare(SetShareRequest) returns (SetShareResponse);      // ACT
+  rpc ClearShare(ClearShareRequest) returns (ClearShareResponse);  // ACT
+}
+
+message SetShareRequest {
+  MutationMeta meta = 1;
+  string team_id = 2;
+  string name = 3;
+  string token = 4;
+  string accounts_url = 5;
+}
+message SetShareResponse {}
+
+message ClearShareRequest {
+  MutationMeta meta = 1;
+}
+message ClearShareResponse {}

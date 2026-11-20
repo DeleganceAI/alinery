@@ -34,6 +34,7 @@ import type {
   CommunitySourceResult,
   ConnectionStatus,
   DesktopCreditsView,
+  DesktopTeams,
   GitHubIssue,
   GlobalSettings,
   HostEntry,
@@ -44,6 +45,7 @@ import type {
   PreviewResult,
   PublishResult,
   PullRequest,
+  RealtimeSession,
   RemoteDirListing,
   RemoteHostView,
   RemoteSharingView,
@@ -54,6 +56,8 @@ import type {
   StagedUpdate,
   TakeoverOutcome,
   TakeoverPreview,
+  TeamShare,
+  TeamShareDetail,
   UnpublishResult,
   UpdateStatus,
 } from "./types";
@@ -160,6 +164,15 @@ export const accountSignOut = () => invoke<AccountSignOutResult>("account_sign_o
 export const accountOpen = () => invoke<void>("account_open");
 export const hostedCatalog = () => invoke<HostedCatalogView>("hosted_catalog");
 export const accountCredits = () => invoke<DesktopCreditsView>("account_credits");
+export const accountTeams = () => invoke<DesktopTeams>("account_teams");
+export const accountAcceptInvite = (inviteId: string) => invoke<void>("account_accept_invite", { inviteId });
+export const accountTeamShares = () => invoke<{ shares: TeamShare[] }>("account_team_shares");
+export const accountTeamShare = (shareId: string) => invoke<TeamShareDetail>("account_team_share", { shareId });
+export const accountTeamComment = (shareId: string, taskSlug: string, filename: string, body: string) =>
+  invoke<void>("account_team_comment", { shareId, taskSlug, filename, body });
+export const accountShareDaemon = (repo: string, teamId: string) => invoke<void>("account_share_daemon", { repo, teamId });
+export const accountUnshareDaemon = (repo: string) => invoke<void>("account_unshare_daemon", { repo });
+export const accountRealtime = () => invoke<RealtimeSession>("account_realtime");
 export const accountOpenPlans = () => invoke<void>("account_open_plans");
 
 // ── imports.rs ────────────────────────────────────────────────────────

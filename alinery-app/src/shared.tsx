@@ -739,6 +739,7 @@ export function TopBar({
         {tab("sessions", "Sessions", String(trailingTabDigit(gridViews.length, "sessions")))}
         {showChat && tab("chat", "Chat", String(trailingTabDigit(gridViews.length, "chat")))}
         {tab("playbooks", "Playbooks")}
+        {tab("team", "Team")}
       </nav>
       <div className="spacer" />
       <button type="button" className="iconbtn new-task" title="New task (⌘N)" aria-label="New task" onClick={onCreate}>
@@ -764,7 +765,7 @@ export function TopBar({
           K
         </span>
       </button>
-      <AccountMenu onOpenNotifications={() => onSwitch("notifications")} onOpenSettings={() => onSwitch("settings")} />
+      <AccountMenu onOpenNotifications={() => onSwitch("notifications")} onOpenSettings={() => onSwitch("settings")} onOpenTeam={() => onSwitch("team")} />
     </header>
   );
 }

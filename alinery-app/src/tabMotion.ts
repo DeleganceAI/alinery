@@ -26,7 +26,7 @@ export function viewFadeClass(instant: boolean) {
 }
 
 export function isPrimaryTab(kind: string): boolean {
-  return kind === "list" || kind === "grid" || kind === "chat" || kind === "sessions" || kind === "notifications" || kind === "playbooks" || kind === "settings";
+  return kind === "list" || kind === "grid" || kind === "chat" || kind === "sessions" || kind === "notifications" || kind === "playbooks" || kind === "team" || kind === "settings";
 }
 
 /** Every drill-down view (task, session, create, ...) nests back to the primary

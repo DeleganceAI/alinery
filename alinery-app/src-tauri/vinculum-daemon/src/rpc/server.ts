@@ -19,6 +19,7 @@ import { SubtaskService } from "alinery-proto/alinery/v1/subtasks_pb";
 import { AgentService } from "alinery-proto/alinery/v1/agent_pb";
 import { PlaybookService } from "alinery-proto/alinery/v1/playbooks_pb";
 import { ProviderService } from "alinery-proto/alinery/v1/providers_pb";
+import { ShareService } from "alinery-proto/alinery/v1/share_pb";
 import { RepoService, SettingsService } from "alinery-proto/alinery/v1/settings_pb";
 import { SyncService } from "alinery-proto/alinery/v1/sync_pb";
 import { ChatService } from "alinery-proto/alinery/v1/chat_pb";
@@ -46,6 +47,7 @@ import { type ProviderDeps, providerService } from "./providers.ts";
 import { chatService } from "./chat.ts";
 import { type SessionControl, sessionService, type Transcripts } from "./sessions.ts";
 import { subtaskService } from "./subtasks.ts";
+import { shareService } from "./share.ts";
 import { repoService, settingsService, type SettingsDeps } from "./settings.ts";
 import { syncService } from "./sync.ts";
 import { draftService, type TaskDeps, taskService } from "./tasks.ts";
@@ -74,6 +76,7 @@ function makeServer(peer: PeerClass, secret: Buffer, tokens: TokenRegistry, memb
   if (settings) {
     addService(server, SettingsService, settingsService(settings, dedupe, store), values);
     addService(server, RepoService, repoService(settings, dedupe, store), values);
+    addService(server, ShareService, shareService(settings.repo, dedupe), values);
   }
   if (tasks) {
     addService(server, TaskService, taskService(tasks, dedupe, store), values);
