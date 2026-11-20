@@ -1,26 +1,29 @@
-import { useEffect, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
+import { sharedTasks } from "../sharedTask";
 import { toast } from "../toast";
-import type { DesktopTeams, TeamShare, TeamShareDetail } from "../types";
+import type { AppearancePrefs, DesktopTeams, TeamShare, TeamShareDetail } from "../types";
+import { SharedTaskList, SharedTaskView } from "./SharedTask";
 
 function repoLabel(repo: string): string {
   const trimmed = repo.replace(/\/$/, "");
   return trimmed.slice(trimmed.lastIndexOf("/") + 1) || repo;
 }
 
+const EMPTY_DETAIL: TeamShareDetail = { tasks: [], artifacts: [], comments: [] };
+
 /** Shared daemons for the teams this account belongs to. The page reads through the accounts API.
  *  Comments can arrive over the Supabase Realtime socket; a poll covers a socket that is not up yet. */
-export function TeamView({ active }: { active: boolean }) {
+export function TeamView({ active, appearance, onAppearanceChange }: { active: boolean; appearance: AppearancePrefs; onAppearanceChange: (next: AppearancePrefs) => void }) {
   const [teams, setTeams] = useState<DesktopTeams | null>(null);
   const [repos, setRepos] = useState<string[]>([]);
   const [shares, setShares] = useState<TeamShare[]>([]);
   const [shareId, setShareId] = useState<string | null>(null);
+  const [taskSlug, setTaskSlug] = useState<string | null>(null);
   const [detail, setDetail] = useState<TeamShareDetail | null>(null);
   const [teamId, setTeamId] = useState("");
-  const [comment, setComment] = useState("");
-  const [filename, setFilename] = useState("");
-  const [taskSlug, setTaskSlug] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -38,6 +41,7 @@ export function TeamView({ active }: { active: boolean }) {
       .catch((e) => setError(String(e)));
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loads once each time the tab becomes active
   useEffect(() => {
     if (!active) return;
     ipc
@@ -55,6 +59,7 @@ export function TeamView({ active }: { active: boolean }) {
     loadShares();
   }, [active]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one subscription per open share
   useEffect(() => {
     if (!active || !shareId) return;
     loadDetail(shareId);
@@ -84,6 +89,16 @@ export function TeamView({ active }: { active: boolean }) {
     };
   }, [active, shareId]);
 
+  const share = shares.find((row) => row.id === shareId) ?? null;
+  const tasks = useMemo(() => sharedTasks(detail ?? EMPTY_DETAIL), [detail]);
+  const task = tasks.find((row) => row.slug === taskSlug) ?? null;
+
+  const openShare = (id: string) => {
+    if (id !== shareId) setDetail(null);
+    setShareId(id);
+    setTaskSlug(null);
+  };
+
   const shareRepo = (repo: string) => {
     if (!teamId) return;
     setBusy(true);
@@ -108,118 +123,107 @@ export function TeamView({ active }: { active: boolean }) {
       .finally(() => setBusy(false));
   };
 
-  const sendComment = () => {
-    if (!shareId || !taskSlug || !filename || !comment.trim()) return;
-    setBusy(true);
-    ipc
-      .accountTeamComment(shareId, taskSlug, filename, comment.trim())
-      .then(() => {
-        setComment("");
-        loadDetail(shareId);
-      })
-      .catch((e) => toast.error(String(e)))
-      .finally(() => setBusy(false));
-  };
+  if (share && task && detail) {
+    return (
+      <SharedTaskView
+        share={share}
+        task={task}
+        detail={detail}
+        appearance={appearance}
+        onAppearanceChange={onAppearanceChange}
+        onBack={() => setTaskSlug(null)}
+        onComment={(filename, body, anchor) =>
+          ipc.accountTeamComment(share.id, task.slug, filename, body, anchor).then(() => {
+            loadDetail(share.id);
+          })
+        }
+      />
+    );
+  }
+
+  if (share) {
+    return <SharedTaskList share={share} tasks={tasks} loaded={detail !== null} onBack={() => setShareId(null)} onOpen={(next) => setTaskSlug(next.slug)} />;
+  }
 
   const teamPots = teams?.pots.filter((pot) => pot.teamId) ?? [];
-  const artifacts = detail?.artifacts ?? [];
-  const selectedArtifact = artifacts.find((row) => row.task_slug === taskSlug && row.filename === filename) ?? artifacts[0];
 
   return (
-    <div className="team-view">
-      <h2>Team</h2>
+    <div className="team-page">
+      <h2 className="view-title">Team</h2>
       {error ? <p className="dim">{error}</p> : null}
       <section>
         <h3>Your daemons</h3>
         {teamPots.length > 0 ? (
-          <label>
-            Share with{" "}
-            <select className="field-input" value={teamId} onChange={(event) => setTeamId(event.target.value)}>
-              {teamPots.map((pot) => (
-                <option key={pot.teamId} value={pot.teamId ?? ""}>
-                  {pot.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="field settings-select-field">
+            <label htmlFor="share-with">Share with</label>
+            <div className="field-select">
+              <select id="share-with" value={teamId} onChange={(event) => setTeamId(event.target.value)}>
+                {teamPots.map((pot) => (
+                  <option key={pot.teamId} value={pot.teamId ?? ""}>
+                    {pot.name}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={16} strokeWidth={1.5} aria-hidden="true" />
+            </div>
+          </div>
         ) : (
           <p className="dim">Join a team to share a daemon.</p>
         )}
         {repos.length === 0 ? <p className="dim">No daemon is connected in this window.</p> : null}
-        <ul>
-          {repos.map((repo) => (
-            <li key={repo}>
-              {repoLabel(repo)}{" "}
-              <button type="button" className="btn small" disabled={busy || !teamId} onClick={() => shareRepo(repo)}>
-                Share
-              </button>{" "}
-              <button type="button" className="btn ghost small" disabled={busy} onClick={() => void unshare(repo)}>
-                Stop sharing
-              </button>
-            </li>
-          ))}
-        </ul>
+        {repos.length > 0 ? (
+          <div className="list team-list">
+            {repos.map((repo) => {
+              const shared = shares.some((row) => row.name === repoLabel(repo).slice(0, 60));
+              return (
+                <div key={repo} className="row">
+                  <div className="rt">
+                    <div className="rtt">{repoLabel(repo)}</div>
+                    {shared ? <div className="rts">Shared</div> : null}
+                  </div>
+                  {shared ? (
+                    <button type="button" className="btn ghost small" disabled={busy} onClick={() => void unshare(repo)}>
+                      Stop sharing
+                    </button>
+                  ) : (
+                    <button type="button" className="btn small" disabled={busy || !teamId} onClick={() => shareRepo(repo)}>
+                      Share
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
       <section>
         <h3>Shared with you</h3>
         {shares.length === 0 ? <p className="dim">Nothing is shared yet.</p> : null}
-        <ul>
-          {shares.map((share) => (
-            <li key={share.id}>
-              <button type="button" className="btn ghost small" onClick={() => setShareId(share.id)}>
-                {share.name}
-              </button>{" "}
-              <span className="dim">{share.online ? "online" : "offline"}</span>
-              {share.last_sync_error ? <span className="dim"> {share.last_sync_error}</span> : null}
-            </li>
-          ))}
-        </ul>
+        {shares.length > 0 ? (
+          <div className="list team-list">
+            {shares.map((row) => (
+              <div
+                key={row.id}
+                className="row"
+                role="button"
+                tabIndex={0}
+                onClick={() => openShare(row.id)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  openShare(row.id);
+                }}
+              >
+                <div className="rt">
+                  <div className="rtt">{row.name}</div>
+                  {row.last_sync_error ? <div className="rts">{row.last_sync_error}</div> : null}
+                </div>
+                <span className="pill">{row.online ? "Online" : "Offline"}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </section>
-      {shareId && detail ? (
-        <section>
-          <h3>{shares.find((share) => share.id === shareId)?.name ?? "Daemon"}</h3>
-          <ul>
-            {(detail.tasks ?? []).map((task) => (
-              <li key={task.slug}>
-                <button type="button" className="btn ghost small" onClick={() => setTaskSlug(task.slug ?? "")}>
-                  {task.slug}
-                </button>
-              </li>
-            ))}
-          </ul>
-          <ul>
-            {artifacts.map((row) => (
-              <li key={`${row.task_slug}/${row.filename}`}>
-                <button
-                  type="button"
-                  className="btn ghost small"
-                  onClick={() => {
-                    setTaskSlug(row.task_slug ?? "");
-                    setFilename(row.filename ?? "");
-                  }}
-                >
-                  {row.task_slug}/{row.filename}
-                </button>
-              </li>
-            ))}
-          </ul>
-          {selectedArtifact?.body ? <pre>{selectedArtifact.body}</pre> : null}
-          <h3>Comments</h3>
-          <ul>
-            {(detail.comments ?? [])
-              .filter((row) => !filename || (row.task_slug === taskSlug && row.filename === filename))
-              .map((row) => (
-                <li key={row.id}>
-                  <span className="dim">{row.filename}</span> {row.body}
-                </li>
-              ))}
-          </ul>
-          <textarea className="field-input" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Comment on the selected artifact" />
-          <button type="button" className="btn small" disabled={busy || !filename || !comment.trim()} onClick={sendComment}>
-            Comment
-          </button>
-        </section>
-      ) : null}
     </div>
   );
 }

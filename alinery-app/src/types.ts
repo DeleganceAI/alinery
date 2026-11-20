@@ -337,14 +337,31 @@ export type TeamShare = {
   team_id: string;
   name: string;
   online?: boolean;
+  /** The signed-in account shared this daemon. Absent from an accounts server older than the flag. */
+  mine?: boolean;
   last_seen_at?: string | null;
   last_sync_error?: string | null;
 };
-export type TeamShareDetail = {
-  tasks: Array<{ slug?: string; body?: string; revision?: string }>;
-  artifacts: Array<{ task_slug?: string; filename?: string; body?: string }>;
-  comments: Array<{ id?: string; task_slug?: string; filename?: string; body?: string; created_at?: string }>;
+/** Same fields as ArtifactCommentAnchor; an empty anchor_id is a comment on the whole artifact. */
+export type TeamCommentAnchor = {
+  anchor_id: string;
+  anchor_kind: string;
+  anchor_label: string;
+  anchor_excerpt: string;
+  line_start: number;
+  line_end: number;
 };
+export type SharedTaskRow = { task_slug?: string; body?: string; revision?: string; updated_at?: string };
+export type SharedArtifactRow = { task_slug?: string; filename?: string; body?: string; updated_at?: string };
+export type SharedCommentRow = Partial<TeamCommentAnchor> & {
+  id?: string;
+  task_slug?: string;
+  filename?: string;
+  body?: string;
+  author_email?: string | null;
+  created_at?: string;
+};
+export type TeamShareDetail = { tasks: SharedTaskRow[]; artifacts: SharedArtifactRow[]; comments: SharedCommentRow[] };
 export type RealtimeSession = { url: string; key: string; accessToken: string };
 /** hosted.rs — catalog for Providers/Models. Never includes `inf_…`. */
 export type HostedModel = {

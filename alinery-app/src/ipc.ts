@@ -56,6 +56,7 @@ import type {
   StagedUpdate,
   TakeoverOutcome,
   TakeoverPreview,
+  TeamCommentAnchor,
   TeamShare,
   TeamShareDetail,
   UnpublishResult,
@@ -168,8 +169,8 @@ export const accountTeams = () => invoke<DesktopTeams>("account_teams");
 export const accountAcceptInvite = (inviteId: string) => invoke<void>("account_accept_invite", { inviteId });
 export const accountTeamShares = () => invoke<{ shares: TeamShare[] }>("account_team_shares");
 export const accountTeamShare = (shareId: string) => invoke<TeamShareDetail>("account_team_share", { shareId });
-export const accountTeamComment = (shareId: string, taskSlug: string, filename: string, body: string) =>
-  invoke<void>("account_team_comment", { shareId, taskSlug, filename, body });
+export const accountTeamComment = (shareId: string, taskSlug: string, filename: string, body: string, anchor: TeamCommentAnchor | null) =>
+  invoke<void>("account_team_comment", { shareId, taskSlug, filename, body, anchor });
 export const accountShareDaemon = (repo: string, teamId: string) => invoke<void>("account_share_daemon", { repo, teamId });
 export const accountUnshareDaemon = (repo: string) => invoke<void>("account_unshare_daemon", { repo });
 export const accountRealtime = () => invoke<RealtimeSession>("account_realtime");
