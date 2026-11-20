@@ -19,6 +19,16 @@ function nodeChain(nodes: ArtifactTreeNode[], id: string): ArtifactTreeNode[] {
   return [];
 }
 
+/** A tree click supplies a leaf label; task-owned file tabs use its full path below artifacts/. */
+export function artifactTabPath(nodes: ArtifactTreeNode[], node: ArtifactTreeNode | null, name: string): string {
+  if (!node || !isDirectOwnedArtifactNode(node) || name !== node.label) return name;
+  return (
+    nodeChain(nodes, node.id)
+      .map((part) => part.label)
+      .join("/") || name
+  );
+}
+
 /**
  * Where a tree-sourced (parent, live child or snapshot) artifact's relative images resolve: its path under its
  * namespace root, the nearest folder owned by a different task than its parent, and that root's attachment node ids,

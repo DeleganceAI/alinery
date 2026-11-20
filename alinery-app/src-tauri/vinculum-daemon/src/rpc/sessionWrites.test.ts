@@ -66,6 +66,7 @@ async function start() {
   };
   const turnCalls: string[] = [];
   const turns: TurnControl = {
+    retry: async (id, failed) => void turnCalls.push(`retry ${id} ${failed}`),
     prompt: async (id, text, images = []) => void turnCalls.push(`prompt ${id} ${text}${images.map((i) => ` +${i.mimeType}:${i.data}`).join("")}`),
     abort: async (id) => void turnCalls.push(`abort ${id}`),
     setModel: async (id, model) => {
@@ -109,7 +110,7 @@ async function start() {
     nodeOptions: { createConnection: () => connect(socketPath) } as never,
     interceptors: [(next) => (req) => (req.header.set("authorization", `Bearer ${SECRET}`), next(req))],
   });
-  return { canvasCalls, turnCalls, repo, alinery, task, store, feed: f, events, running, metaAtKill, storeAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport) };
+  return { runner, canvasCalls, turnCalls, repo, alinery, task, store, feed: f, events, running, metaAtKill, storeAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport) };
 }
 type Ctx = Awaited<ReturnType<typeof start>>;
 
@@ -181,6 +182,31 @@ test("archiving a session puts the stamp in the file and the store before the pr
   expect(await code(c.session.archiveSession({ meta: meta(), session: ref("", "c1") }))).toBe(Code.InvalidArgument);
 });
 
+test("a failed archive stop leaves the live owner retryable after the archive stamp", async () => {
+  const c = await start();
+  const id = "t-s1";
+  sessionMeta(c, "t", id);
+  c.running.add(id);
+  const stop = c.runner.stop;
+  let attempts = 0;
+  c.runner.stop = async (session) => {
+    attempts++;
+    if (attempts === 1) throw new Error("harness close failed");
+    await stop(session);
+  };
+  const archive = () => c.session.archiveSession({ meta: meta(), session: ref("t", id) });
+  await expect(archive()).rejects.toThrow("harness close failed");
+  const stamped = JSON.parse(readFileSync(metaPathOf(c.repo, "t", id), "utf8"));
+  expect(stamped.archived).toBe(true);
+  expect(stamped.ended_at).toBeUndefined();
+  expect(c.running.has(id)).toBe(true);
+  expect(c.events).toHaveLength(0);
+  expect((await archive()).killedLive).toBe(true);
+  expect(attempts).toBe(2);
+  expect(c.running.has(id)).toBe(false);
+  expect(c.events).toHaveLength(1);
+});
+
 test("killing a session reports session.kill, and clearing notifications marks the checkpoints read", async () => {
   const c = await start();
   sessionMeta(c, "t", "t-s1", { semantic: { phase_completed_at: 20 }, exit_code: 1, ended_at: 30 });
@@ -244,6 +270,10 @@ test("a session's turn controls reach the daemon's runner, and what it refuses l
   await c.session.promptSession({ meta: m, sessionId: "s1", text: "once" });
   await c.session.promptSession({ meta: m, sessionId: "s1", text: "once" });
   expect(c.turnCalls.filter((line) => line === "prompt s1 once")).toHaveLength(1);
+  const retry = { meta: meta(), sessionId: "s1", failedEntryId: "14" };
+  await c.session.retryTurn(retry);
+  await c.session.retryTurn(retry);
+  expect(c.turnCalls.filter((line) => line === "retry s1 14")).toHaveLength(1);
 });
 
 test("a prompt's images reach the runner as image parts, and one the composer could not have sent is refused", async () => {

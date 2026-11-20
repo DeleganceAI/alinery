@@ -173,6 +173,9 @@ function ChatViewBody({
   const canvas = useCanvas(canvasAllowed && selected ? selected.repo_path : "", selected?.session.id ?? "");
   const registry = useChatRegistry();
   useEffect(() => {
+    if (active) for (const thread of threads) registry.observeTurn(thread, railObservations[railKey(thread)]);
+  }, [registry, active, threads, railObservations]);
+  useEffect(() => {
     const take = () => {
       const focus = registry.takeFocus();
       if (focus) setSelectedKey(focus);
@@ -596,7 +599,7 @@ function ChatViewBody({
             />
           </div>
         ) : selected ? (
-          <ChatPane entries={transcript.entries} status={activity.status} visibility={visibility} atStart={transcript.fileStart === 0} />
+          <ChatPane entries={transcript.entries} status={activity.status} visibility={visibility} atStart={transcript.fileStart === 0} turnRetry={chat.turnRetry} />
         ) : (
           <div className="chat-blank">
             <MessageSquare size={28} aria-hidden="true" />

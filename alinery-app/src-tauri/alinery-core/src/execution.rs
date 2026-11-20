@@ -194,7 +194,7 @@ fn parse_execution_state(bytes: &[u8]) -> Result<TaskExecutionState, String> {
 }
 
 /// Saved progress this build cannot read, made readable. Two cases, both safe to fill in:
-/// - records from before `permission` was required lack it. `locked` grants nothing, so it cannot approve anything.
+/// - records from before `permission` was required inherit their step's saved automatic or locked setting.
 /// - the `version: 2` format of another branch (main), whose records carry a continuation mode instead. It is read
 ///   as version 1: the extra fields are carried along unread, and with no engine state the daemon shows the task's
 ///   runs as history only, so nothing is launched from records it does not understand.
@@ -208,9 +208,12 @@ fn repaired_execution_state(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
         value["version"] = serde_json::json!(1);
         changes += 1;
     }
+    let enabled: BTreeSet<String> = serde_json::from_value(value.get("enabled_steps")?.clone()).ok()?;
     for record in value.get_mut("executions")?.as_object_mut()?.values_mut().filter_map(|record| record.as_object_mut()) {
         if !record.contains_key("permission") {
-            record.insert("permission".into(), serde_json::json!({ "kind": "locked" }));
+            let step = record.get("candidate")?.get("step_key")?.as_str()?;
+            let kind = if enabled.contains(step) { "automatic" } else { "locked" };
+            record.insert("permission".into(), serde_json::json!({ "kind": kind }));
             changes += 1;
         }
     }

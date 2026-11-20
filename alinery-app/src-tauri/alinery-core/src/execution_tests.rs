@@ -172,8 +172,8 @@ fn a_state_the_daemon_wrote_reads_in_rust_and_a_rust_write_keeps_the_engine_bloc
 }
 
 #[test]
-fn repair_fills_a_missing_permission_keeps_the_original_and_reads_afterwards() {
-    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+fn repair_restores_an_enabled_steps_permission_keeps_the_original_and_reads_afterwards() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
     persist_owner_fixture(&mut f);
     let path = execution_state_path(&f.repo, "task").unwrap();
     let mut json: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -192,7 +192,7 @@ fn repair_fills_a_missing_permission_keeps_the_original_and_reads_afterwards() {
     assert_eq!(repair_execution_state(&f.repo, "task").unwrap(), 1);
 
     let state = read_execution_state(&f.repo, "task").unwrap();
-    assert_eq!(state.executions["e1"].permission, CompletionPermission::Locked);
+    assert_eq!(state.executions["e1"].permission, CompletionPermission::Automatic);
     let backups: Vec<_> = fs::read_dir(path.parent().unwrap())
         .unwrap()
         .flatten()

@@ -457,7 +457,7 @@ function FakeTaskDetail(props: Parameters<typeof TaskDetailComponent>[0]) {
       {sessionOpen &&
         props.renderSession(
           { taskSlug: task.slug, id: "detail-design", cwd: task.worktree, phase: "design", harness: "vinculum", model: "", playbook: "superdevelop", generic: false },
-          { onClose: () => setSessionOpen(false), onOpenPath: () => {} },
+          { active: true, onClose: () => setSessionOpen(false), onOpenPath: () => {}, onOpenSession: () => {} },
         )}
       <button type="button" onClick={props.onNewSession}>
         new task session

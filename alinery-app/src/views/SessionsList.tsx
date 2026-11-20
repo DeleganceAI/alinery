@@ -74,6 +74,7 @@ function observationGroup(item: SessionListItem, observation: SessionObservation
     case "unsupported":
       return "running";
     case "failed":
+    case "errored":
       return "failed";
     case "completed":
     case "ready_to_advance":

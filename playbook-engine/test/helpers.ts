@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Engine, type EngineOptions } from '../src/engine.ts';
 import type { Playbook, Step } from '../src/playbook.ts';
-import type { Harness } from '../src/harness.ts';
+import type { CompletionReply, Harness } from '../src/harness.ts';
 import { type State, stateFromJson, stateToJson } from '../src/state.ts';
 
 /** The stored State in a JSON file, the way a host keeps it. `saves` counts the writes. */
@@ -33,6 +33,8 @@ export function openEngine(playbook: Playbook, harness: Harness, dir = taskDir()
 
 /**
  * Tick until nothing is reserved, live or finishing for two ticks in a row.
+ * The fixture's human accepts ready endpoints so scheduling tests exercise a complete run.
+ * Tests of the review interaction itself drive tick and Continue separately.
  * Exit confirmation lands after a tick's scheduling pass, so a single quiet
  * tick can precede the reservation of a successor.
  */
@@ -42,6 +44,9 @@ export async function settle(engine: Engine, maxTicks = 200): Promise<void> {
     await engine.tick();
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
+    for (const e of engine.state.executions.values()) {
+      if (e.ready?.endpoint) assertAccepted(await engine.continueReviewed(e.id, e.sessionId!, e.ready.revision));
+    }
     const busy = [...engine.state.executions.values()].some((e) => e.status === 'reserved' || e.status === 'live' || e.status === 'finishing');
     quiet = busy ? 0 : quiet + 1;
     if (quiet === 2) return;
@@ -69,4 +74,8 @@ export function playbook(steps: Step[]): Playbook {
 
 export function byStep(engine: Engine, key: string) {
   return [...engine.state.executions.values()].filter((e) => e.step === key);
+}
+
+function assertAccepted(reply: CompletionReply): void {
+  if (reply.kind !== 'accepted') throw new Error(`expected endpoint acceptance, got ${JSON.stringify(reply)}`);
 }

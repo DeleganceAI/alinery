@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
-import { ArtifactTree, isDirectOwnedArtifactNode, treeArtifactImages } from "../ArtifactTree";
+import { ArtifactTree, artifactTabPath, isDirectOwnedArtifactNode, treeArtifactImages } from "../ArtifactTree";
 import { AttachmentPreview } from "../AttachmentPreview";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
@@ -39,14 +39,18 @@ import {
   emptyTranscript,
   NEXT_TURN_MODEL_TITLE,
   NEXT_TURN_THINKING_TITLE,
+  needsUiReply,
 } from "../chatTranscript";
-import { completionPrompt } from "../completionPrompt";
 import { confirmDanger } from "../confirm";
+import { lineageSessionIntent } from "../executionLineage";
+import { type SessionFollow, useFollowNextSessionControl } from "../FollowNextSession";
 import * as ipc from "../ipc";
 import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PaneResizer } from "../PaneResizer";
+import { ReviewedCompletion } from "../ReviewedCompletion";
 import { revealPath } from "../revealPath";
+import { SessionLineage } from "../SessionLineage";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
@@ -55,6 +59,7 @@ import {
   ContextActionBar,
   ExecutionAvailabilityNotice,
   ExecutionOutputs,
+  executionControlsAvailable,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   harnessDisplayName,
@@ -81,9 +86,9 @@ import {
 } from "../sync/artifacts";
 import { useBoardTask, useSessionDisplay } from "../sync/board";
 import { readChatImage } from "../sync/chat";
-import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
+import { useTaskExecution } from "../sync/execution";
 import { listWorktreeFilesForRepo } from "../sync/git";
-import { observationNow, useSessionObservation } from "../sync/sessionObservation";
+import { observationNow, sessionObservationKey, useSessionObservation, useSessionObservations } from "../sync/sessionObservation";
 import {
   abortSession,
   archiveSession,
@@ -107,10 +112,13 @@ import type {
   ReviewHandoffSource,
   SessionDisplayContext,
   SessionMessageActionProvenance,
+  SessionMeta,
   TaskExecutionReply,
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
+import { useTurnRetry } from "../useTurnRetry";
+import { useWrapUpNudge } from "../useWrapUpNudge";
 import { sessionIsRecoverable, sessionTerminalLabel } from "../vinculumHarness";
 import { FileView, richPreview } from "./CanvasFiles";
 import { ChatModelBar, ComposerStats } from "./ChatModelBar";
@@ -118,6 +126,7 @@ import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
 import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
 import { SessionActionPanel } from "./SessionActionPanel";
+import { StepContinuationMode } from "./StepContinuationMode";
 
 // ---- session view -------------------------------------------------------------
 
@@ -157,6 +166,9 @@ export function SessionView({
   onDiagramZoomOpenChange,
   onNameCommitted,
   embedded,
+  active = true,
+  follow,
+  onOpenSession,
   onOpenPath,
 }: {
   id: string;
@@ -183,6 +195,9 @@ export function SessionView({
   onNameCommitted?: (change: NameCommit) => void;
   /** A tab of the task view: the task supplies the artifact pane and the tab strip, so this view drops its own, and its Back. */
   embedded?: boolean;
+  active?: boolean;
+  follow?: SessionFollow;
+  onOpenSession?: (session: SessionMeta, intent: "history" | "attach") => void;
   /** Where an embedded view opens a path from the conversation: `artifact:<name>` or `repo:<path>`, in the task's tabs. */
   onOpenPath?: (target: string, keep?: boolean) => void;
 }) {
@@ -191,6 +206,8 @@ export function SessionView({
   const artifactItems = liveArtifacts.items;
   const artifactTree = liveArtifacts.tree;
   const artifactNames = artifactItems.map((a) => a.name);
+  const ownedPaths = useMemo(() => artifactItems.filter((item) => !item.attachment).map((item) => item.name), [artifactItems]);
+  const readablePaths = useMemo(() => ownedPaths.filter((path) => findOwnedArtifactNode(artifactTree, path)), [ownedPaths, artifactTree]);
   // The main pane's tabs: the conversation is pinned first, then each opened artifact; another session starts on the conversation.
   // `repo` marks a worktree file opened from a path in the conversation: read from the worktree, never commented on.
   const fileTabs = useOpenTabs<OpenTab & { node: ArtifactTreeNode | null; repo?: boolean }>(`${id}\0${taskSlug}`);
@@ -199,7 +216,7 @@ export function SessionView({
   const selectedIsRepo = fileTabs.current?.repo === true;
   const selectedPreviewable = !selectedIsRepo || /\.(md|markdown)$/i.test(selectedArtifact);
   const openArtifact = (name: string, node: ArtifactTreeNode | null) => {
-    fileTabs.open({ key: node?.id ?? name, name, node, mode: "preview" });
+    fileTabs.open({ key: node?.id ?? name, name: artifactTabPath(artifactTree, node, name), node, mode: "preview" });
     setArtifactErr("");
   };
   const selectedArtifactImages = useMemo(() => treeArtifactImages(artifactTree, selectedArtifactNode), [artifactTree, selectedArtifactNode]);
@@ -253,6 +270,15 @@ export function SessionView({
   const task = useBoardTask(taskSlug ? repoPath : undefined, taskSlug) ?? null;
   const parentTask = useBoardTask(taskSlug ? repoPath : undefined, task?.parent_task ?? "") ?? null;
   const live = useSessionDisplay(taskSlug ? repoPath : undefined, taskSlug, id);
+  const sessionRefs = useMemo(
+    () => (live.sessions ?? []).filter((s) => !s.archived && s.ended_at == null).map((s) => ({ repo_path: repoPath, task_slug: taskSlug, id: s.id })),
+    [live.sessions, repoPath, taskSlug],
+  );
+  const observedSessions = useSessionObservations(sessionRefs, active && live.sessionsCurrent);
+  const lineageObservations = useMemo(
+    () => Object.fromEntries(sessionRefs.map((r) => [r.id, observedSessions[sessionObservationKey(r.repo_path, r.task_slug, r.id)]])),
+    [sessionRefs, observedSessions],
+  );
   const display = useMemo<SessionDisplayContext | null>(
     () => (live.session ? { session: live.session, task_name: live.taskName, subtask_name: live.subtaskName } : null),
     [live.session, live.taskName, live.subtaskName],
@@ -279,12 +305,16 @@ export function SessionView({
   }, [repoPath, taskSlug, id]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [executionError, setExecutionError] = useState("");
-  const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only;
+  const executionAvailable = !executionError && executionControlsAvailable(executionView);
   const [completionBusy, setCompletionBusy] = useState(false);
-  const [dismissedCompletionId, setDismissedCompletionId] = useState("");
+  const [invalidatedReview, setInvalidatedReview] = useState("");
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
   const executionStep = executionView?.definition.step.find((step) => step.key === execution?.candidate.step_key);
-  const completionAvailable = executionAvailable && execution?.owner_session_id === id && execution.lifecycle === "running";
+  const review =
+    execution?.owner_session_id === id && execution.lifecycle === "running" && !execution.receipt_id && !executionView?.state.history_only ? execution.ready : undefined;
+  const reviewKey = review ? JSON.stringify([repoPath, taskSlug, id, execution?.id, review.revision]) : "";
+  const reviewCurrent = Boolean(review && reviewKey !== invalidatedReview);
+  const finishingStep = Boolean(execution?.owner_session_id === id && execution.lifecycle === "finishing" && execution.receipt_id);
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalStatus, setApprovalStatus] = useState("");
   const hasTask = Boolean(taskSlug);
@@ -296,6 +326,7 @@ export function SessionView({
   const [messageInterrupting, setMessageInterrupting] = useState(false);
   const [messageError, setMessageError] = useState("");
   const [chat, setChat] = useState<ChatTranscriptState>(emptyTranscript);
+  const [historyError, setHistoryError] = useState("");
   const [modelDialog, setModelDialog] = useState<{ tab: ProvidersDialogTab; preselect: string; setup?: boolean } | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const providerAccess = useProviderAccess(isVinculumHarness(harness));
@@ -304,7 +335,6 @@ export function SessionView({
   const [hostedLoaded, setHostedLoaded] = useState(false);
   const [grokReady, setGrokReady] = useState(false);
   const vinculumStartRef = useRef<string | null>(null);
-  const handledUiRef = useRef(new Set<string>());
   const setupOpenedRef = useRef(false);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const archivePending = useRef(false);
@@ -477,7 +507,6 @@ export function SessionView({
     setModelError(null);
     setModelRoles({});
     vinculumStartRef.current = null;
-    handledUiRef.current.clear();
     setupOpenedRef.current = false;
   }, [id, taskSlug, repoPath, intent]);
 
@@ -763,7 +792,7 @@ export function SessionView({
   const sendCurrentMessage = async (text?: string) => {
     const caption = (text ?? messageDraftRef.current.body).trim();
     const attachments = messageDraftRef.current.attachments ?? [];
-    if (messageSending || (caption.length === 0 && attachments.length === 0)) return;
+    if (finishingStep || messageSending || (caption.length === 0 && attachments.length === 0)) return;
     if (caption.startsWith("/") && attachments.length > 0) {
       toast.error("Remove attachments or clear the slash command");
       return;
@@ -785,6 +814,7 @@ export function SessionView({
       if (transport === "rpc") {
         const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
         await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
+        if (reviewKey) setInvalidatedReview(reviewKey);
         const next = appendOptimisticUser(chatRef.current, caption, busy ? "follow_up" : "prompt");
         chatRef.current = next;
         setChat(next);
@@ -808,7 +838,7 @@ export function SessionView({
   const sendNow = async () => {
     const caption = messageDraftRef.current.body.trim();
     const attachments = messageDraftRef.current.attachments ?? [];
-    if (messageSending || (caption.length === 0 && attachments.length === 0)) return;
+    if (finishingStep || messageSending || (caption.length === 0 && attachments.length === 0)) return;
     if (observation?.transport !== "rpc") {
       setMessageError("The session is still connecting.");
       return;
@@ -819,6 +849,7 @@ export function SessionView({
       const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
       await abortSession(repoPath, id);
       await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
+      if (reviewKey) setInvalidatedReview(reviewKey);
       const rowAttachments = draftToRowAttachments(attachments);
       updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
       const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
@@ -924,14 +955,12 @@ export function SessionView({
     });
   }, [showChat, termIntent, observation?.transport, id, taskSlug, repoPath, cwd, resumeToken]);
 
-  // The journal owns committed history. It is read straight off disk, so it works for a dead
-  // session with no daemon, it survives a busy Vinculum that refuses RPC history, and it still holds
-  // the turns compaction dropped from Vinculum's context.
+  // Older sessions have a paged journal instead of a Pi database.
   const loadVinculumPage = useCallback(
-    async (position: "initial" | "older", end?: number) => {
+    async (position: "initial" | "older", end?: number, signal?: AbortSignal) => {
       const buffer = await readSessionVinculum(repoPath, { id, taskSlug: taskSlug || null, end: end ?? null });
       const page = decodeVinculumPage(buffer);
-      setChat((current) => applyFilePage(current, page, position));
+      if (!signal?.aborted) setChat((current) => applyFilePage(current, page, position));
       return page;
     },
     [id, taskSlug, repoPath],
@@ -952,17 +981,36 @@ export function SessionView({
       });
   }, [loadVinculumPage]);
 
+  const readingHistory = navHistory || (showPanel && showHistory);
   useEffect(() => {
-    if (!vinculum || !showChat) return;
-    return watchSessionTranscript(repoPath, { taskSlug, id }, (reply) => {
-      setChat(() => {
-        const next = applyVinculumTranscript(reply);
-        chatRef.current = next;
-        return next;
-      });
-      setTerminalConnection("open");
-    });
-  }, [vinculum, showChat, repoPath, taskSlug, id]);
+    if (!vinculum || (!showChat && !readingHistory)) return;
+    setHistoryError("");
+    return watchSessionTranscript(
+      repoPath,
+      { taskSlug, id },
+      (reply) => {
+        setChat(() => {
+          const next = applyVinculumTranscript(reply);
+          chatRef.current = next;
+          return next;
+        });
+        setTerminalConnection("open");
+      },
+      undefined,
+      readingHistory
+        ? {
+            onMissing: async (signal) => {
+              try {
+                await loadVinculumPage("initial", undefined, signal);
+              } catch (error) {
+                if (!signal.aborted) setHistoryError(String(error));
+              }
+            },
+            onError: (error) => setHistoryError(error.message),
+          }
+        : undefined,
+    );
+  }, [vinculum, showChat, readingHistory, repoPath, taskSlug, id, loadVinculumPage]);
   useEffect(() => {
     let cancelled = false;
     void ipc
@@ -1044,26 +1092,7 @@ export function SessionView({
     }
   };
 
-  const completionCopy = useMemo(() => completionPrompt(executionView?.definition, execution), [executionView?.definition, execution]);
-  // Vinculum has no extension confirm card. The locked execution itself is the request.
-  const vinculumCompletionRequestId =
-    vinculum && completionAvailable && execution?.permission.kind === "locked" && dismissedCompletionId !== `vinculum-completion:${execution.id}`
-      ? `vinculum-completion:${execution.id}`
-      : "";
   const chatVisibility = useMemo(() => chatVisibilityFromAppearance(appearance), [appearance]);
-  const chatEntries = useMemo(() => {
-    const entries = [...chat.entries];
-    if (!vinculumCompletionRequestId) return entries;
-    entries.push({
-      id: vinculumCompletionRequestId,
-      type: "approval",
-      requestId: vinculumCompletionRequestId,
-      actor: { kind: "system", name: "Alinery" },
-      ...completionCopy,
-      disabled: navHistory || completionBusy,
-    });
-    return entries;
-  }, [chat.entries, completionCopy, navHistory, completionBusy, vinculumCompletionRequestId]);
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
@@ -1071,6 +1100,41 @@ export function SessionView({
   });
   const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting ? "waiting_approval" : turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;
+  const ownsRunningExecution = executionAvailable && execution?.owner_session_id === id && execution.lifecycle === "running" && !execution.receipt_id;
+  const sessionActionAvailable =
+    showChat &&
+    terminalConnection === "open" &&
+    (!hasTask || live.sessionsCurrent) &&
+    !messageSending &&
+    !messageInterrupting &&
+    !chat.sessionMeta.isCompacting &&
+    !completionBusy &&
+    !archiveBusy &&
+    !live.session?.archived &&
+    live.session?.ended_at == null &&
+    !task?.archived;
+  const retryableExecution = execution ? ownsRunningExecution : !hasTask || (live.session != null && !live.session.execution_id);
+  const turnRetry = useTurnRetry(repoPath, id, observation, sessionActionAvailable && retryableExecution && !turnActive);
+  const runId = observedState?.agent.state === "busy" ? observedState.agent.correlation_id : undefined;
+  const showNudge = Boolean(
+    runId && ownsRunningExecution && !execution?.ready && rpcProcessLive && !observation?.stale && !chat.pendingUi.some((request) => needsUiReply(request.method)),
+  );
+  const nudge = useWrapUpNudge(repoPath, taskSlug, execution?.id ?? "", id, observation, showNudge && sessionActionAvailable, chat.entries);
+  const deliveryNotice = nudge.error && (
+    <InlineStatus
+      tone={nudge.unconfirmed ? "warning" : "error"}
+      action={
+        nudge.unconfirmed &&
+        !readingHistory && (
+          <button type="button" className="btn small" onClick={nudge.send} disabled={nudge.pending || terminalConnection !== "open" || observation?.stale}>
+            Check delivery
+          </button>
+        )
+      }
+    >
+      {nudge.unconfirmed ? nudge.error : `Couldn’t send the wrap-up nudge. ${nudge.error}`}
+    </InlineStatus>
+  );
   const composerCanAbort = canAbortChatSession(messageReadiness);
   const sendNowEnabled =
     turnActive &&
@@ -1079,6 +1143,16 @@ export function SessionView({
     !chat.sessionMeta.isCompacting &&
     (messageDraft.body.trim().length > 0 || (messageDraft.attachments?.length ?? 0) > 0);
   const queuedMeta = chat.sessionMeta.queuedMessageCount ?? 0;
+  const canShowReview =
+    reviewCurrent &&
+    !turnActive &&
+    !messageSending &&
+    !messageInterrupting &&
+    !turnRetry?.pending &&
+    !chat.sessionMeta.isCompacting &&
+    queuedMeta === 0 &&
+    !chat.pendingUi.some((request) => needsUiReply(request.method));
+  const readyEndpoint = canShowReview && review?.endpoint && executionAvailable && rpcProcessLive;
   const chatMetaHead = chat.sessionMeta.model || model;
   const applyControls = (controls: Parameters<typeof applySessionControls>[1]) =>
     setChat((current) => {
@@ -1116,40 +1190,6 @@ export function SessionView({
       {sessionStats}
     </div>
   ) : null;
-
-  const approveChat = async (requestId: string, allow: boolean) => {
-    // The row stays mounted across the await, so without this a double-click sends two responses.
-    if (handledUiRef.current.has(requestId)) return;
-    handledUiRef.current.add(requestId);
-    if (vinculumCompletionRequestId && requestId === vinculumCompletionRequestId) {
-      if (!allow) {
-        setDismissedCompletionId(requestId);
-        handledUiRef.current.delete(requestId);
-        return;
-      }
-      if (!execution || !completionAvailable || completionBusy) {
-        handledUiRef.current.delete(requestId);
-        return;
-      }
-      setCompletionBusy(true);
-      try {
-        await allowExecutionCompletion(repoPath, taskSlug, execution.id, executionView?.revision);
-        setExecutionError("");
-      } catch (error) {
-        setExecutionError(String(error));
-      } finally {
-        handledUiRef.current.delete(requestId);
-        setCompletionBusy(false);
-      }
-      return;
-    }
-  };
-  // approveChat is rebuilt every render, so a useCallback keyed on it would be no more stable
-  // than the arrow it replaces. The ref keeps one identity for the life of the component while
-  // always calling the current closure — which is what lets memo on ChatPane actually hold.
-  const approveChatRef = useRef(approveChat);
-  approveChatRef.current = approveChat;
-  const onApproveChat = useCallback((requestId: string, allow: boolean) => void approveChatRef.current(requestId, allow), []);
 
   const applyChatModel = async (provider: string, modelId: string) => {
     setModelError(null);
@@ -1201,6 +1241,26 @@ export function SessionView({
     }
   };
   const finalizedNotice = task ? finalizedSubtaskNotice(task, parentTask) : "";
+  const lineageView = executionFeed.reply;
+  const lineageExecutions = Object.values(lineageView?.state.executions ?? {});
+  const lineageExecution = lineageExecutions.find((e) => e.owner_session_id === id || e.previous_session_ids.includes(id));
+  const navigateSession = (s: SessionMeta) => onOpenSession?.(s, lineageSessionIntent(lineageView?.state, s));
+  const followControl = useFollowNextSessionControl({
+    follow,
+    scope: JSON.stringify([repoPath, taskSlug]),
+    sessionId: id,
+    active: hasTask && active && !fileTabs.current,
+    readingHistory,
+    state: lineageView?.live?.status === "available" && live.sessionsCurrent && !task?.archived ? lineageView.state : undefined,
+    sessions: live.sessions ?? [],
+    onOpenSession: onOpenSession && navigateSession,
+  });
+  const continuationControls =
+    showChatComposer && !readingHistory && vinculum && ownsRunningExecution && executionView && execution && !execution.ready?.endpoint ? (
+      <StepContinuationMode key={execution.id} repo={repoPath} slug={taskSlug} execution={execution} view={executionView}>
+        {followControl}
+      </StepContinuationMode>
+    ) : null;
   const awaitingName = display != null && awaitingSessionName({ ...display.session, harness: display.session.harness || harness }, observation);
 
   return (
@@ -1260,7 +1320,7 @@ export function SessionView({
         <CopyTextButton text={cwd} label="worktree path" />
       </div>
       {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
-      {executionView && <ExecutionAvailabilityNotice live={executionView.live} controls />}
+      {executionView && <ExecutionAvailabilityNotice view={executionView} />}
       {hasTask && !navHistory && effectiveLifecycle?.state === "never_started" && (
         <div className="session-execution">
           <p>{execution?.start_requested ? "Start requested; waiting for the daemon to acquire capacity." : "This session is queued. Opening it does not start it."}</p>
@@ -1288,7 +1348,7 @@ export function SessionView({
       )}
       {executionError && (
         <InlineStatus tone="warning" detail={executionError}>
-          Execution state unavailable; queued starts and completion grants are disabled.
+          Execution state unavailable. Queued starts and reviewed completion are disabled.
         </InlineStatus>
       )}
       <div
@@ -1442,7 +1502,9 @@ export function SessionView({
         )}
         <PathLinksContext.Provider value={pathLinks}>
           <main className="session-main">
-            {!embedded && <MainTabs pinned="Agent conversation" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.select} onClose={fileTabs.close} />}
+            {(!embedded || (!onOpenPath && fileTabs.tabs.length > 0)) && (
+              <MainTabs pinned="Agent conversation" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.select} onClose={fileTabs.close} />
+            )}
             <div className="session-main-body">
               {fileTabs.current && (
                 <div className="artifactpane task-artifact-view session-artifact-view">
@@ -1562,6 +1624,11 @@ export function SessionView({
                 </div>
               )}
               <div className="termhost" ref={termhostRef} hidden={Boolean(fileTabs.current)}>
+                {readingHistory && historyError && (
+                  <InlineStatus tone="error" detail={historyError}>
+                    Couldn't read session history.
+                  </InlineStatus>
+                )}
                 {vinculumCoding && Boolean(termIntent) && !liveRpc && !livePty && (
                   <div className="session-view-loading" role="status" aria-live="polite">
                     <LoadingState label="Opening session…" state="connecting" />
@@ -1573,31 +1640,16 @@ export function SessionView({
                   chat onto the PTY terminal and a `.scrollback` an RPC session never wrote. The
                   journal does not need the session to be alive. */}
                     {liveRpc || vinculum ? (
-                      <>
-                        <ChatPane
-                          entries={chatEntries}
-                          status={chatStatus}
-                          visibility={chatVisibility}
-                          onApprove={onApproveChat}
-                          onLoadOlder={loadOlder}
-                          loadingOlder={loadingOlder}
-                          atStart={chat.fileStart === 0}
-                        />
-                        {/* The history view is the live pane with the input switched off, so a finished
-                      session reads the same way as a running one. */}
-                        {liveRpc ? null : (
-                          <ChatComposer
-                            body=""
-                            status="idle"
-                            catalog={[]}
-                            showHints={false}
-                            readOnly
-                            onBodyChange={() => undefined}
-                            onSend={() => undefined}
-                            onAbort={() => undefined}
-                          />
-                        )}
-                      </>
+                      <ChatPane
+                        entries={chat.entries}
+                        deliveryNotice={deliveryNotice}
+                        wrapUpPrompt={nudge.prompt}
+                        status={chatStatus}
+                        visibility={chatVisibility}
+                        onLoadOlder={loadOlder}
+                        loadingOlder={loadingOlder}
+                        atStart={chat.fileStart === 0}
+                      />
                     ) : (
                       <SessionTerminal
                         sessionId={id}
@@ -1620,10 +1672,13 @@ export function SessionView({
                         {sessionControls && !showChatComposer ? <div className="chat-meta">{sessionControls}</div> : null}
                         <div className="terminal-frame">
                           <ChatPane
-                            entries={chatEntries}
+                            entries={chat.entries}
+                            deliveryNotice={deliveryNotice}
+                            wrapUpPrompt={nudge.prompt}
                             status={chatStatus}
+                            turnRetry={turnRetry}
+                            stepActivity={finishingStep ? "Finishing step…" : readyEndpoint && agentState !== "errored" ? "Ready for review" : undefined}
                             visibility={chatVisibility}
-                            onApprove={onApproveChat}
                             onLoadOlder={loadOlder}
                             loadingOlder={loadingOlder}
                             atStart={chat.fileStart === 0}
@@ -1632,12 +1687,35 @@ export function SessionView({
                         {showChatComposer ? (
                           <>
                             <ChatComposer
+                              besideSend={
+                                showNudge ? (
+                                  <button
+                                    type="button"
+                                    className="btn ghost small"
+                                    title="Ask the agent to finish this step during the current turn"
+                                    disabled={!sessionActionAvailable || nudge.pending || nudge.sent || nudge.unconfirmed}
+                                    onClick={nudge.send}
+                                  >
+                                    {nudge.sent ? "Nudge sent" : nudge.pending ? "Sending nudge…" : "Nudge to wrap up"}
+                                  </button>
+                                ) : canShowReview && review && !review.endpoint && execution && executionView ? (
+                                  <ReviewedCompletion
+                                    repo={repoPath}
+                                    slug={taskSlug}
+                                    execution={execution}
+                                    steps={executionView.definition.step}
+                                    disabled={!executionAvailable || !rpcProcessLive || completionBusy || Boolean(messageDraft.body || messageDraft.attachments?.length)}
+                                  />
+                                ) : undefined
+                              }
                               actions={chatVisibility.showMeta ? sessionStats : undefined}
                               center={chatVisibility.showMeta ? modelBar : undefined}
+                              end={continuationControls}
                               body={messageDraft.body}
                               status={chatStatus}
                               catalog={chat.commands}
                               sending={messageSending}
+                              readOnly={finishingStep}
                               showHints={false}
                               attachments={messageDraft.attachments ?? []}
                               dropping={dropping}
@@ -1709,7 +1787,10 @@ export function SessionView({
                       onStartFresh={leftover ? () => undefined : onStartFresh}
                       onArchive={handleArchive}
                       archiveBusy={archiveBusy}
-                      onViewHistory={() => setShowHistory(true)}
+                      onViewHistory={() => {
+                        follow?.pause();
+                        setShowHistory(true);
+                      }}
                       onKilled={() => setReclassifyTick((n) => n + 1)}
                       onRecover={canRecoverSession ? () => void recoverSession() : undefined}
                       recoverBusy={completionBusy}
@@ -1719,21 +1800,13 @@ export function SessionView({
                         <div className="terminal-frame">
                           <ChatPane
                             entries={chat.entries}
+                            deliveryNotice={deliveryNotice}
+                            wrapUpPrompt={nudge.prompt}
                             status="idle"
                             visibility={chatVisibility}
                             onLoadOlder={loadOlder}
                             loadingOlder={loadingOlder}
                             atStart={chat.fileStart === 0}
-                          />
-                          <ChatComposer
-                            body=""
-                            status="idle"
-                            catalog={[]}
-                            showHints={false}
-                            readOnly
-                            onBodyChange={() => undefined}
-                            onSend={() => undefined}
-                            onAbort={() => undefined}
                           />
                         </div>
                       ) : (
@@ -1752,6 +1825,9 @@ export function SessionView({
                         </div>
                       ))}
                   </>
+                )}
+                {readingHistory && vinculum && (!navHistory || !liveRpc) && (
+                  <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
                 )}
                 {modelDialog && (
                   <ChatModelDialog
@@ -1808,6 +1884,36 @@ export function SessionView({
                 )}
               </div>
             </div>
+            {hasTask && active && (
+              <SessionLineage
+                id={id}
+                name={display?.session.name ?? ""}
+                phase={lineageView?.definition.step.find((s) => s.key === lineageExecution?.candidate.step_key)?.title ?? phase}
+                sessions={live.sessions ?? []}
+                executionView={lineageView ?? null}
+                observations={lineageObservations}
+                error={executionFeed.error}
+                artifactPaths={ownedPaths}
+                readableArtifactPaths={readablePaths}
+                followControl={continuationControls ? null : followControl}
+                viewingFile={Boolean(fileTabs.current)}
+                selectedFile={fileTabs.current && { path: selectedArtifactImages?.artifactPath || selectedArtifact, isTaskArtifact: selectedArtifactIsDirect }}
+                onOpenSession={
+                  onOpenSession &&
+                  ((s) => {
+                    follow?.pause();
+                    if (s.id === id && fileTabs.current) fileTabs.select("");
+                    else navigateSession(s);
+                  })
+                }
+                onOpenArtifact={(path) => {
+                  const node = findOwnedArtifactNode(artifactTree, path);
+                  if (!node) return;
+                  if (onOpenPath) onOpenPath(`artifact:${path}`);
+                  else openArtifact(path, node);
+                }}
+              />
+            )}
           </main>
         </PathLinksContext.Provider>
       </div>

@@ -1,19 +1,24 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { chatMaxWidthCss } from "../appearance";
 import { formatDuration } from "../chat/format";
-import { type JournalItem, journalItems } from "../chat/journalRows";
+import { type JournalItem, journalItems, nudgeInsertionIndex } from "../chat/journalRows";
 import { collectLiveSubagents } from "../chat/subagents";
-import type { ChatEntry, SessionChatStatus } from "../chat/types";
+import { ACTOR, type ChatEntry, type SessionChatStatus, type WrapUpPrompt } from "../chat/types";
 import { type ChatPrefs, chatActivityLabel, DEFAULT_CHAT_VISIBILITY, isChatEntryVisible, visibleChatEntries, workRailDefaultExpanded } from "../chat/visibility";
-import { RunningIndicator } from "../Indicators";
+import { IdleDot, RunningIndicator } from "../Indicators";
+import type { TurnRetryControl } from "../useTurnRetry";
 import { ChatEntryRow } from "./ChatEntryRow";
 import { ChatWorkStrip } from "./ChatWorkStrip";
 import { SubagentDrawer } from "./SubagentDrawer";
 
 function ChatPaneImpl({
-  entries,
+  entries: transcript,
   status = "idle",
+  stepActivity,
   onApprove,
+  turnRetry,
+  wrapUpPrompt,
+  deliveryNotice,
   visibility = DEFAULT_CHAT_VISIBILITY,
   onLoadOlder,
   loadingOlder = false,
@@ -21,7 +26,11 @@ function ChatPaneImpl({
 }: {
   entries: ChatEntry[];
   status?: SessionChatStatus;
+  stepActivity?: "Ready for review" | "Finishing step…";
   onApprove?: (id: string, allow: boolean) => void;
+  turnRetry?: TurnRetryControl;
+  wrapUpPrompt?: WrapUpPrompt;
+  deliveryNotice?: ReactNode;
   visibility?: ChatPrefs;
   /** Ask the owner for the page of journal rows before the ones currently loaded. */
   onLoadOlder?: () => void;
@@ -32,8 +41,31 @@ function ChatPaneImpl({
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(visibility.autoScroll);
   const anchor = useRef<{ id: string; top: number } | null>(null);
+  const failedEntryId = turnRetry?.failedEntryId;
+  const reason = turnRetry?.reason;
+  const entries = useMemo<ChatEntry[]>(() => {
+    let rows = transcript;
+    if (wrapUpPrompt && !transcript.some((entry) => entry.type === "prompt" && entry.nudgeDeliveryId === wrapUpPrompt.deliveryId)) {
+      const { deliveryId, at, text, status } = wrapUpPrompt;
+      rows = transcript.slice();
+      rows.splice(nudgeInsertionIndex(transcript, wrapUpPrompt), 0, {
+        type: "prompt",
+        id: deliveryId,
+        actor: ACTOR.you,
+        at,
+        text,
+        nudgeDeliveryId: deliveryId,
+        nudgeStatus: status,
+      });
+    }
+    // The observation and transcript arrive on separate streams. Use the same row key on either arrival order.
+    if (failedEntryId && reason && !transcript.some((entry) => entry.type === "error" && entry.failedEntryId === failedEntryId)) {
+      rows = [...rows, { type: "error", id: `f:${failedEntryId}:error`, actor: ACTOR.agent, text: reason, failedEntryId }];
+    }
+    return rows;
+  }, [transcript, wrapUpPrompt, failedEntryId, reason]);
   const shown = useMemo(() => visibleChatEntries(entries, visibility), [entries, visibility]);
-  const activity = chatActivityLabel(status, shown);
+  const activity = chatActivityLabel(status, shown) ?? stepActivity;
   const items = useMemo(() => journalItems(entries, status !== "idle", (entry) => isChatEntryVisible(entry, visibility)), [entries, status, visibility]);
   const stepOpen = useCallback((entry: ChatEntry) => workRailDefaultExpanded(entry, visibility), [visibility]);
 
@@ -49,7 +81,7 @@ function ChatPaneImpl({
 
   useEffect(() => {
     scrollToEnd();
-  }, [shown, activity, scrollToEnd]);
+  }, [shown, activity, deliveryNotice, scrollToEnd]);
 
   const requestOlder = useCallback(() => {
     const el = scroller.current;
@@ -134,6 +166,7 @@ function ChatPaneImpl({
               ) : (
                 <ChatEntryRow
                   entry={item.entry}
+                  turnRetry={item.entry.type === "error" && item.entry.failedEntryId === failedEntryId ? turnRetry : undefined}
                   onApprove={onApprove}
                   narration={item.role === "narration"}
                   showDate={visibility.showDate}
@@ -145,11 +178,16 @@ function ChatPaneImpl({
               )}
             </li>
           ))}
+          {deliveryNotice ? (
+            <li className="chat-journal-item" data-node="error">
+              {deliveryNotice}
+            </li>
+          ) : null}
         </ol>
       </div>
       {activity ? (
         <div className="chat-activity" role="status" data-testid="chat-activity" aria-live="polite">
-          <RunningIndicator running={status === "running"} />
+          {status === "running" ? <RunningIndicator /> : <IdleDot />}
           <span>{activity}</span>
         </div>
       ) : null}

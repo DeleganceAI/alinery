@@ -47,7 +47,7 @@ fi
 if [ "$FORCE" = 0 ] && [ -f "$DEST" ]; then
   # Recursive: most of the daemon is under src/domain, src/rpc and src/sync, and it bundles playbook-engine.
   # The app's package.json too: the daemon embeds its version (main.ts), and a release must not ship the last one's.
-  if [ -z "$(find "$PIN_FILE" "$PKG/package.json" "$PKG/bun.lock" "$ROOT/alinery-app/package.json" "$PKG/src" "$ROOT/playbook-engine/src" "$ROOT/proto/gen" -type f -newer "$DEST" -print -quit)" ]; then
+  if [ -z "$(find "$PIN_FILE" "$PKG/package.json" "$PKG/bun.lock" "$PKG/patches" "$ROOT/alinery-app/package.json" "$ROOT/alinery-app/shared" "$PKG/src" "$ROOT/playbook-engine/src" "$ROOT/proto/gen" -type f -newer "$DEST" -print -quit)" ]; then
     echo "alinery-vinculum-daemon: $DEST (up to date)"
     exit 0
   fi

@@ -4,9 +4,9 @@ import { fileURLToPath } from "node:url";
 import { fireEvent, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { ACTOR, type ChatEntry, subagent } from "../chat/types";
+import { ACTOR, type ChatEntry, subagent, type WrapUpPrompt } from "../chat/types";
 import { chatVisibilityFromAppearance, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
-import { applyRpcLine, emptyTranscript } from "../chatTranscript";
+import { applyRpcLine, applyVinculumTranscript, emptyTranscript } from "../chatTranscript";
 import { stubScrollSize } from "../test/scroll";
 import { ChatPane } from "./ChatPane";
 
@@ -17,6 +17,65 @@ function pane(entries: ChatEntry[], visibility = DEFAULT_CHAT_VISIBILITY, status
 }
 
 describe("ChatPane", () => {
+  it("shows a wrap-up prompt immediately and reconciles the same bubble by delivery ID within the active turn", () => {
+    const text = "Please wrap up this step.";
+    const nudge: WrapUpPrompt = { deliveryId: "receipt-1", text, at, status: "sending" };
+    const messages = [
+      { id: "u1", role: "user", text, at },
+      { id: "a1", role: "assistant", text: "Checking the result.", at },
+    ];
+    const entries = applyVinculumTranscript(messages).entries;
+    const placed = applyVinculumTranscript([
+      ...messages,
+      { id: "a2", role: "assistant", text: "The check finished.", at: at + 1_000 },
+      { id: "u2", role: "user", nudgeDeliveryId: nudge.deliveryId, text, at: at + 2_000 },
+    ]).entries;
+    const view = render(<ChatPane status="running" entries={entries} wrapUpPrompt={nudge} />);
+    const row = view.getByText("Wrap-up nudge").closest("li");
+    expect(row?.dataset.node).toBe("you");
+    expect(row?.textContent).toContain(text);
+    expect(row?.textContent).toContain("Sending…");
+    expect(view.getAllByText(text)).toHaveLength(2); // An ordinary message with identical text is independent.
+    expect(view.container.querySelector(".chat-turn-end")).toBeNull();
+
+    view.rerender(<ChatPane status="running" entries={entries} wrapUpPrompt={{ ...nudge, status: "pending" }} />);
+    expect(view.getByText("Sent").closest("li")).toBe(row);
+
+    // The authoritative stream can arrive before the RPC reply, even a late refusal.
+    for (const status of ["sending", "failed", "pending", "ended"] as const) {
+      view.rerender(<ChatPane status="running" entries={placed} wrapUpPrompt={{ ...nudge, status }} />);
+      expect(view.getByText("Wrap-up nudge").closest("li")).toBe(row);
+      expect(row?.previousElementSibling).toBe(view.getByText("The check finished.").closest("li"));
+      expect(row?.querySelector(".chat-status")).toBeNull();
+      expect(view.getAllByText(text)).toHaveLength(2);
+      expect(view.container.querySelector(".chat-turn-end")).toBeNull();
+    }
+    view.rerender(<ChatPane status="idle" entries={placed} />);
+    expect(view.getByText("Wrap-up nudge").closest("li")).toBe(row);
+    expect(view.container.querySelectorAll(".chat-turn-end")).toHaveLength(1);
+    view.unmount();
+  });
+
+  it("keeps a nudge at its send time when its original prompt is unavailable", () => {
+    const entries = applyVinculumTranscript([
+      { id: "u1", role: "user", text: "Research terminal input.", at },
+      { id: "a1", role: "assistant", text: "Checking arrow keys.", at },
+    ]).entries;
+    const nudge: WrapUpPrompt = { deliveryId: "receipt-1", text: "Please wrap up.", at: at + 1_000, status: "pending" };
+    const view = render(<ChatPane status="running" entries={entries} wrapUpPrompt={nudge} />);
+    const original = view.getByText("Sent").closest("li");
+    const next = applyVinculumTranscript([
+      { id: "u2", role: "user", text: "Keep going.", at: at + 2_000 },
+      { id: "a2", role: "assistant", text: "Continuing the investigation.", at: at + 3_000 },
+    ]).entries;
+    view.rerender(<ChatPane status="running" entries={[...entries, ...next]} wrapUpPrompt={{ ...nudge, status: "ended" }} />);
+
+    expect(view.getByText("Turn ended · delivery unconfirmed").closest("li")).toBe(original);
+    const rows = [...view.container.querySelectorAll<HTMLElement>(".chat-journal-item")];
+    expect(rows.map((row) => row.dataset.entryId ?? row.dataset.node)).toEqual([entries[0].id, entries[1].id, original?.dataset.entryId, "turn", next[0].id, next[1].id]);
+    view.unmount();
+  });
+
   it("updates block copy controls on existing replies without hiding whole-message copying", () => {
     const entries: ChatEntry[] = [{ id: "copy", at, actor: ACTOR.agent, type: "text", text: "```sh\nsudo ls\n```\n\n> Quoted advice" }];
     const view = render(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({})} />);
@@ -218,6 +277,17 @@ describe("ChatPane", () => {
     const html = pane([{ id: "1", at, actor: ACTOR.agent, type: "thinking", text: "plan", streaming: true }], { ...DEFAULT_CHAT_VISIBILITY, showThinking: true }, "running");
     expect(html).toContain('data-testid="chat-activity"');
     expect(html).toContain("Thinking…");
+  });
+
+  it("switches from a static review marker to the activity orb when the agent starts working again", () => {
+    const view = render(<ChatPane entries={[]} status="idle" stepActivity="Ready for review" />);
+    const strip = view.getByTestId("chat-activity");
+    expect(strip.textContent).toBe("Ready for review");
+    expect(strip.querySelector(".ind-dot")).toBeTruthy();
+    expect(strip.querySelector(".ind-orb")).toBeNull();
+    view.rerender(<ChatPane entries={[]} status="running" stepActivity="Ready for review" />);
+    expect(strip.textContent).toBe("Working…");
+    expect(strip.querySelector(".ind-orb")).toBeTruthy();
   });
 
   it("hides journal stamps when date and time prefs are off", () => {

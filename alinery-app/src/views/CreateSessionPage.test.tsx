@@ -2,6 +2,7 @@ import { File as NodeFile } from "node:buffer";
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeBoard } from "../test/boardHooks";
+import { fakeExecution } from "../test/executionFeed";
 import { mockIpc } from "../test/mockIpc";
 import type { BoardTask, TaskExecutionReply } from "../types";
 import { CreateSessionPage } from "./CreateSessionPage";
@@ -54,7 +55,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
-  vi.useRealTimers();
 });
 
 function renderPage(onCreated = vi.fn(async () => {})) {
@@ -165,7 +165,6 @@ describe("retained execution session selection", () => {
   });
 
   it("enables launch after automatic project adoption without discarding drafted instructions or assuming child shutdown", async () => {
-    vi.useFakeTimers();
     const retained = executionReply([executionRecord({ lifecycle: "interrupted" })]);
     retained.live = { status: "offline", detail: "Previous owner cannot be queried" };
     mocks.getTaskExecution.mockResolvedValue(retained);
@@ -175,15 +174,58 @@ describe("retained execution session selection", () => {
     fireEvent.change(screen.getByLabelText("Additional instructions"), { target: { value: "Keep my draft" } });
 
     mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ lifecycle: "interrupted" })]));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
+    await act(async () => fakeExecution.refresh());
 
     expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByRole("option", { name: /Recover.*execution-a/ })).toBeNull();
     expect((screen.getByLabelText("Additional instructions") as HTMLTextAreaElement).value).toBe("Keep my draft");
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "vinculum", "", "Keep my draft");
+  });
+
+  it("disables launch on a live refusal and restores it after repair with the same selection and draft", async () => {
+    const created = renderPage();
+    await screen.findByRole("option", { name: /Start queued/ });
+    choose("auxiliary");
+    const instructions = screen.getByLabelText<HTMLTextAreaElement>("Additional instructions");
+    fireEvent.change(instructions, { target: { value: "Keep this instruction" } });
+    const launch = screen.getByRole<HTMLButtonElement>("button", { name: "Launch" });
+
+    const refused = executionReply([]);
+    refused.state.engine_unavailable = "Retained playbook is missing";
+    refused.definition.step = [];
+    mocks.getTaskExecution.mockResolvedValue(refused);
+    await act(async () => fakeExecution.refresh());
+    expect(screen.getByText(/Retained playbook is missing/)).toBeDefined();
+    expect(screen.queryByText("Retained playbook instructions")).toBeNull();
+    expect(screen.queryByText(/No eligible executions/)).toBeNull();
+    expect(launch.disabled).toBe(true);
+    fireEvent.keyDown(instructions, { key: "Enter", ctrlKey: true });
+    expect(created).not.toHaveBeenCalled();
+
+    mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ lifecycle: "queued" })]));
+    await act(async () => fakeExecution.refresh());
+    expect(screen.queryByText(/Retained playbook is missing/)).toBeNull();
+    expect(screen.getByLabelText<HTMLSelectElement>("Session type").value).toBe("auxiliary");
+    expect(instructions.value).toBe("Keep this instruction");
+    expect(launch.disabled).toBe(false);
+    fireEvent.click(launch);
+    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "vinculum", "", "Keep this instruction"));
+  });
+
+  it("requires a new selection if another client starts the queued execution", async () => {
+    const created = renderPage();
+    const queued = await screen.findByRole<HTMLOptionElement>("option", { name: /Start queued/ });
+    expect(queued.selected).toBe(true);
+    mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ lifecycle: "running" })]));
+    await act(async () => fakeExecution.refresh());
+    const launch = screen.getByRole<HTMLButtonElement>("button", { name: "Launch" });
+    expect(screen.getByRole<HTMLOptionElement>("option", { name: "Selected execution is no longer available" }).selected).toBe(true);
+    expect(launch.disabled).toBe(true);
+    fireEvent.keyDown(launch, { key: "Enter", ctrlKey: true });
+    expect(created).not.toHaveBeenCalled();
+    choose("auxiliary");
+    expect(launch.disabled).toBe(false);
   });
 
   it("does not replace another task's binding with a late query response", async () => {

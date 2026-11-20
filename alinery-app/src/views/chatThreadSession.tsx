@@ -18,6 +18,7 @@ import * as ipc from "../ipc";
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive } from "../sessionMessage";
+import { attentionBody } from "../shared";
 import {
   abortChatThread,
   copyChatThreadAttachments,
@@ -32,6 +33,7 @@ import { useSessionObservation } from "../sync/sessionObservation";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
+import { type TurnRetryControl, useTurnRetry } from "../useTurnRetry";
 import { compactCommand, getStateCommand, type ImageContent, promptCommand } from "../vinculumRpc";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatToolsDialog } from "./ChatToolsDialog";
@@ -76,6 +78,7 @@ export function chatActivity(
   const status: SessionChatStatus = raw === "waiting_for_approval" && answering ? "waiting_approval" : turnActive ? "running" : "idle";
   // Nothing observed yet is Loading, never Idle.
   if (raw === null) return { status, turnActive, kind: "loading" };
+  if (raw === "errored" && turnActive) return { status, turnActive, kind: "busy" };
   const quiet = raw === "loading" || raw === "starting" || raw === "idle";
   return { status, turnActive, kind: quiet ? (turnActive ? "busy" : "idle") : raw };
 }
@@ -97,6 +100,7 @@ export type ChatThreadSnapshot = {
   blocked: boolean;
   disconnected: string | null;
   sendNowEnabled: boolean;
+  turnRetry?: TurnRetryControl;
   providersDialog: { tab: ProvidersDialogTab; preselect: string } | null;
   toolsOpen: boolean;
   mcpDialog: { rows: McpServerRow[]; empty: boolean } | null;
@@ -200,6 +204,7 @@ type Registry = {
   listenFocus: (fn: () => void) => () => void;
   retain: (thread: ChatThread, sub: Sub) => () => void;
   noteThread: (thread: ChatThread) => void;
+  observeTurn: (thread: ChatThread, observation: SessionObservation | null | undefined) => void;
   subFor: (key: string, id: symbol) => Sub | undefined;
   setAutoCompaction: (key: string, value: boolean) => void;
   touch: (entry: Entry) => void;
@@ -221,6 +226,8 @@ function createEntry(key: string): Entry {
 }
 
 function createRegistry(): Registry {
+  // The rail, selected Chat and pinned window can receive the same failure on different streams.
+  const seenFailures = new Map<string, Set<string>>();
   const registry: Registry = {
     entries: new Map(),
     host: () => {},
@@ -238,6 +245,21 @@ function createRegistry(): Registry {
     listenFocus: () => () => {},
     retain: () => () => {},
     noteThread: () => {},
+    observeTurn(thread, observation) {
+      if (!observation || observation.stale || thread.session.archived || thread.session.ended_at != null || observation.state?.process.state !== "alive") return;
+      const agent = observation.state.agent;
+      if (agent.state === "unknown") return;
+      const key = threadKey(thread);
+      const seen = seenFailures.get(key);
+      const failedId = agent.state === "errored" ? agent.correlation_id : undefined;
+      if (!seen) {
+        // The initial snapshot can include a failure that happened before Chat was opened.
+        seenFailures.set(key, new Set(failedId ? [failedId] : []));
+      } else if (failedId && !seen.has(failedId)) {
+        seen.add(failedId);
+        void ipc.notifySessionAttention(attentionBody(threadLabel(thread), "errored")).catch(() => {});
+      }
+    },
     subFor: () => undefined,
     setAutoCompaction: () => {},
     touch: () => {},
@@ -495,6 +517,7 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
   const disconnected = snap.connection.state === "failed" && !snap.inTerminal ? snap.connection.detail : null;
   return {
     ...snap,
+    turnRetry: snap.sending ? undefined : snap.turnRetry,
     error,
     blocked: error === "cannot continue",
     disconnected,
@@ -834,6 +857,15 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   const terminalIo = useMemo(() => chatTerminalIo(repo, id), [repo, id]);
   const agentState = observation?.state?.agent?.state;
   const pendingUiReply = transcript.pendingUi.some((request) => needsUiReply(request.method));
+  const turnRetry = useTurnRetry(
+    repo,
+    id,
+    observation,
+    connection.state === "ready" && !thread.session.archived && thread.session.ended_at == null && !activity.turnActive && !pendingUiReply,
+  );
+  useEffect(() => {
+    registry.observeTurn(thread, observation);
+  }, [registry, thread, observation]);
   const sendNowEnabled =
     connection.state === "ready" &&
     activity.status === "running" &&
@@ -964,6 +996,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     blocked: registry.error === "cannot continue",
     disconnected: connection.state === "failed" && !inTerminal ? connection.detail : null,
     sendNowEnabled,
+    turnRetry,
     providersDialog,
     toolsOpen,
     mcpDialog,

@@ -3,15 +3,15 @@
 // definition; the engine behind it is the daemon's.
 
 import type { JsonObject } from "@bufbuild/protobuf";
-import { Code, ConnectError, createClient } from "@connectrpc/connect";
+import { type Client, Code, ConnectError, createClient } from "@connectrpc/connect";
 import type { Cursor } from "alinery-proto/alinery/v1/common_pb";
 import type { Entity } from "alinery-proto/alinery/v1/entities_pb";
 import { ExecutionService } from "alinery-proto/alinery/v1/executions_pb";
 import { useMemo, useSyncExternalStore } from "react";
 import { daemonTransport } from "../daemon/transport";
 import type { NormalizedPlaybook, TaskExecutionReply, TaskExecutionState } from "../types";
-import { acquireScope, REPO_SCOPE, useEntity, useScope } from "./hooks";
-import { newMutationMeta } from "./mutation";
+import { acquireScope, REPO_SCOPE, useEntity, useLink, useScope } from "./hooks";
+import { confirmDelivery, newMutationMeta } from "./mutation";
 import type { Replica } from "./replica";
 
 export const executionKey = (slug: string) => `execution/${slug}/${slug}`;
@@ -43,14 +43,13 @@ function definitionOfStruct(d: JsonObject): NormalizedPlaybook {
 export function replyOf(e: Entity | undefined): TaskExecutionReply | undefined {
   if (e?.value.case !== "execution") return undefined;
   const row = e.value.value;
-  // The row is generated types on one side and the views' types on the other, so each half is
-  // cast. Do not default a missing half to `{}` and cast that: an empty object satisfies the cast
-  // and then throws in a view (`definition.step.find` on `{}`). A row without both halves is not
-  // a reply, and the caller already has the "no row yet" path for it.
-  if (!row.state || !row.definition) return undefined;
+  // A refused engine may have readable execution history even when its playbook could not be read.
+  if (!row.state) return undefined;
+  const refusal = row.state.engine_unavailable;
+  if (!row.definition && (typeof refusal !== "string" || !refusal.trim())) return undefined;
   return {
     state: row.state as unknown as TaskExecutionState,
-    definition: definitionOfStruct(row.definition),
+    definition: definitionOfStruct(row.definition ?? {}),
     live: { status: "available" },
     revision: e.revision,
   };
@@ -62,13 +61,17 @@ const NOTHING = () => () => {};
 export function useTaskExecution(repo: string, slug: string): { reply?: TaskExecutionReply; error: string; ready: boolean } {
   const replica = useScope(repo, REPO_SCOPE);
   const entity = useEntity(replica, executionKey(slug));
+  const { stale } = useLink(replica);
   const subscribe = useMemo(() => (replica ? replica.listen : NOTHING), [replica]);
   const ready = useSyncExternalStore(subscribe, () => replica?.ready ?? false);
   return useMemo(() => {
     const reply = replyOf(entity);
-    if (reply) return { reply, error: "", ready };
+    if (reply) {
+      if (stale) reply.live = { status: "offline", detail: "The daemon disconnected. Showing the last known execution." };
+      return { reply, error: "", ready };
+    }
     return { error: ready && slug ? "task execution state unavailable" : "", ready };
-  }, [entity, ready, slug]);
+  }, [entity, ready, slug, stale]);
 }
 
 /** One read: the row once the stream has its first snapshot, or a reason within `timeoutMs`. Rejects with a message, as the commands did. */
@@ -132,14 +135,31 @@ export function whenReaches(replica: Replica, applied: Cursor | undefined, timeo
 }
 
 /**
- * Lets one live execution finish. `expectedRevision` is the row the person saw; a row that moved on is refused with
- * `ExecutionConflict`. Resolves once this window's replica has the change.
+ * Accepts the work the person reviewed in this session. An unrelated change to the task's entity
+ * does not invalidate the review. New work or an owner change does.
  */
-export async function allowExecutionCompletion(repo: string, slug: string, executionId: string, expectedRevision?: bigint): Promise<void> {
+export function continueReviewed(repo: string, slug: string, executionId: string, sessionId: string, workRevision: number): Promise<void> {
+  return writeExecution(repo, (client) => client.continueReviewed({ meta: newMutationMeta(), taskSlug: slug, executionId, sessionId, workRevision: BigInt(workRevision) }));
+}
+
+export function nudgeExecution(repo: string, taskSlug: string, executionId: string, sessionId: string, runId: string, meta = newMutationMeta()): Promise<void> {
+  const request = { meta, taskSlug, executionId, sessionId, runId };
+  return confirmDelivery("nudge", async () => {
+    const client = createClient(ExecutionService, daemonTransport(repo));
+    const reply = await client.nudgeExecution(request);
+    if (reply.deliveryId !== request.meta.mutationId) throw new ConnectError("Nudge acknowledgement did not match the request", Code.Unknown);
+  });
+}
+
+export function setStepContinuation(repo: string, slug: string, stepKey: string, automatic: boolean, expectedRevision: bigint): Promise<void> {
+  return writeExecution(repo, (client) => client.setStepContinuation({ meta: newMutationMeta(), taskSlug: slug, stepKey, automatic, expectedRevision }));
+}
+
+async function writeExecution(repo: string, write: (client: Client<typeof ExecutionService>) => Promise<{ applied?: { cursor?: Cursor } }>): Promise<void> {
   const { replica, release } = acquireScope(repo, REPO_SCOPE);
   try {
     const client = createClient(ExecutionService, daemonTransport(repo));
-    const reply = await client.allowCompletion({ meta: newMutationMeta(), taskSlug: slug, executionId, expectedRevision: expectedRevision ?? 0n });
+    const reply = await write(client);
     await whenReaches(replica, reply.applied?.cursor, 3000);
   } catch (e) {
     const err = ConnectError.from(e);

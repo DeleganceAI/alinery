@@ -801,9 +801,24 @@ describe("scoped playbook selection", () => {
     );
   });
 
+  it("shows choices for a self-loop but plain completion for a one-step sink", async () => {
+    const loop = structuredClone(sources[0]);
+    loop.definition.step[0].inputs = [{ path: "result.md", mode: "single" }];
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValueOnce(loop);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const choices = within(await screen.findByRole("group", { name: "Build" }));
+    fireEvent.click(choices.getByRole("button", { name: "Continue automatically" }));
+    expect(choices.getByRole("button", { name: "Continue automatically" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByText("Playbook complete")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
+    await screen.findByRole("region", { name: "One-shot workflow preview" });
+    expect(screen.queryByRole("group", { name: "Build" })).toBeNull();
+    expect(screen.getByText("Playbook complete").closest("button")).toBeNull();
+  });
+
   it("drops removed step keys on same-source refresh without restoring unchecked completion choices", async () => {
     const original = structuredClone(sources[0]);
-    const build = { ...original.definition.step[0], auto_advance_default: true };
+    const build = { ...original.definition.step[0], inputs: [{ path: "result.md", mode: "single" as const }], auto_advance_default: true };
     original.definition.step = [build, { ...build, key: "removed", title: "Removed" }, { ...build, key: "keep", title: "Keep" }];
     const revised = structuredClone(original);
     revised.source_text = "revised bundled/superdevelop source\n";
@@ -811,17 +826,33 @@ describe("scoped playbook selection", () => {
     vi.mocked(playbookReads.readPlaybook).mockResolvedValue(original);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
 
-    const buildChoice = await screen.findByRole("checkbox", { name: "Build" });
-    expect(buildChoice).toHaveProperty("checked", true);
-    fireEvent.click(buildChoice);
-    expect(screen.getByRole("checkbox", { name: "Removed" })).toHaveProperty("checked", true);
+    const buildChoice = within(await screen.findByRole("group", { name: "Build" }));
+    expect(buildChoice.getByRole("button", { name: "Continue automatically" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(buildChoice.getByRole("button", { name: "Wait for me" }));
+    expect(
+      within(screen.getByRole("group", { name: "Removed" }))
+        .getByRole("button", { name: "Continue automatically" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
     vi.mocked(playbookReads.readPlaybook).mockResolvedValue(revised);
     fireEvent.focus(window);
 
-    expect(await screen.findByRole("checkbox", { name: "Added" })).toHaveProperty("checked", false);
-    expect(screen.queryByRole("checkbox", { name: "Removed" })).toBeNull();
-    expect(screen.getByRole("checkbox", { name: "Build" })).toHaveProperty("checked", false);
-    expect(screen.getByRole("checkbox", { name: "Keep" })).toHaveProperty("checked", true);
+    expect(
+      within(await screen.findByRole("group", { name: "Added" }))
+        .getByRole("button", { name: "Wait for me" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(screen.queryByRole("group", { name: "Removed" })).toBeNull();
+    expect(
+      within(screen.getByRole("group", { name: "Build" }))
+        .getByRole("button", { name: "Wait for me" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      within(screen.getByRole("group", { name: "Keep" }))
+        .getByRole("button", { name: "Continue automatically" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Refreshed task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
@@ -933,19 +964,19 @@ describe("per-step default model", () => {
 
   it("places Task Default Model above automatic completion permissions and drops the old Model label", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await screen.findByLabelText("Build model");
     const taskModel = screen.getByLabelText("Task Default Model");
-    const permission = screen.getByText("Automatic completion permission for future executions");
+    const permission = screen.getByText("Step settings");
     expect(taskModel.compareDocumentPosition(permission) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(screen.queryByLabelText("Model")).toBeNull();
   });
 
   it("gives each permission row its own model control", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    const checkbox = await screen.findByRole("checkbox", { name: "Build" });
+    const endpoint = await screen.findByText("Playbook complete");
     const stepModel = screen.getByLabelText("Build model");
-    expect(checkbox.closest(".step-model-row")?.contains(stepModel)).toBe(true);
-    expect(screen.getAllByText("Step model")).toHaveLength(1);
+    expect(endpoint.closest(".step-model-row")?.contains(stepModel)).toBe(true);
+    expect(screen.getAllByText("Step model / source")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Browse models" })).toBeNull();
     fireEvent.click(stepModel);
     const stepDialog = await screen.findByRole("dialog", { name: /Models|Providers/ });
@@ -1924,7 +1955,7 @@ describe("clipboard task attachments", () => {
     const loaded = deferred<DraftAttachments>();
     vi.mocked(taskWrites.readDraftAttachmentsForRepo).mockReturnValueOnce(loaded.promise);
     const form = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
+    await screen.findByLabelText("Build model");
     paste(screen.getByPlaceholderText(/Describe the feature/), [new File([new Uint8Array([2])], "image.png", { type: "image/png" })]);
     const entry = screen.getByPlaceholderText(/Paste file paths/);
     fireEvent.change(entry, { target: { value: "/new.png" } });

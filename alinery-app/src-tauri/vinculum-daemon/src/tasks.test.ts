@@ -54,13 +54,13 @@ function taskDir(repo: string, slug: string) {
   mkdirSync(join(dir, "artifacts"), { recursive: true });
   writeFileSync(
     join(dir, "playbook.md"),
-    `+++\nversion = 2\nkey = "fixture"\ntitle = "Fixture"\ndescription = ""\ndefault_model = ""\ndefault_harness = "vinculum"\n\n[[step]]\nkey = "clarify"\ntitle = "Clarify"\nshort = ""\ninputs = [{ path = "ticket.md", mode = "single" }]\noutputs = [{ path = "assessment.md", required = true }]\nmodel = ""\nharness = ""\nis_coding_step = false\nauto_advance_default = true\n\n[[step]]\nkey = "investigate"\ntitle = "Investigate"\nshort = ""\ninputs = [{ path = "assessment.md", mode = "single" }]\noutputs = [{ path = "notes.md" }]\nmodel = ""\nharness = ""\nis_coding_step = false\nauto_advance_default = true\n+++\n<!-- alinery:step clarify -->\nClarify.\n\n<!-- alinery:step investigate -->\nInvestigate.\n`,
+    `+++\nversion = 2\nkey = "fixture"\ntitle = "Fixture"\ndescription = ""\ndefault_model = ""\ndefault_harness = "vinculum"\n\n[[step]]\nkey = "clarify"\ntitle = "Clarify"\nshort = ""\ninputs = [{ path = "ticket.md", mode = "single" }]\noutputs = [{ path = "assessment.md", required = true }]\nmodel = ""\nharness = ""\nis_coding_step = false\nauto_advance_default = true\n\n[[step]]\nkey = "investigate"\ntitle = "Investigate"\nshort = ""\ninputs = [{ path = "assessment.md", mode = "single" }]\noutputs = [{ path = "notes.md" }]\nmodel = ""\nharness = ""\nis_coding_step = false\nauto_advance_default = false\n+++\n<!-- alinery:step clarify -->\nClarify.\n\n<!-- alinery:step investigate -->\nInvestigate.\n`,
   );
   return dir;
 }
 
 describe("task execution reply", () => {
-  test("a log projects occurrence ids the graph can join, and does not write the file", () => {
+  test("an older log projects lineage and its playbook completion defaults without writing the file", () => {
     resetGraphs();
     const repo = mkdtempSync(join(tmpdir(), "vinculum-lineage-"));
     const slug = "lineage";
@@ -68,6 +68,7 @@ describe("task execution reply", () => {
     const artifacts = join(dir, "artifacts");
     const onDisk = {
       creation: "ready",
+      enabled_steps: ["investigate"],
       executions: { placeholder: { id: "placeholder", candidate: { inputs: {} } } },
       occurrences: { "rust-seed": { id: "rust-seed", producer_execution_id: null, relative_path: "nope.md" } },
     };
@@ -78,7 +79,7 @@ describe("task execution reply", () => {
       { t: "seeded", occurrences: [{ id: "seed/ticket.md", role: "ticket.md", path: join(artifacts, "00-ticket.md"), producer: null }] },
       {
         t: "reserved",
-        execution: { id: "e1", step: "clarify", depth: 1, inputs: { "ticket.md": ["seed/ticket.md"] }, outDir: join(artifacts, "1-clarify-1"), origin: null, automatic: true },
+        execution: { id: "e1", step: "clarify", depth: 1, inputs: { "ticket.md": ["seed/ticket.md"] }, outDir: join(artifacts, "1-clarify-1"), origin: null },
       },
       { t: "started", execId: "e1", sessionId: "sess-clarify" },
       {
@@ -96,7 +97,6 @@ describe("task execution reply", () => {
           inputs: { "assessment.md": ["e1/assessment.md"] },
           outDir: join(artifacts, "2-investigate-1"),
           origin: null,
-          automatic: true,
         },
       },
       { t: "started", execId: "e2", sessionId: "sess-investigate" },
@@ -105,6 +105,8 @@ describe("task execution reply", () => {
 
     const reply = getTaskExecution(repo, slug, "lane", "app") as ExecutionReply;
     const consumer = reply.state.executions.e2;
+    expect(consumer).toMatchObject({ permission: { kind: "locked" } });
+    expect(reply.state.executions.e1).toMatchObject({ permission: { kind: "automatic" } });
     const bound = consumer.candidate.inputs["assessment.md"];
     expect(bound).toEqual(["e1/assessment.md"]);
     expect(reply.state.occurrences[bound[0]]?.producer_execution_id).toBe("e1");

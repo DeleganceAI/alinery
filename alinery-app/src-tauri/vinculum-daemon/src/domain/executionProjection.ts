@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
-import type { Playbook, Step } from "playbook-engine/src/playbook.ts";
+import type { Step } from "playbook-engine/src/playbook.ts";
 import { type Execution, occurrences, type State } from "playbook-engine/src/state.ts";
 
 function lifecycle(execution: Execution): string {
@@ -15,13 +15,19 @@ function lifecycle(execution: Execution): string {
 }
 
 /** A closed gate stays locked until this execution is permitted. Auto-approve-all opens it without rewriting the snapshot. */
-export function completionPermission(execution: Pick<Execution, "id" | "sessionId" | "permitted" | "automatic">, autoApproveAll: boolean): Record<string, unknown> {
+export function completionPermission(execution: Pick<Execution, "id" | "sessionId" | "permitted" | "automatic">, autoApproveAll: boolean, stepDefault = false): Record<string, unknown> {
   if (execution.permitted) return { kind: "human_granted", execution_id: execution.id, session_id: execution.sessionId ?? "" };
-  if (execution.automatic === false && !autoApproveAll) return { kind: "locked" };
+  if (!(execution.automatic ?? stepDefault) && !autoApproveAll) return { kind: "locked" };
   return { kind: "automatic" };
 }
 
-export function projectExecution(execution: Execution, autoApproveAll = false, project?: { steps: Step[]; artifactsDir: string }): Record<string, unknown> {
+export function projectExecution(execution: Execution, autoApproveAll: boolean, project: ReturnType<typeof projectionContext>, retainedOutputs?: unknown): Record<string, unknown> {
+  const step = project.steps.find((item) => item.key === execution.step);
+  const parents = new Set<string>();
+  for (const id of Object.values(execution.inputs).flat()) {
+    const producer = project.producers.get(id);
+    if (producer) parents.add(producer);
+  }
   return {
     id: execution.id,
     binding_key: execution.id,
@@ -34,19 +40,20 @@ export function projectExecution(execution: Execution, autoApproveAll = false, p
       each_member_id: null,
       manual: false,
     },
-    outputs: project ? projectOutputs(execution, project.steps, project.artifactsDir) : [],
-    parent_execution_ids: [],
+    outputs: projectOutputs(execution, step, project.artifactsDir, retainedOutputs),
+    parent_execution_ids: [...parents],
     depth: execution.depth,
     owner_session_id: execution.sessionId ?? "",
-    previous_session_ids: [],
+    previous_session_ids: execution.previousSessionIds ?? [],
     launch: { harness: "vinculum", model: "" },
     is_coding_step: false,
     start_requested: true,
     lifecycle: lifecycle(execution),
-    permission: completionPermission(execution, autoApproveAll),
+    permission: completionPermission(execution, autoApproveAll, step?.autoAdvanceDefault),
+    ...(execution.ready ? { ready: { revision: execution.ready.revision, endpoint: execution.ready.endpoint, destinations: execution.ready.destinations, roles: execution.ready.roles } } : {}),
     receipt_id: execution.receipt ? execution.id : null,
     exit_code: null,
-    shutdown_confirmed: execution.status === "done" || execution.status === "failed",
+    shutdown_confirmed: execution.status === "done" || (execution.status === "failed" && !execution.unconfirmed),
     error: execution.failure,
   };
 }
@@ -59,9 +66,8 @@ function artifactRelative(artifactsDir: string, filePath: string): string | unde
   return rel.split("\\").join("/");
 }
 
-function projectOutputs(execution: Execution, steps: Step[], artifactsDir: string): Record<string, unknown>[] {
-  const step = steps.find((item) => item.key === execution.step);
-  if (!step) return [];
+function projectOutputs(execution: Execution, step: Step | undefined, artifactsDir: string, retainedOutputs?: unknown): Record<string, unknown>[] {
+  if (!step) return Array.isArray(retainedOutputs) ? retainedOutputs : [];
   const dir = artifactRelative(artifactsDir, execution.outDir) ?? "";
   return step.outputs.map((output) => {
     const row: Record<string, unknown> = {
@@ -93,13 +99,20 @@ export function projectOccurrences(state: State, artifactsDir: string): Record<s
   return projected;
 }
 
-export function projectionContext(repo: string, slug: string): { steps: Step[]; artifactsDir: string } {
+export function projectionContext(repo: string, slug: string, executions: Iterable<Execution>, loadedSteps?: Step[]) {
   const artifactsDir = join(repo, ".alinery", "tasks", slug, "artifacts");
+  const producers = new Map<string, string>();
+  for (const execution of executions) {
+    for (const occurrence of execution.receipt ?? []) {
+      if (occurrence.producer) producers.set(occurrence.id, occurrence.producer);
+    }
+  }
+  if (loadedSteps) return { steps: loadedSteps, artifactsDir, producers };
   try {
     const parsed = parsePlaybookMd(readFileSync(join(repo, ".alinery", "tasks", slug, "playbook.md"), "utf8"));
-    return { steps: parsed.playbook?.steps ?? [], artifactsDir };
+    return { steps: parsed.playbook?.steps ?? [], artifactsDir, producers };
   } catch {
-    return { steps: [], artifactsDir };
+    return { steps: [], artifactsDir, producers };
   }
 }
 

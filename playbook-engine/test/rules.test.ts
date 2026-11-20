@@ -139,10 +139,11 @@ test('human gate: a locked step stays interactive until permitted', async () => 
   const [review] = byStep(engine, 'review');
   assert.equal(review.status, 'live');
   assert.equal((await harness.status(review.sessionId!)).kind, 'idle');
-  await engine.permit(review.id);
+  assert.ok(review.ready?.endpoint);
+  assert.equal((await engine.continueReviewed(review.id, review.sessionId!, review.ready.revision)).kind, 'accepted');
   await settle(engine);
   assert.equal(byStep(engine, 'review')[0].status, 'done');
-  assert.match(harness.sessions.get(review.sessionId!)!.inbox[0], /Permission to finish granted/);
+  assert.deepEqual(harness.sessions.get(review.sessionId!)!.inbox, []);
 });
 
 test('acceptance: an empty assigned file rejects the attempt; nothing published rejects; the receipt is fixed', async () => {
@@ -166,7 +167,10 @@ test('acceptance: an empty assigned file rejects the attempt; nothing published 
   assert.deepEqual(await launch.requestCompletion(), { kind: 'rejected', problems: ['b.md is empty'] });
   writeText(launch.outputs['b.md'], 'ok');
   writeText(launch.outputs['c-*.md'].replace('*', '1'), 'ok');
-  const accepted = await launch.requestCompletion();
+  const reported = await launch.requestCompletion();
+  assert.equal(reported.kind, 'ready');
+  const [execution] = byStep(engine, 's');
+  const accepted = await engine.continueReviewed(execution.id, execution.sessionId!, execution.ready!.revision);
   assert.equal(accepted.kind, 'accepted');
   writeText(launch.outputs['c-*.md'].replace('*', '2'), 'late');
   assert.deepEqual(await launch.requestCompletion(), accepted); // files written after acceptance never join the receipt
@@ -219,7 +223,7 @@ test('acceptance: a link on the way to an output rejects the attempt, and an unl
   } finally {
     chmodSync(family, 0o755);
   }
-  assert.equal((await launch.requestCompletion()).kind, 'accepted');
+  assert.equal((await launch.requestCompletion()).kind, 'ready');
 });
 
 test('a required output rejects until that exact file exists', async () => {
@@ -240,7 +244,7 @@ test('a required output rejects until that exact file exists', async () => {
   assert.equal(rejected.kind, 'rejected');
   if (rejected.kind === 'rejected') assert.ok(rejected.problems.some((p) => p.includes('must.md')));
   writeText(launch.outputs['must.md'], 'ok');
-  assert.equal((await launch.requestCompletion()).kind, 'accepted');
+  assert.equal((await launch.requestCompletion()).kind, 'ready');
 });
 
 test('a session that exits without completing is failed, not done, and its binding is not re-reserved', async () => {
@@ -322,6 +326,7 @@ test('task gate: a step left out of the set stays locked even when the playbook 
   const pb = playbook([
     step('locked', { autoAdvanceDefault: true, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'locked.md' }] }),
     step('open', { autoAdvanceDefault: false, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'open.md' }] }),
+    step('end', { inputs: [{ path: 'open.md', mode: 'single' }, { path: 'locked.md', mode: 'single' }], outputs: [{ path: 'final.md' }] }),
   ]);
   const dir = taskDir();
   let enabled = ['open'];
@@ -339,7 +344,7 @@ test('task gate: a step left out of the set stays locked even when the playbook 
   writeText(join(open.outDir, 'open.md'), 'x');
   assert.equal(locked.automatic, false);
   assert.equal(open.automatic, true);
-  assert.equal((await engine.requestCompletion(locked.id)).kind, 'permission-required');
+  assert.equal((await engine.requestCompletion(locked.id)).kind, 'ready');
   approveAll = true;
   assert.equal((await engine.requestCompletion(locked.id)).kind, 'accepted');
   enabled = [];
@@ -347,7 +352,10 @@ test('task gate: a step left out of the set stays locked even when the playbook 
 });
 
 test('task gate: turning approve-all off rejects the next attempt, and a grant still finishes a locked step', async () => {
-  const pb = playbook([step('review', { autoAdvanceDefault: true, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'r.md' }] })]);
+  const pb = playbook([
+    step('review', { autoAdvanceDefault: true, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'r.md' }] }),
+    step('end', { inputs: [{ path: 'r.md', mode: 'single' }], outputs: [{ path: 'final.md' }] }),
+  ]);
   const dir = taskDir();
   let approveAll = true;
   const engine = openEngine(pb, new FakeHarness(async () => {}), dir, { enabledSteps: () => [], autoApproveAll: () => approveAll });
@@ -357,13 +365,16 @@ test('task gate: turning approve-all off rejects the next attempt, and a grant s
   const [review] = byStep(engine, 'review');
   writeText(join(review.outDir, 'r.md'), 'x');
   approveAll = false;
-  assert.equal((await engine.requestCompletion(review.id)).kind, 'permission-required');
+  assert.equal((await engine.requestCompletion(review.id)).kind, 'ready');
   await engine.permit(review.id);
   assert.equal((await engine.requestCompletion(review.id)).kind, 'accepted');
 });
 
 test('task gate: a step in the set completes with no grant', async () => {
-  const pb = playbook([step('build', { autoAdvanceDefault: false, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'b.md' }] })]);
+  const pb = playbook([
+    step('build', { autoAdvanceDefault: false, inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'b.md' }] }),
+    step('end', { inputs: [{ path: 'b.md', mode: 'single' }], outputs: [{ path: 'final.md' }] }),
+  ]);
   const dir = taskDir();
   const engine = openEngine(pb, new FakeHarness(async () => {}), dir, { enabledSteps: () => ['build'], autoApproveAll: () => false });
   engine.seed(seedTicket(dir));
@@ -595,4 +606,109 @@ test('nested fan-out: the merges of the inner families can themselves be merged 
   assert.equal(finals.length, 1);
   assert.equal(finals[0].inputs['merged*.md'].length, 2);
   assert.deepEqual(engine.diagnose().blocked, []);
+});
+
+/** One automatic or manual step that returns from its turn without reporting completion. */
+async function idleStep(automatic = true, autoApproveAll = () => false) {
+  const dir = taskDir();
+  const pb = playbook([step('work', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'report.md' }], autoAdvanceDefault: automatic })]);
+  let now = 0;
+  const harness = new FakeHarness(async () => {});
+  const engine = openEngine(pb, harness, dir, { now: () => now, autoApproveAll });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const [execution] = byStep(engine, 'work');
+  const session = harness.sessions.get(execution.sessionId!)!;
+  const tickAt = async (at: number) => {
+    now = at;
+    await engine.tick();
+  };
+  await tickAt(0);
+  return { engine, harness, session, execution, tickAt, output: session.launch.outputs['report.md'] };
+}
+
+test('an automatic step with valid outputs gets at most two idle reminders, at least 30s apart', async () => {
+  const { session, output, tickAt } = await idleStep();
+  writeText(output, 'done');
+  await tickAt(29_999);
+  assert.deepEqual(session.inbox, []);
+  await tickAt(30_000);
+  assert.equal(session.inbox.length, 1);
+  assert.match(session.inbox[0], /call the completion tool/);
+  await tickAt(59_999);
+  assert.equal(session.inbox.length, 1);
+  await tickAt(60_000);
+  await tickAt(600_000);
+  assert.equal(session.inbox.length, 2);
+});
+
+test('idle reminders respect Wait for me, including after one-time permission, and the task override', async () => {
+  let override = false;
+  const { session, engine, execution, output, tickAt } = await idleStep(false, () => override);
+  writeText(output, 'done');
+  await tickAt(90_000);
+  assert.deepEqual(session.inbox, []);
+  await engine.permit(execution.id);
+  assert.match(session.inbox[0], /Permission to finish granted/);
+  await tickAt(180_000);
+  assert.equal(session.inbox.length, 1);
+  override = true;
+  await tickAt(180_000);
+  await tickAt(210_000);
+  assert.equal(session.inbox.length, 2);
+  override = false;
+  await tickAt(300_000);
+  assert.equal(session.inbox.length, 2);
+});
+
+test('missing or invalid outputs do not trigger reminders, and an assessed endpoint waits for human review', async () => {
+  const { session, output, engine, execution, tickAt } = await idleStep();
+  await tickAt(30_000);
+  writeText(output, '');
+  await tickAt(60_000);
+  writeText(output, 'ready');
+  assert.equal((await session.launch.requestCompletion()).kind, 'ready');
+  await tickAt(90_000);
+  await tickAt(180_000);
+  assert.deepEqual(session.inbox, []);
+  await engine.continueReviewed(execution.id, session.id, execution.ready!.revision);
+  await tickAt(600_000);
+  assert.deepEqual(session.inbox, []);
+});
+
+test('working, waiting for a person and admitting new work all restart the idle period', async () => {
+  const { session, engine, execution, output, tickAt } = await idleStep();
+  writeText(output, 'ready');
+  session.status = { kind: 'running' };
+  await tickAt(29_000);
+  session.status = { kind: 'idle' };
+  await tickAt(30_000);
+  session.status = { kind: 'waiting' };
+  await tickAt(59_000);
+  session.status = { kind: 'idle' };
+  await tickAt(60_000);
+  await engine.invalidateReadiness(execution.id, session.id);
+  await tickAt(89_000);
+  await tickAt(118_999);
+  assert.deepEqual(session.inbox, []);
+  await tickAt(119_000);
+  assert.equal(session.inbox.length, 1);
+});
+
+test('new user work during reminder admission cancels that reminder and keeps the send allowance', async () => {
+  const { session, harness, engine, execution, output, tickAt } = await idleStep();
+  writeText(output, 'ready');
+  const send = harness.send.bind(harness);
+  harness.send = async (...args) => {
+    await engine.invalidateReadiness(execution.id, session.id);
+    await send(...args);
+  };
+  await tickAt(30_000);
+  assert.deepEqual(session.inbox, []);
+  harness.send = send;
+  await tickAt(30_001);
+  await tickAt(60_001);
+  await tickAt(90_001);
+  assert.equal(session.inbox.length, 2);
 });
