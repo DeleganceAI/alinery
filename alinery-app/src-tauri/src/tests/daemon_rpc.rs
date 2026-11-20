@@ -2,8 +2,9 @@
 
 use super::*;
 use crate::daemon_rpc::{
-    hello, resolve, shutdown_daemon, Bridge, Call, Capability, CollectJoinRequest, CollectJoinResponse, EnsureReadyRequest, HelloRequest, HelloResponse, JoinState,
-    RequestJoinRequest, RequestJoinResponse, ShutdownOrigin, ShutdownRequest, ShutdownResponse, WriteHostedInferenceRequest, WriteHostedInferenceResponse,
+    hello, resolve, shutdown_daemon, Bridge, Call, Capability, ClearShareRequest, ClearShareResponse, CollectJoinRequest, CollectJoinResponse, EnsureReadyRequest, HelloRequest,
+    HelloResponse, JoinState, RequestJoinRequest, RequestJoinResponse, SetShareRequest, SetShareResponse, ShutdownOrigin, ShutdownRequest, ShutdownResponse,
+    WriteHostedInferenceRequest, WriteHostedInferenceResponse,
 };
 use bytes::Bytes;
 use http::HeaderMap;
@@ -67,6 +68,8 @@ static ENSURE_READY: Mutex<Vec<(String, EnsureReadyRequest)>> = Mutex::new(Vec::
 
 /// Every WriteHostedInference any stand-in received: the Authorization header, then the decoded request.
 static HOSTED_WRITES: Mutex<Vec<(String, WriteHostedInferenceRequest)>> = Mutex::new(Vec::new());
+static SHARE_SETS: Mutex<Vec<(String, SetShareRequest)>> = Mutex::new(Vec::new());
+static SHARE_CLEARS: Mutex<Vec<(String, ClearShareRequest)>> = Mutex::new(Vec::new());
 
 /// Every Shutdown any stand-in received: the Authorization header, then the decoded request.
 static SHUTDOWNS: Mutex<Vec<(String, ShutdownRequest)>> = Mutex::new(Vec::new());
@@ -204,6 +207,20 @@ async fn answer(req: http::Request<Incoming>, aborted: Arc<AtomicUsize>, held: H
             let mut body = vec![0, 0, 0, 0, message.len() as u8];
             body.extend_from_slice(&message);
             tx.send(Frame::data(Bytes::from(body))).unwrap();
+            tx.send(trailers("0")).unwrap();
+        }
+        "/alinery.v1.ShareService/SetShare" => {
+            let token = req.headers().get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let sent = req.into_body().collect().await.unwrap().to_bytes();
+            SHARE_SETS.lock().unwrap().push((token, SetShareRequest::decode(&sent[5..]).unwrap()));
+            tx.send(Frame::data(Bytes::from_static(&[0, 0, 0, 0, 0]))).unwrap();
+            tx.send(trailers("0")).unwrap();
+        }
+        "/alinery.v1.ShareService/ClearShare" => {
+            let token = req.headers().get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let sent = req.into_body().collect().await.unwrap().to_bytes();
+            SHARE_CLEARS.lock().unwrap().push((token, ClearShareRequest::decode(&sent[5..]).unwrap()));
+            tx.send(Frame::data(Bytes::from_static(&[0, 0, 0, 0, 0]))).unwrap();
             tx.send(trailers("0")).unwrap();
         }
         "/alinery.v1.SettingsService/WriteHostedInference" => {
@@ -655,6 +672,30 @@ fn golden_write_hosted_inference_decodes_field_by_field_and_encodes_back_to_the_
     assert_eq!(WriteHostedInferenceResponse::decode(reply.as_slice()).unwrap().encode_to_vec(), reply);
 }
 
+#[test]
+fn golden_share_messages_decode_field_by_field_and_encode_back_to_the_same_bytes() {
+    let bytes = golden("SetShareRequest");
+    let request = SetShareRequest::decode(bytes.as_slice()).unwrap();
+    let meta = request.meta.clone().expect("SetShareRequest.meta");
+    assert_eq!(meta.mutation_id, "mutation-3");
+    assert_eq!(request.team_id, "team-1");
+    assert_eq!(request.name, "repo");
+    assert_eq!(request.token, "sync_test_abc");
+    assert_eq!(request.accounts_url, "https://accounts.alinery.ai");
+    assert_eq!(request.encode_to_vec(), bytes);
+    assert_eq!(
+        SetShareResponse::decode(golden("SetShareResponse").as_slice()).unwrap().encode_to_vec(),
+        golden("SetShareResponse")
+    );
+    let clear = ClearShareRequest::decode(golden("ClearShareRequest").as_slice()).unwrap();
+    assert_eq!(clear.meta.as_ref().unwrap().mutation_id, "mutation-4");
+    assert_eq!(clear.encode_to_vec(), golden("ClearShareRequest"));
+    assert_eq!(
+        ClearShareResponse::decode(golden("ClearShareResponse").as_slice()).unwrap().encode_to_vec(),
+        golden("ClearShareResponse")
+    );
+}
+
 /// A repo whose `.alinery/rpc[-lane].sock` is served by a stand-in, with the token this app would have
 /// kept for it. Plain `#[test]`, because `shutdown_daemon` blocks on the app's own runtime.
 pub(super) struct Teardown {
@@ -747,6 +788,39 @@ fn write_hosted_inference_sends_the_file_body_with_the_kept_token_and_a_fresh_mu
     let ids: Vec<_> = calls.iter().map(|r| r.meta.clone().unwrap()).collect();
     assert!(ids.iter().all(|m| m.client_id == "alinery-shell" && !m.mutation_id.is_empty()), "{ids:?}");
     assert_ne!(ids[0].mutation_id, ids[1].mutation_id);
+}
+
+#[test]
+fn set_share_sends_the_sync_credential_and_clear_share_sends_a_fresh_mutation() {
+    let t = teardown_fixture(crate::daemon::alineryd_socket_namespace().as_deref(), "share-token");
+    let key = t.repo.display().to_string();
+    let (socket, secret_path) = resolve(
+        &key,
+        alinery_core::app_config_dir_of(&t.app_config).unwrap(),
+        crate::daemon::alineryd_socket_namespace().as_deref(),
+    )
+    .unwrap();
+    crate::daemon_rpc::set_share_at(&socket, &secret_path, "team-1", "repo", "sync_test_abc", "https://accounts.alinery.ai").unwrap();
+    crate::daemon_rpc::clear_share_at(&socket, &secret_path).unwrap();
+    let sets: Vec<_> = SHARE_SETS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(token, _)| token == "Bearer share-token")
+        .map(|(_, r)| r.clone())
+        .collect();
+    assert_eq!(sets.len(), 1);
+    assert_eq!(sets[0].team_id, "team-1");
+    assert_eq!(sets[0].token, "sync_test_abc");
+    let clears: Vec<_> = SHARE_CLEARS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(token, _)| token == "Bearer share-token")
+        .map(|(_, r)| r.clone())
+        .collect();
+    assert_eq!(clears.len(), 1);
+    assert_ne!(sets[0].meta.clone().unwrap().mutation_id, clears[0].meta.clone().unwrap().mutation_id);
 }
 
 #[test]

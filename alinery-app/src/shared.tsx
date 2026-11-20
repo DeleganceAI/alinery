@@ -22,6 +22,7 @@ import type {
   ArtifactListItem,
   ArtifactTreeNode,
   BoardTask,
+  DesktopTeams,
   ExecutionAvailability,
   ExecutionRecord,
   GridViewDefinition,
@@ -636,6 +637,7 @@ export function TopBar({
   appConfig,
   gridViews = [],
   showChat = false,
+  showTeam = false,
   onSwitch,
   onSwitchGrid,
   onSelectRepo,
@@ -650,6 +652,7 @@ export function TopBar({
   update,
   onUpgrade,
   updating,
+  onTeams,
 }: {
   isDev: boolean;
   active: Tab;
@@ -658,6 +661,8 @@ export function TopBar({
   appConfig: AppConfig;
   gridViews?: GridViewDefinition[];
   showChat?: boolean;
+  /** The account owns or belongs to a team. Pending invites do not count. */
+  showTeam?: boolean;
   instant?: boolean;
   onSwitch: (k: Tab) => void;
   onSwitchGrid: (gridViewId: string) => void;
@@ -674,6 +679,7 @@ export function TopBar({
   update?: UpdateStatus | null;
   onUpgrade?: () => void;
   updating?: boolean;
+  onTeams?: (teams: DesktopTeams | null) => void;
 }) {
   const includeAll = active !== "settings";
   const value = includeAll && scope === "all" ? ALL_REPOS : appConfig.active_repo;
@@ -739,6 +745,7 @@ export function TopBar({
         {tab("sessions", "Sessions", String(trailingTabDigit(gridViews.length, "sessions")))}
         {showChat && tab("chat", "Chat", String(trailingTabDigit(gridViews.length, "chat")))}
         {tab("playbooks", "Playbooks")}
+        {showTeam && tab("team", "Team")}
       </nav>
       <div className="spacer" />
       <button type="button" className="iconbtn new-task" title="New task (⌘N)" aria-label="New task" onClick={onCreate}>
@@ -764,7 +771,12 @@ export function TopBar({
           K
         </span>
       </button>
-      <AccountMenu onOpenNotifications={() => onSwitch("notifications")} onOpenSettings={() => onSwitch("settings")} />
+      <AccountMenu
+        onOpenNotifications={() => onSwitch("notifications")}
+        onOpenSettings={() => onSwitch("settings")}
+        onOpenTeam={showTeam ? () => onSwitch("team") : undefined}
+        onTeams={onTeams}
+      />
     </header>
   );
 }

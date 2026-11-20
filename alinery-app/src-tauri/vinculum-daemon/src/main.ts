@@ -21,6 +21,7 @@ import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
 import { removeBoxRecord, writeBoxRecord } from "./domain/boxRegistry.ts";
 import { commitJoinRequests, Members } from "./domain/members.ts";
+import { armTeamShare, noteShareChange } from "./domain/teamShare.ts";
 import type { TaskDeps } from "./rpc/tasks.ts";
 import { Feed } from "./sync/feed.ts";
 import { Reconciler } from "./sync/reconcile.ts";
@@ -67,7 +68,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 51;
+const PROTOCOL = 52;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -1115,9 +1116,11 @@ const taskExecution = (slug: string) => getTaskExecution(repo, slug, lane, ident
 const artifactProjector = new ArtifactProjector(store, repo, executionRecords(taskExecution));
 // Playbook library rows: the compiled-in set, the machine's and the repository's, once, then on each change the watcher reports and on the 30 s pass.
 const playbookProjector = new PlaybookProjector(store, { globalConfigDir: appConfigDirOf(appConfig), repoDir: repo });
+armTeamShare(repo);
 feed.onChanged = (rel) => {
   artifactProjector.changed(rel);
   playbookProjector.changed(rel);
+  noteShareChange(repo, rel);
 };
 await artifactProjector.pass();
 playbookProjector.refresh();

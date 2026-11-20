@@ -20,6 +20,7 @@ import {
 import { type CSSProperties, lazy, type ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ThinkingOrb } from "thinking-orbs";
+import { belongsToTeam } from "./AccountMenu";
 import { afterPaint } from "./afterPaint";
 import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
@@ -101,6 +102,7 @@ import { SessionsList } from "./views/SessionsList";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
 import { SetupScreen, type SetupTab } from "./views/SetupScreen";
 import { TaskList } from "./views/TaskList";
+import { TeamView } from "./views/Team";
 import { ResizeHandles, useWindowFullscreen, WindowControls } from "./WindowChrome";
 
 /** Per-install: asked once, then the Settings button is the way back. */
@@ -182,6 +184,7 @@ export default function App() {
   const [navInstant, setNavInstant] = useState(true);
   const playbooksReturnView = useRef<View | null>(null);
   const [playbooksVisited, setPlaybooksVisited] = useState(false);
+  const [teamVisited, setTeamVisited] = useState(false);
   const [chatVisited, setChatVisited] = useState(false);
   const [scope, setScope] = useState<RepoScope>("active");
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
@@ -268,9 +271,28 @@ export default function App() {
   const gridViews = useMemo(() => normalizeGridViews(appConfig?.global?.grid_views), [appConfig?.global?.grid_views]);
   const showChat = appConfig?.global?.experiments?.show_chat ?? false;
   const chatCanvas = appConfig?.global?.experiments?.chat_canvas ?? false;
+  const [showTeam, setShowTeam] = useState(false);
+  useEffect(() => {
+    let gone = false;
+    const refresh = () => {
+      ipc
+        .accountTeams()
+        .then((next) => {
+          if (!gone) setShowTeam(belongsToTeam(next));
+        })
+        .catch(() => {});
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      gone = true;
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
   useEffect(() => {
     if (view.kind === "chat") setChatVisited(true);
     if (view.kind === "playbooks") setPlaybooksVisited(true);
+    if (view.kind === "team") setTeamVisited(true);
   }, [view.kind]);
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
@@ -291,10 +313,11 @@ export default function App() {
     setView((current) => {
       // Turning the Chat tab off while it is open sends you to the first Grid view.
       if (current.kind === "chat" && !showChat) return { kind: "grid", gridViewId: gridViews[0].id };
+      if (current.kind === "team" && !showTeam) return { kind: "grid", gridViewId: gridViews[0].id };
       if (current.kind !== "grid") return current;
       return resolveGridTopLevelRoute(current, gridViews);
     });
-  }, [appConfig, gridViews, showChat]);
+  }, [appConfig, gridViews, showChat, showTeam]);
 
   const navRef = useRef<BoardNav | null>(null);
   const registerNav = useCallback((n: BoardNav | null) => {
@@ -627,7 +650,7 @@ export default function App() {
       setView({ kind: "grid", gridViewId });
       return;
     }
-    if (kind === "chat" && !showChat) {
+    if ((kind === "chat" && !showChat) || (kind === "team" && !showTeam)) {
       setView({ kind: "grid", gridViewId: gridViews[0].id });
       return;
     }
@@ -1261,6 +1284,7 @@ export default function App() {
         ]
       : []),
     action("playbooks", pi(List), "Go to Playbooks", "", () => switchTop("playbooks", { instant: true })),
+    ...(showTeam ? [action("team", pi(List), "Go to Team", "", () => switchTop("team", { instant: true }))] : []),
     action("onboarding-guide", pi(BookOpen), "Replay playbook onboarding guide", "", replayPlaybookGuide),
     action("appearance", pi(SunMoon), "Appearance: cycle system / light / dark", "⌘G", cycleAppearance),
     action("add-repo", pi(FolderPlus), "Add repo", "", () => openSetup()),
@@ -1410,6 +1434,11 @@ export default function App() {
                     <Playbooks repoPath={appConfig?.active_repo || undefined} repos={appConfig?.known_repos} onCreateTask={(reference) => openCreate(reference)} />
                   </div>
                 )}
+                {(teamVisited || view.kind === "team") && (
+                  <div className="view" hidden={view.kind !== "team" || daemon.repo_busy}>
+                    <TeamView active={view.kind === "team" && !daemon.repo_busy} appearance={appearance} onAppearanceChange={onAppearanceChange} />
+                  </div>
+                )}
                 {/* Kept mounted once visited, like Playbooks: the open thread, per-thread drafts and the
                 reading position survive a trip to Tasks or Settings. Hidden, it stops polling. */}
                 {showChat && (chatVisited || view.kind === "chat") && (
@@ -1506,6 +1535,8 @@ export default function App() {
       appConfig={appConfig}
       gridViews={gridViews}
       showChat={showChat}
+      showTeam={showTeam}
+      onTeams={(teams) => setShowTeam(belongsToTeam(teams))}
       instant={navInstant}
       onSwitch={switchTop}
       onSwitchGrid={(gridViewId) => switchTop("grid", { gridViewId })}

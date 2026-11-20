@@ -5,6 +5,7 @@
 //! Session lives in owner-only `auth.json` under the app config dir (see
 //! docs/architecture/desktop-pairing.md). The pairing nonce is memory-only for the handshake.
 use crate::*;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -17,7 +18,7 @@ use std::time::{Duration, Instant};
 use tauri_plugin_opener::OpenerExt;
 
 const DEFAULT_ACCOUNTS_URL: &str = "https://accounts.alinery.ai";
-const SUPABASE_URL: &str = "https://cppinfludeyomoyinrkl.supabase.co";
+const SUPABASE_URL: &str = "https://db.alinery.ai";
 // Publishable key, not a secret — safe to bake, same as Linear's OAuth client id. Never bake
 // SUPABASE_SERVICE_ROLE_KEY / sb_secret_… here.
 const SUPABASE_PUBLISHABLE_KEY: &str = "sb_publishable_BJ356xdHfbL0B0BeHfqf7A_QBDFiAto";
@@ -1404,4 +1405,264 @@ pub(crate) fn account_open(app: AppHandle) -> Result<(), String> {
     app.opener()
         .open_url(format!("{}/account", accounts_url()), None::<&str>)
         .map_err(|e| format!("open account page in browser: {e}"))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TeamPotView {
+    pub team_id: Option<String>,
+    pub name: String,
+    pub role: String,
+    pub balance_cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PendingInviteView {
+    pub id: String,
+    pub team_id: String,
+    pub team_name: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopTeamsView {
+    pub pots: Vec<TeamPotView>,
+    pub pending_invites: Vec<PendingInviteView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RealtimeSession {
+    pub url: String,
+    pub key: String,
+    pub access_token: String,
+}
+
+#[derive(Deserialize)]
+struct RawPot {
+    team_id: Option<String>,
+    name: String,
+    role: String,
+    balance_cents: i64,
+}
+
+#[derive(Deserialize)]
+struct RawInvite {
+    id: String,
+    team_id: String,
+    team_name: String,
+    role: String,
+}
+
+fn accounts_error(body: &[u8], status: u16) -> String {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|value| value.get("error").and_then(Value::as_str).map(str::to_string))
+        .filter(|message| !message.is_empty())
+        .unwrap_or_else(|| format!("accounts answered {status}"))
+}
+
+fn accounts_value(auth_path: &Path, method: &str, path: &str, body: Option<String>) -> Result<Value, String> {
+    let result = with_access_token_retry(
+        auth_path,
+        |token| {
+            let url = format!("{}{path}", accounts_url().trim_end_matches('/'));
+            let headers = vec![
+                "Accept: application/json".into(),
+                "Content-Type: application/json".into(),
+                format!("Authorization: Bearer {token}"),
+            ];
+            match curl_http_method(&url, method, &headers, body.as_deref()) {
+                Ok(http) if http.status == 401 => AuthAttempt::Unauthorized,
+                Ok(http) if (200..300).contains(&http.status) => match serde_json::from_slice::<Value>(&http.body) {
+                    Ok(value) => AuthAttempt::Response(value),
+                    Err(error) => AuthAttempt::Transport(format!("bad accounts response: {error}")),
+                },
+                Ok(http) => AuthAttempt::Transport(accounts_error(&http.body, http.status)),
+                Err(error) => AuthAttempt::Transport(error),
+            }
+        },
+        |tokens| refresh_paired_access(auth_path, tokens),
+    );
+    match result {
+        Ok(value) if value.get("ok").and_then(Value::as_bool) == Some(false) => Err(value.get("error").and_then(Value::as_str).unwrap_or("request failed").to_string()),
+        Ok(value) => Ok(value),
+        Err(AuthRetryError::NeedsAccount) => Err("Sign in to continue.".into()),
+        Err(AuthRetryError::Transport(message)) => Err(message),
+    }
+}
+
+fn empty_teams() -> DesktopTeamsView {
+    DesktopTeamsView {
+        pots: Vec::new(),
+        pending_invites: Vec::new(),
+    }
+}
+
+fn parse_teams(value: Value) -> DesktopTeamsView {
+    let pots = value
+        .get("pots")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| serde_json::from_value::<RawPot>(row.clone()).ok())
+                .map(|row| TeamPotView {
+                    team_id: row.team_id,
+                    name: row.name,
+                    role: row.role,
+                    balance_cents: row.balance_cents,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let pending_invites = value
+        .get("pending_invites")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| serde_json::from_value::<RawInvite>(row.clone()).ok())
+                .map(|row| PendingInviteView {
+                    id: row.id,
+                    team_id: row.team_id,
+                    team_name: row.team_name,
+                    role: row.role,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    DesktopTeamsView { pots, pending_invites }
+}
+
+fn repo_share_name(repo_key: &str) -> String {
+    let trimmed = repo_key.trim_end_matches('/');
+    let name = trimmed.rsplit(['/', '\\']).next().filter(|name| !name.is_empty()).unwrap_or("repository");
+    name.chars().take(60).collect()
+}
+
+fn share_socket(app: &AppHandle, repo: &str) -> Result<(PathBuf, PathBuf), String> {
+    let config = app_config_path(app)?;
+    let config_dir = alinery_core::app_config_dir_of(&config).ok_or("app config root unavailable")?;
+    resolve(repo, config_dir, alineryd_socket_namespace().as_deref())
+}
+
+fn revoke_sync_token(token: &str) {
+    let url = format!("{}/api/daemon/unshare", accounts_url().trim_end_matches('/'));
+    let headers = vec![
+        "Accept: application/json".into(),
+        "Content-Type: application/json".into(),
+        format!("Authorization: Bearer {token}"),
+    ];
+    let _ = curl_http_method(&url, "POST", &headers, Some("{}"));
+}
+
+#[tauri::command]
+pub(crate) async fn account_teams(app: AppHandle) -> DesktopTeamsView {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(path) = account_auth_path(&app) else {
+            return empty_teams();
+        };
+        accounts_value(&path, "GET", "/api/desktop/teams", None).map(parse_teams).unwrap_or_else(|_| empty_teams())
+    })
+    .await
+    .unwrap_or_else(|_| empty_teams())
+}
+
+#[tauri::command]
+pub(crate) async fn account_accept_invite(app: AppHandle, invite_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = account_auth_path(&app)?;
+        let body = serde_json::json!({ "invite_id": invite_id }).to_string();
+        accounts_value(&path, "POST", "/api/teams/invites/accept", Some(body)).map(|_| ())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn account_team_shares(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = account_auth_path(&app)?;
+        accounts_value(&path, "GET", "/api/teams/shares", None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn account_team_share(app: AppHandle, share_id: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = account_auth_path(&app)?;
+        accounts_value(&path, "GET", &format!("/api/teams/shares/{share_id}"), None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn account_team_comment(
+    app: AppHandle,
+    share_id: String,
+    task_slug: String,
+    filename: String,
+    body: String,
+    anchor: Option<Value>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = account_auth_path(&app)?;
+        let payload = serde_json::json!({ "task_slug": task_slug, "filename": filename, "body": body, "anchor": anchor }).to_string();
+        accounts_value(&path, "POST", &format!("/api/teams/shares/{share_id}/comments"), Some(payload)).map(|_| ())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn account_share_daemon(app: AppHandle, repo: String, team_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = account_auth_path(&app)?;
+        let payload = serde_json::json!({ "team_id": team_id, "name": repo_share_name(&repo) }).to_string();
+        let registered = accounts_value(&path, "POST", "/api/desktop/team-shares", Some(payload))?;
+        let token = registered.get("token").and_then(Value::as_str).unwrap_or("").to_string();
+        if !token.starts_with("sync_") {
+            return Err("accounts did not return a sync credential".into());
+        }
+        let (socket, secret) = share_socket(&app, &repo)?;
+        if let Err(error) = set_share_at(&socket, &secret, &team_id, &repo_share_name(&repo), &token, &accounts_url()) {
+            revoke_sync_token(&token);
+            return Err(error);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn account_unshare_daemon(app: AppHandle, repo: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (socket, secret) = share_socket(&app, &repo)?;
+        clear_share_at(&socket, &secret)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn account_realtime(app: AppHandle) -> Result<RealtimeSession, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = account_auth_path(&app)?;
+        let tokens = load_tokens_from_path(&path).map_err(|e| e.to_string())?.ok_or_else(|| "Sign in to continue.".to_string())?;
+        if tokens.access_token.is_empty() {
+            return Err("Sign in to continue.".into());
+        }
+        Ok(RealtimeSession {
+            url: SUPABASE_URL.into(),
+            key: SUPABASE_PUBLISHABLE_KEY.into(),
+            access_token: tokens.access_token,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

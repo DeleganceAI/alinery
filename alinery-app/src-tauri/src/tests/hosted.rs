@@ -392,6 +392,7 @@ fn mint_success_with_foreign_models_yml_returns_err_and_leaves_files() {
 #[test]
 fn is_hosted_model_requires_alinery_provider_and_id() {
     assert!(is_hosted_model("alinery/Qwen3.6-35B-A3B"));
+    assert!(is_hosted_model("alinery:team-1/Qwen3.6-35B-A3B"));
     assert!(is_hosted_model(" alinery/Qwen3.6-35B-A3B "));
     assert!(!is_hosted_model("anthropic/claude"));
     assert!(!is_hosted_model("alinery"));

@@ -2,7 +2,7 @@ import { UserRound, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { toast } from "./toast";
-import type { AccountStatus, DesktopCreditsView } from "./types";
+import type { AccountStatus, DesktopCreditsView, DesktopTeams } from "./types";
 
 const CREDITS_POLL_MS = 3 * 60 * 1000;
 
@@ -12,15 +12,32 @@ function formatCreditUsd(cents: number): string {
 
 const SIGNED_OUT: AccountStatus = { signedIn: false, email: null, plan: null, paid: false, unavailable: false };
 
+/** A null teamId is the personal pot. Pending invites are not membership. */
+export function belongsToTeam(teams: DesktopTeams | null): boolean {
+  return Boolean(teams?.pots.some((pot) => pot.teamId));
+}
+
 /** Titlebar account chip. Icon only — email and plan live in the dropdown.
  *  UserRound keeps the same neutral treatment in every resting state, so the slot
  *  always reads as "account"; only an in-flight sign-in swaps in X to cancel.
  *  Session is in auth.json; the pairing nonce is never persisted.
  *  Notifications and Settings live here (not the top-bar tabs); ⌘8 and ⌘9 / , still open
  *  them via hotkeys. */
-export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNotifications: () => void; onOpenSettings: () => void }) {
+export function AccountMenu({
+  onOpenNotifications,
+  onOpenSettings,
+  onOpenTeam,
+  onTeams,
+}: {
+  onOpenNotifications: () => void;
+  onOpenSettings: () => void;
+  onOpenTeam?: () => void;
+  onTeams?: (teams: DesktopTeams | null) => void;
+}) {
   const [status, setStatus] = useState<AccountStatus | null>(null);
   const [credits, setCredits] = useState<DesktopCreditsView | null>(null);
+  const [teams, setTeams] = useState<DesktopTeams | null>(null);
+  const [sales, setSales] = useState(false);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement | null>(null);
@@ -87,7 +104,18 @@ export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNot
 
   useEffect(() => {
     if (!open) return;
-    if (status?.signedIn) pollCredits(generation.current);
+    if (status?.signedIn) {
+      const gen = generation.current;
+      pollCredits(gen);
+      ipc
+        .accountTeams()
+        .then((next) => {
+          if (gen !== generation.current) return;
+          setTeams(next);
+          onTeams?.(next);
+        })
+        .catch(() => {});
+    }
     menu.current?.querySelector<HTMLElement>("button")?.focus();
     const onDown = (e: MouseEvent) => {
       if (!box.current?.contains(e.target as Node)) setOpen(false);
@@ -157,7 +185,11 @@ export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNot
       .accountSignOut()
       .then((s) => {
         setStatus(s);
-        if (!s.signedIn) setCredits(null);
+        if (!s.signedIn) {
+          setCredits(null);
+          setTeams(null);
+          onTeams?.(null);
+        }
         setOpen(false);
         if (s.signedIn) {
           // A newer pairing replaced the session we signed out of. Keep that chip;
@@ -172,8 +204,46 @@ export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNot
       .finally(() => setBusy(false));
   };
 
+  const joinTeam = (inviteId: string) => {
+    setBusy(true);
+    ipc
+      .accountAcceptInvite(inviteId)
+      .then(() => ipc.accountTeams())
+      .then((next) => {
+        setTeams(next);
+        onTeams?.(next);
+      })
+      .catch((e) => toast.error(`Couldn't join: ${String(e)}`))
+      .finally(() => setBusy(false));
+  };
+
   const openAccount = () => {
     ipc.accountOpen().catch((e) => toast.error(`Couldn't open the account page: ${String(e)}`));
+  };
+
+  const openTeam = () => {
+    const go = (next: DesktopTeams | null) => {
+      setOpen(false);
+      if (belongsToTeam(next)) openAccount();
+      else setSales(true);
+    };
+    if (teams) {
+      go(teams);
+      return;
+    }
+    ipc
+      .accountTeams()
+      .then((next) => {
+        setTeams(next);
+        onTeams?.(next);
+        go(next);
+      })
+      .catch(() => go(null));
+  };
+
+  const openAccounts = () => {
+    setSales(false);
+    ipc.accountOpenPlans().catch((e) => toast.error(`Couldn't open Alinery accounts: ${String(e)}`));
   };
 
   if (status === null) {
@@ -201,6 +271,11 @@ export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNot
         {credits.upsell === "buy-credits" || credits.balanceCents <= 0 || credits.cutoff ? "Buy credits" : `Credits ${formatCreditUsd(credits.balanceCents)}`}
       </button>
     ) : null;
+  const teamItem = (
+    <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(openTeam)}>
+      Team
+    </button>
+  );
   const navItems = (
     <>
       <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(onOpenNotifications)}>
@@ -245,6 +320,24 @@ export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNot
                 {status.plan ? <span className="account-chip-plan">{status.plan}</span> : null}
               </button>
               {creditsItem}
+              {teams?.pots.map((pot) => (
+                <button
+                  key={pot.teamId ?? "personal"}
+                  type="button"
+                  role="menuitem"
+                  className="account-chip-action"
+                  disabled={busy}
+                  onClick={run(pot.teamId && onOpenTeam ? onOpenTeam : openAccount)}
+                >
+                  {pot.name} {formatCreditUsd(pot.balanceCents)}
+                </button>
+              ))}
+              {teams?.pendingInvites.map((invite) => (
+                <button key={invite.id} type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(() => joinTeam(invite.id))}>
+                  Join {invite.teamName}
+                </button>
+              ))}
+              {teamItem}
               {navItems}
               <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(signOut)}>
                 Sign out
@@ -252,6 +345,7 @@ export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNot
             </>
           ) : (
             <>
+              {teamItem}
               {navItems}
               <button type="button" role="menuitem" className="account-chip-action" disabled={busy} onClick={run(signIn)}>
                 Sign in
@@ -260,6 +354,55 @@ export function AccountMenu({ onOpenNotifications, onOpenSettings }: { onOpenNot
           )}
         </div>
       )}
+      {sales ? <TeamSalesDialog onClose={() => setSales(false)} onOpenAccounts={openAccounts} /> : null}
     </div>
+  );
+}
+
+function TeamSalesDialog({ onClose, onOpenAccounts }: { onClose: () => void; onOpenAccounts: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (typeof el.showModal === "function") el.showModal();
+    else el.setAttribute("open", "");
+    return () => {
+      if (typeof el.close === "function" && el.open) el.close();
+    };
+  }, []);
+  return (
+    <dialog
+      ref={ref}
+      className="modal team-sales-dialog"
+      aria-label="Teams"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <div className="mh">
+        <span className="mt">Teams</span>
+        <button type="button" className="x" aria-label="Close" onClick={onClose}>
+          <X size={16} strokeWidth={1.5} aria-hidden="true" />
+        </button>
+      </div>
+      <div className="mb">
+        <section className="team-sales-card">
+          <div>
+            <h3>Teams</h3>
+            <p>One shared pot. Each occupied seat adds $10 of token credit.</p>
+          </div>
+          <p className="team-sales-price">
+            $30
+            <small>per seat / month</small>
+          </p>
+        </section>
+      </div>
+      <div className="mfoot">
+        <button type="button" className="btn" onClick={onOpenAccounts}>
+          Open Alinery accounts
+        </button>
+      </div>
+    </dialog>
   );
 }

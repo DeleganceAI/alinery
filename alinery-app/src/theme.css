@@ -848,6 +848,85 @@ nav.tabs .tab:hover:not(.on) {
   opacity: 0.6;
   cursor: default;
 }
+.team-sales-dialog {
+  width: min(420px, 94vw);
+}
+.team-sales-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.team-sales-card h3 {
+  margin: 0 0 6px;
+  color: var(--text-strong);
+  font-size: calc(15px * var(--ui-scale));
+}
+.team-sales-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.45;
+}
+.team-sales-price {
+  color: var(--text-strong);
+  font-size: calc(28px * var(--ui-scale));
+  font-weight: 600;
+  line-height: 1;
+  text-align: right;
+  white-space: nowrap;
+}
+.team-sales-price small {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 400;
+}
+.team-page {
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-bottom: 24px;
+}
+.team-page section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.team-page h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: calc(16px * var(--ui-scale));
+  font-weight: 600;
+}
+.team-page .field {
+  margin-top: 0;
+  max-width: 280px;
+}
+.team-page .team-list {
+  flex: none;
+  max-height: 280px;
+}
+.team-list .row {
+  cursor: default;
+}
+.team-list .row[role="button"] {
+  cursor: pointer;
+}
+.team-list .rtt,
+.team-list .rts {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Identity may grow for email + plan; action rows share one min-height so the
    gap under identity matches the gaps between Settings / Sign out / Sign in. */
 .account-chip-action {
@@ -8596,7 +8675,8 @@ header:has(~ main .task-info-panel) nav.tabs {
   color: var(--text);
   text-align: left;
 }
-.artifact-tree-row.selected {
+.artifact-tree-row.selected,
+.artifactitem.selected {
   background: var(--accent-subtle);
   box-shadow: inset 2px 0 0 var(--accent);
 }
