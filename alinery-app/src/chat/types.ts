@@ -16,6 +16,7 @@ export type WrapUpPrompt = {
   text: string;
   status: "sending" | "pending" | "unconfirmed" | "failed" | "ended";
   at: number;
+  position?: { promptId: string; offset: number };
 };
 
 export type ChatEntryType =

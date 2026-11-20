@@ -440,7 +440,10 @@ describe("SessionView navigator", () => {
     reply.state.enabled_steps = mode === "automatic" ? ["worker"] : [];
     getTaskExecution.mockImplementation(() => Promise.resolve(structuredClone(reply)));
     render(<View onOpenSession={open} />);
-    expect((await screen.findByRole("button", { name: "Follow next session" })).getAttribute("aria-pressed")).toBe("true");
+    const controls = within(await screen.findByRole("group", { name: "Session continuation controls" }));
+    expect(controls.getByRole("button", { name: "Follow next session", pressed: true })).toBeDefined();
+    const selectedMode = mode === "manual" ? "Wait for me" : "Continue automatically";
+    expect(controls.getByRole("button", { name: selectedMode, pressed: true })).toBeDefined();
     if (mode === "manual") {
       fireEvent.click(await screen.findByRole("button", { name: "Continue to Retained worker" }));
       await waitFor(() => expect(fakeExecution.continueReviewed).toHaveBeenCalledExactlyOnceWith("/repo", "task", draft.id, "session", 3));
@@ -481,6 +484,11 @@ describe("SessionView navigator", () => {
     fakeBoard.set({ taskSessions: [pastSession, session(current.owner_session_id, current.id, 2)] });
     getTaskExecution.mockResolvedValue(executionReply([parent, current]));
     const view = render(<View onOpenSession={open} />);
+    const controls = within(await screen.findByRole("group", { name: "Session continuation controls" }));
+    fireEvent.click(controls.getByRole("button", { name: "Follow next session", pressed: true }));
+    expect(controls.getByRole("button", { name: "Wait for me", pressed: true })).toBeDefined();
+    fireEvent.click(controls.getByRole("button", { name: "Follow next session", pressed: false }));
+    expect(fakeExecution.setStepContinuation).not.toHaveBeenCalled();
     const toggle = await screen.findByRole("button", { name: /Session Navigator/ });
     if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
     fireEvent.click(screen.getByRole("button", { name: "Defined the brief" }));
@@ -1245,17 +1253,35 @@ describe("Vinculum session chat", () => {
     expect(screen.getByRole("button", { name: "Nudge sent" })).toHaveProperty("disabled", true);
   });
 
-  it("reports an unconfirmed placement if the run ends before the wrap-up message appears in the transcript", async () => {
+  it("keeps an unconfirmed nudge in its original turn when the next turn reuses the streaming row ID without timestamps", async () => {
     workingStep();
+    const firstTurn = [
+      { id: "question", role: "user", text: "Research terminal input." },
+      { id: "answer", role: "assistant", text: "Checking arrow keys." },
+    ];
+    daemon.setTranscript("session", [firstTurn[0], { ...firstTurn[1], id: "live", streaming: true }]);
     renderSession({ intent: "attach" });
+    await screen.findByText("Checking arrow keys.");
     fireEvent.click(await screen.findByRole("button", { name: "Nudge to wrap up" }));
     const pane = within(screen.getByTestId("chat-pane"));
-    await pane.findByText("Sent");
+    const nudge = (await pane.findByText("Sent")).closest("li");
     await act(async () => {
       sessionStatus.mockResolvedValue(liveObservation("rpc"));
     });
     expect(await pane.findByText("Turn ended · delivery unconfirmed")).toBeDefined();
     expect(screen.queryByRole("button", { name: "Nudge to wrap up" })).toBeNull();
+    await act(async () => {
+      sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy", correlation_id: "next-run" }));
+      daemon.setTranscript("session", [
+        ...firstTurn,
+        { id: "next-prompt", role: "user", text: "Keep going." },
+        { id: "live", role: "assistant", streaming: true, text: "Continuing the investigation." },
+      ]);
+    });
+    await pane.findByText("Continuing the investigation.");
+    expect(pane.getByText("Turn ended · delivery unconfirmed").closest("li")).toBe(nudge);
+    expect(nudge?.previousElementSibling).toBe(pane.getByText("Checking arrow keys.").closest("li"));
+    expect(nudge?.nextElementSibling?.nextElementSibling).toBe(pane.getByText("Keep going.").closest("li"));
   });
 
   it("keeps the nudge in its original session when the playbook opens the next session", async () => {
@@ -1479,7 +1505,7 @@ describe("Vinculum session chat", () => {
   it("reopens a manual step with its conversation and without a generated completion prompt", async () => {
     getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
     const first = renderSession({ intent: "attach" });
-    await screen.findByRole("combobox", { name: "Step continuation" });
+    await screen.findByRole("button", { name: "Wait for me", pressed: true });
     expect(screen.queryByText("Ready to finish this step?")).toBeNull();
     const question = "Should the report include archived tasks?";
     daemon.setTranscript("session", [{ id: "scope-question", role: "assistant", content: [{ type: "text", text: question }] }]);
@@ -1528,19 +1554,37 @@ describe("Vinculum session chat", () => {
     const reply = executionReply([executionRecord({ owner_session_id: "session" })]);
     reply.revision = 8n;
     getTaskExecution.mockResolvedValue(reply);
-    fakeExecution.setStepContinuation.mockImplementation(async () => {
-      getTaskExecution.mockResolvedValue({ ...reply, state: { ...reply.state, enabled_steps: ["worker"] } });
+    const pending = deferred<void>();
+    fakeExecution.setStepContinuation.mockImplementation(async (_repo, _task, _step, automatic) => {
+      await pending.promise;
+      getTaskExecution.mockResolvedValue({ ...reply, state: { ...reply.state, enabled_steps: automatic ? ["worker"] : [] } });
     });
     renderSession({ intent: "attach" });
-    const mode = await screen.findByRole("combobox", { name: "Step continuation" });
-    expect(mode).toHaveProperty("value", "manual");
-    fireEvent.change(mode, { target: { value: "automatic" } });
-    await waitFor(() => expect(fakeExecution.setStepContinuation).toHaveBeenCalledExactlyOnceWith("/repo", "task", "worker", true, 8n));
-    await waitFor(() => expect(mode).toHaveProperty("value", "automatic"));
+    const group = await screen.findByRole("group", { name: "Session continuation controls" });
+    expect(group.closest(".chat-composer-end")).toBeTruthy();
+    const controls = within(group);
+    const manual = controls.getByRole("button", { name: "Wait for me", pressed: true });
+    const automatic = controls.getByRole("button", { name: "Continue automatically", pressed: false });
+    fireEvent.click(manual);
+    expect(fakeExecution.setStepContinuation).not.toHaveBeenCalled();
+    fireEvent.click(automatic);
+    expect(manual).toHaveProperty("disabled", true);
+    expect(automatic).toHaveProperty("disabled", true);
+    fireEvent.click(automatic);
+    expect(fakeExecution.setStepContinuation).toHaveBeenCalledExactlyOnceWith("/repo", "task", "worker", true, 8n);
+    await act(async () => pending.resolve());
+    await controls.findByRole("button", { name: "Continue automatically", pressed: true });
+    fireEvent.click(automatic);
+    expect(fakeExecution.setStepContinuation).toHaveBeenCalledTimes(1);
+    fireEvent.click(manual);
+    await controls.findByRole("button", { name: "Wait for me", pressed: true });
+    expect(fakeExecution.setStepContinuation).toHaveBeenLastCalledWith("/repo", "task", "worker", false, 8n);
     getTaskExecution.mockResolvedValue({ ...reply, state: { ...reply.state, auto_approve_all: true } });
     await act(async () => fakeExecution.refresh());
-    expect(mode).toHaveProperty("value", "automatic");
-    expect(mode).toHaveProperty("disabled", true);
+    expect(controls.getByRole("button", { name: "Continue automatically", pressed: true })).toBeDefined();
+    expect(manual).toHaveProperty("disabled", true);
+    fireEvent.click(manual);
+    expect(fakeExecution.setStepContinuation).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a ready endpoint open for ordinary conversation and waits for a fresh review after sending", async () => {
@@ -1550,7 +1594,8 @@ describe("Vinculum session chat", () => {
     renderSession({ intent: "attach", messageDraft: { body: "Please revise the last paragraph", pendingActions: [], attachments: [] } });
     expect(await within(await screen.findByTestId("chat-activity")).findByText("Ready for review")).toBeDefined();
     expect(screen.queryByRole("button", { name: /Continue (playbook|to)|Finish step/ })).toBeNull();
-    expect(screen.queryByRole("combobox", { name: "Step continuation" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Wait for me" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue automatically" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("/repo", "session", "Please revise the last paragraph", undefined));
     await waitFor(() => expect(screen.queryByText("Ready for review")).toBeNull());

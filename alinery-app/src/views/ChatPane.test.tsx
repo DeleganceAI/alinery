@@ -25,7 +25,11 @@ describe("ChatPane", () => {
       { id: "a1", role: "assistant", text: "Checking the result.", at },
     ];
     const entries = applyVinculumTranscript(messages).entries;
-    const placed = applyVinculumTranscript([...messages, { id: "u2", role: "user", nudgeDeliveryId: nudge.deliveryId, text, at }]).entries;
+    const placed = applyVinculumTranscript([
+      ...messages,
+      { id: "a2", role: "assistant", text: "The check finished.", at: at + 1_000 },
+      { id: "u2", role: "user", nudgeDeliveryId: nudge.deliveryId, text, at: at + 2_000 },
+    ]).entries;
     const view = render(<ChatPane status="running" entries={entries} wrapUpPrompt={nudge} />);
     const row = view.getByText("Wrap-up nudge").closest("li");
     expect(row?.dataset.node).toBe("you");
@@ -41,6 +45,7 @@ describe("ChatPane", () => {
     for (const status of ["sending", "failed", "pending", "ended"] as const) {
       view.rerender(<ChatPane status="running" entries={placed} wrapUpPrompt={{ ...nudge, status }} />);
       expect(view.getByText("Wrap-up nudge").closest("li")).toBe(row);
+      expect(row?.previousElementSibling).toBe(view.getByText("The check finished.").closest("li"));
       expect(row?.querySelector(".chat-status")).toBeNull();
       expect(view.getAllByText(text)).toHaveLength(2);
       expect(view.container.querySelector(".chat-turn-end")).toBeNull();
@@ -48,6 +53,26 @@ describe("ChatPane", () => {
     view.rerender(<ChatPane status="idle" entries={placed} />);
     expect(view.getByText("Wrap-up nudge").closest("li")).toBe(row);
     expect(view.container.querySelectorAll(".chat-turn-end")).toHaveLength(1);
+    view.unmount();
+  });
+
+  it("keeps a nudge at its send time when its original prompt is unavailable", () => {
+    const entries = applyVinculumTranscript([
+      { id: "u1", role: "user", text: "Research terminal input.", at },
+      { id: "a1", role: "assistant", text: "Checking arrow keys.", at },
+    ]).entries;
+    const nudge: WrapUpPrompt = { deliveryId: "receipt-1", text: "Please wrap up.", at: at + 1_000, status: "pending" };
+    const view = render(<ChatPane status="running" entries={entries} wrapUpPrompt={nudge} />);
+    const original = view.getByText("Sent").closest("li");
+    const next = applyVinculumTranscript([
+      { id: "u2", role: "user", text: "Keep going.", at: at + 2_000 },
+      { id: "a2", role: "assistant", text: "Continuing the investigation.", at: at + 3_000 },
+    ]).entries;
+    view.rerender(<ChatPane status="running" entries={[...entries, ...next]} wrapUpPrompt={{ ...nudge, status: "ended" }} />);
+
+    expect(view.getByText("Turn ended · delivery unconfirmed").closest("li")).toBe(original);
+    const rows = [...view.container.querySelectorAll<HTMLElement>(".chat-journal-item")];
+    expect(rows.map((row) => row.dataset.entryId ?? row.dataset.node)).toEqual([entries[0].id, entries[1].id, original?.dataset.entryId, "turn", next[0].id, next[1].id]);
     view.unmount();
   });
 

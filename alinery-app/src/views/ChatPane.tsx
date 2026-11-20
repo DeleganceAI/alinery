@@ -1,7 +1,7 @@
 import { memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { chatMaxWidthCss } from "../appearance";
 import { formatDuration } from "../chat/format";
-import { type JournalItem, journalItems } from "../chat/journalRows";
+import { type JournalItem, journalItems, nudgeInsertionIndex } from "../chat/journalRows";
 import { collectLiveSubagents } from "../chat/subagents";
 import { ACTOR, type ChatEntry, type SessionChatStatus, type WrapUpPrompt } from "../chat/types";
 import { type ChatPrefs, chatActivityLabel, DEFAULT_CHAT_VISIBILITY, isChatEntryVisible, visibleChatEntries, workRailDefaultExpanded } from "../chat/visibility";
@@ -47,7 +47,16 @@ function ChatPaneImpl({
     let rows = transcript;
     if (wrapUpPrompt && !transcript.some((entry) => entry.type === "prompt" && entry.nudgeDeliveryId === wrapUpPrompt.deliveryId)) {
       const { deliveryId, at, text, status } = wrapUpPrompt;
-      rows = [...rows, { type: "prompt", id: deliveryId, actor: ACTOR.you, at, text, nudgeDeliveryId: deliveryId, nudgeStatus: status }];
+      rows = transcript.slice();
+      rows.splice(nudgeInsertionIndex(transcript, wrapUpPrompt), 0, {
+        type: "prompt",
+        id: deliveryId,
+        actor: ACTOR.you,
+        at,
+        text,
+        nudgeDeliveryId: deliveryId,
+        nudgeStatus: status,
+      });
     }
     // The observation and transcript arrive on separate streams. Use the same row key on either arrival order.
     if (failedEntryId && reason && !transcript.some((entry) => entry.type === "error" && entry.failedEntryId === failedEntryId)) {

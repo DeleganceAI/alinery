@@ -6514,9 +6514,36 @@ header:has(~ main .task-info-panel) nav.tabs {
   justify-self: end;
 }
 .step-continuation-mode {
-  max-width: 100%;
-  color: var(--text-muted);
-  font: inherit;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.step-continuation-mode > .btn {
+  width: var(--control-h);
+  padding-inline: 0;
+}
+/* Let whole controls wrap when a split session pane is too narrow for the centered model picker. */
+@container (max-width: 56rem) {
+  .chat-composer-footer.has-center {
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .chat-composer-footer.has-center .chat-composer-start {
+    flex: 1 0 max-content;
+  }
+  .chat-composer-center,
+  .chat-composer-center .chat-model-bar,
+  .chat-composer-center .btn-group {
+    max-width: 100%;
+  }
+  .chat-composer-center .chat-model-btn {
+    min-width: 0;
+    flex-shrink: 1;
+  }
+  .chat-composer-footer.has-center .chat-composer-end {
+    margin-inline-start: auto;
+  }
 }
 .chat-session-controls {
   display: flex;

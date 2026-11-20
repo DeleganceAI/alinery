@@ -28,7 +28,7 @@ export function useSessionFollow() {
 export type SessionFollow = ReturnType<typeof useSessionFollow>;
 
 type Props = {
-  follow: SessionFollow;
+  follow?: SessionFollow;
   scope: string;
   sessionId: string;
   active: boolean;
@@ -38,12 +38,12 @@ type Props = {
   onOpenSession?: (session: SessionDisplayMeta) => void;
 };
 
-export function FollowNextSession({ follow, scope, sessionId, active, readingHistory = false, state, sessions, onOpenSession }: Props) {
-  const { visit, enabled, setEnabled, pause } = follow;
+export function useFollowNextSessionControl({ follow, scope, sessionId, active, readingHistory = false, state, sessions, onOpenSession }: Props) {
+  const visit = follow?.visit;
   const source = Object.values(state?.executions ?? {}).find((record) => record.owner_session_id === sessionId);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || !visit) return;
     return () => {
       // Returning to a tab that completed while we were away is a visit to history.
       if (visit.current?.scope === scope && visit.current.sessionId === sessionId) delete visit.current.executionId;
@@ -51,7 +51,8 @@ export function FollowNextSession({ follow, scope, sessionId, active, readingHis
   }, [active, scope, sessionId, visit]);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || !follow) return;
+    const { visit, enabled, setEnabled, pause } = follow;
     const prior = visit.current;
     const newScope = prior?.scope !== scope;
     if (!prior || newScope) {
@@ -91,13 +92,14 @@ export function FollowNextSession({ follow, scope, sessionId, active, readingHis
     // Record the request before navigation. Repeated deltas and already-finished successors are both possible.
     current.opening = { sessionId: owner.id, executionId: next.id };
     onOpenSession(owner);
-  }, [active, enabled, onOpenSession, pause, readingHistory, scope, sessionId, sessions, setEnabled, source, state, visit]);
+  }, [active, follow, onOpenSession, readingHistory, scope, sessionId, sessions, source, state]);
 
-  if (!active || !source || state?.history_only) return null;
+  if (!active || !follow || !source || state?.history_only) return null;
+  const { enabled, setEnabled, pause } = follow;
   return (
     <button
       type="button"
-      className="btn icon"
+      className={`btn ghost small${enabled ? " on" : ""}`}
       aria-label="Follow next session"
       aria-pressed={enabled}
       title={enabled ? "Following the next session. Click to stay here." : "Open the next session when a single successor starts."}
@@ -105,12 +107,12 @@ export function FollowNextSession({ follow, scope, sessionId, active, readingHis
       onClick={() => {
         if (enabled) pause();
         else {
-          visit.current = { scope, sessionId, readingHistory, executionId: source.id };
+          follow.visit.current = { scope, sessionId, readingHistory, executionId: source.id };
           setEnabled(true);
         }
       }}
     >
-      {enabled ? <Eye size={16} /> : <EyeOff size={16} />}
+      {enabled ? <Eye size={16} aria-hidden="true" /> : <EyeOff size={16} aria-hidden="true" />}
     </button>
   );
 }

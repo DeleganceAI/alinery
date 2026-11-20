@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { WRAP_UP_NUDGE } from "../shared/wrapUpNudge";
+import { currentTurnPosition } from "./chat/journalRows";
 import type { ChatEntry, WrapUpPrompt } from "./chat/types";
 import { nudgeExecution } from "./sync/execution";
 import { newMutationMeta, UnconfirmedDelivery } from "./sync/mutation";
@@ -10,6 +11,7 @@ type Attempt = {
   runId: string;
   meta: ReturnType<typeof newMutationMeta>;
   at: number;
+  position: WrapUpPrompt["position"];
   status: "sending" | "sent" | "failed";
   error?: string;
   checkDelivery?: () => Promise<void>;
@@ -38,7 +40,7 @@ export function useWrapUpNudge(
     let status: WrapUpPrompt["status"] = "sending";
     if (current.status === "sent") status = runEnded ? "ended" : "pending";
     if (current.status === "failed") status = current.checkDelivery ? "unconfirmed" : "failed";
-    return { deliveryId: current.meta.mutationId, at: current.at, text: WRAP_UP_NUDGE, status };
+    return { deliveryId: current.meta.mutationId, at: current.at, position: current.position, text: WRAP_UP_NUDGE, status };
   }, [current, placed, runEnded]);
   const record = (next: Attempt) => {
     latest.current = next;
@@ -52,7 +54,14 @@ export function useWrapUpNudge(
     const retry = !placed && previous?.checkDelivery ? previous : undefined;
     const target = retry?.runId ?? runId;
     if (!target || (!retry && (!enabled || (previous?.runId === target && (previous.status === "sent" || placed))))) return;
-    const sending: Attempt = { session, runId: target, status: "sending", meta: retry?.meta ?? newMutationMeta(), at: retry?.at ?? Date.now() };
+    const sending: Attempt = {
+      session,
+      runId: target,
+      status: "sending",
+      meta: retry?.meta ?? newMutationMeta(),
+      at: retry?.at ?? Date.now(),
+      position: retry ? retry.position : currentTurnPosition(entries),
+    };
     record(sending);
     try {
       if (retry?.checkDelivery) await retry.checkDelivery();

@@ -43,7 +43,7 @@ import {
 } from "../chatTranscript";
 import { confirmDanger } from "../confirm";
 import { lineageSessionIntent } from "../executionLineage";
-import { FollowNextSession, type SessionFollow } from "../FollowNextSession";
+import { type SessionFollow, useFollowNextSessionControl } from "../FollowNextSession";
 import * as ipc from "../ipc";
 import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
@@ -1235,18 +1235,22 @@ export function SessionView({
   const lineageExecutions = Object.values(lineageView?.state.executions ?? {});
   const lineageExecution = lineageExecutions.find((e) => e.owner_session_id === id || e.previous_session_ids.includes(id));
   const navigateSession = (s: SessionMeta) => onOpenSession?.(s, lineageSessionIntent(lineageView?.state, s));
-  const followControl = follow && hasTask && (
-    <FollowNextSession
-      follow={follow}
-      scope={JSON.stringify([repoPath, taskSlug])}
-      sessionId={id}
-      active={active && !fileTabs.current}
-      readingHistory={readingHistory}
-      state={lineageView?.live?.status === "available" && live.sessionsCurrent && !task?.archived ? lineageView.state : undefined}
-      sessions={live.sessions ?? []}
-      onOpenSession={onOpenSession && navigateSession}
-    />
-  );
+  const followControl = useFollowNextSessionControl({
+    follow,
+    scope: JSON.stringify([repoPath, taskSlug]),
+    sessionId: id,
+    active: hasTask && active && !fileTabs.current,
+    readingHistory,
+    state: lineageView?.live?.status === "available" && live.sessionsCurrent && !task?.archived ? lineageView.state : undefined,
+    sessions: live.sessions ?? [],
+    onOpenSession: onOpenSession && navigateSession,
+  });
+  const continuationControls =
+    showChatComposer && !readingHistory && vinculum && ownsRunningExecution && executionView && execution && !execution.ready?.endpoint ? (
+      <StepContinuationMode key={execution.id} repo={repoPath} slug={taskSlug} step={execution.candidate.step_key} view={executionView}>
+        {followControl}
+      </StepContinuationMode>
+    ) : null;
   const awaitingName = display != null && awaitingSessionName({ ...display.session, harness: display.session.harness || harness }, observation);
 
   return (
@@ -1708,17 +1712,7 @@ export function SessionView({
                               }
                               actions={chatVisibility.showMeta ? sessionStats : undefined}
                               center={chatVisibility.showMeta ? modelBar : undefined}
-                              end={
-                                vinculum &&
-                                executionView &&
-                                execution &&
-                                executionAvailable &&
-                                execution.owner_session_id === id &&
-                                execution.lifecycle === "running" &&
-                                !execution.ready?.endpoint ? (
-                                  <StepContinuationMode key={execution.id} repo={repoPath} slug={taskSlug} step={execution.candidate.step_key} view={executionView} />
-                                ) : undefined
-                              }
+                              end={continuationControls}
                               body={messageDraft.body}
                               status={chatStatus}
                               catalog={chat.commands}
@@ -1903,7 +1897,7 @@ export function SessionView({
                 error={executionFeed.error}
                 artifactPaths={ownedPaths}
                 readableArtifactPaths={readablePaths}
-                followControl={followControl}
+                followControl={continuationControls ? null : followControl}
                 viewingFile={Boolean(fileTabs.current)}
                 selectedFile={fileTabs.current && { path: selectedArtifactImages?.artifactPath || selectedArtifact, isTaskArtifact: selectedArtifactIsDirect }}
                 onOpenSession={

@@ -1,4 +1,4 @@
-import type { ChatEntry } from "./types";
+import type { ChatEntry, WrapUpPrompt } from "./types";
 
 /**
  * The journal as the reader sees it: one row per message, each run of agent work (thinking, tool calls and their results,
@@ -27,6 +27,32 @@ export function isLiveWork(entry: ChatEntry): boolean {
 
 /** A step is a unit of work; a tool's result belongs to its call's step, so it is not counted. */
 export const countsAsStep = (entry: ChatEntry) => entry.type !== "tool_result";
+
+function startsTurn(entry: ChatEntry): boolean {
+  return entry.type === "prompt" && !entry.nudgeDeliveryId;
+}
+
+export function currentTurnPosition(entries: readonly ChatEntry[]): WrapUpPrompt["position"] {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (startsTurn(entries[i])) return { promptId: entries[i].id, offset: entries.length - i };
+  }
+}
+
+export function nudgeInsertionIndex(entries: readonly ChatEntry[], nudge: WrapUpPrompt): number {
+  const { position } = nudge;
+  if (position) {
+    const start = entries.findIndex((entry) => entry.id === position.promptId);
+    if (start >= 0) {
+      // A streaming tail can shrink or be replaced. Keep the nudge inside the turn where it was sent.
+      let index = start + 1;
+      const end = Math.min(start + position.offset, entries.length);
+      while (index < end && !startsTurn(entries[index])) index++;
+      return index;
+    }
+  }
+  const next = entries.findIndex((entry) => entry.at != null && entry.at > nudge.at);
+  return next < 0 ? entries.length : next;
+}
 
 function roleOf(entry: ChatEntry): JournalRole {
   if (entry.type === "prompt" || entry.type === "follow_up") return "you";
@@ -82,7 +108,7 @@ export function journalItems(entries: ChatEntry[], running: boolean, shown: (ent
       }
       continue;
     }
-    if (entry.type === "prompt" && !entry.nudgeDeliveryId) {
+    if (startsTurn(entry)) {
       if (items.length > turnStart) closeTurn(false);
       turnStart = items.length;
       hiddenSteps = 0;

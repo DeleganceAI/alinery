@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { FollowNextSession, useSessionFollow } from "./FollowNextSession";
+import { useFollowNextSessionControl, useSessionFollow } from "./FollowNextSession";
 import type { ExecutionRecord, SessionDisplayMeta } from "./types";
 import { executionRecord, executionReply } from "./views/executionTestFixture";
 
@@ -35,6 +35,11 @@ const unrelated = run("other");
 const third = run("publish", "review");
 const button = () => screen.getByRole("button", { name: "Follow next session" });
 
+function Control({ inComposer, ...props }: Parameters<typeof useFollowNextSessionControl>[0] & { inComposer?: boolean }) {
+  const eye = useFollowNextSessionControl(props);
+  return inComposer ? <footer>{eye}</footer> : <nav>{eye}</nav>;
+}
+
 function View({
   records,
   selected = source,
@@ -42,6 +47,8 @@ function View({
   active = true,
   readingHistory,
   scope = "taskA",
+  inComposer,
+  withoutFollow,
   open,
 }: {
   records: ExecutionRecord[];
@@ -50,13 +57,16 @@ function View({
   active?: boolean;
   readingHistory?: boolean;
   scope?: string;
+  inComposer?: boolean;
+  withoutFollow?: boolean;
   open: (value: SessionDisplayMeta) => void;
 }) {
   const follow = useSessionFollow();
   return (
-    <FollowNextSession
+    <Control
       key={selected.id}
-      follow={follow}
+      follow={withoutFollow ? undefined : follow}
+      inComposer={inComposer}
       scope={scope}
       sessionId={selected.owner_session_id}
       sessions={sessions}
@@ -67,6 +77,23 @@ function View({
     />
   );
 }
+
+it("keeps following a watched session when the eye moves from the composer to the navigator", () => {
+  const open = vi.fn();
+  const view = render(<View records={[source]} open={open} inComposer />);
+  expect(button().closest("footer")).toBeTruthy();
+  view.rerender(<View records={[ended(source), next]} open={open} />);
+  expect(button().closest("nav")).toBeTruthy();
+  expect(open).toHaveBeenCalledExactlyOnceWith(session(next));
+});
+
+it("leaves navigation alone when the session has no follow control", () => {
+  const open = vi.fn();
+  const view = render(<View records={[source]} open={open} withoutFollow />);
+  view.rerender(<View records={[ended(source), next]} open={open} withoutFollow />);
+  expect(screen.queryByRole("button", { name: "Follow next session" })).toBeNull();
+  expect(open).not.toHaveBeenCalled();
+});
 
 it("waits for confirmed exit, a single real successor and its started owner; follows each handoff exactly once", () => {
   const open = vi.fn();
