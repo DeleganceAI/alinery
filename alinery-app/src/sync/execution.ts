@@ -11,7 +11,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { daemonTransport } from "../daemon/transport";
 import type { NormalizedPlaybook, TaskExecutionReply, TaskExecutionState } from "../types";
 import { acquireScope, REPO_SCOPE, useEntity, useLink, useScope } from "./hooks";
-import { newMutationMeta } from "./mutation";
+import { confirmDelivery, newMutationMeta } from "./mutation";
 import type { Replica } from "./replica";
 
 export const executionKey = (slug: string) => `execution/${slug}/${slug}`;
@@ -141,6 +141,15 @@ export function whenReaches(replica: Replica, applied: Cursor | undefined, timeo
  */
 export function continueReviewed(repo: string, slug: string, executionId: string, sessionId: string, workRevision: number): Promise<void> {
   return writeExecution(repo, (client) => client.continueReviewed({ meta: newMutationMeta(), taskSlug: slug, executionId, sessionId, workRevision: BigInt(workRevision) }));
+}
+
+export function nudgeExecution(repo: string, taskSlug: string, executionId: string, sessionId: string, runId: string, meta = newMutationMeta()): Promise<void> {
+  const request = { meta, taskSlug, executionId, sessionId, runId };
+  return confirmDelivery("nudge", async () => {
+    const client = createClient(ExecutionService, daemonTransport(repo));
+    const reply = await client.nudgeExecution(request);
+    if (reply.deliveryId !== request.meta.mutationId) throw new ConnectError("Nudge acknowledgement did not match the request", Code.Unknown);
+  });
 }
 
 export function setStepContinuation(repo: string, slug: string, stepKey: string, automatic: boolean, expectedRevision: bigint): Promise<void> {

@@ -60,6 +60,7 @@ export function sessionActivity(task: Task, s: Session): { status?: Tier; active
     return { status: state.playbookReason === "StaleSource" || acknowledged ? durable : [2, "failed"] };
   }
   const live = state.process === "starting" || state.process === "alive";
+  if (supported && state.process === "alive" && state.agent === "errored") return { status: [2, "failed"] };
   const input = supported && live && state.agent === "waiting_for_input";
   const approval = supported && live && state.agent === "waiting_for_approval";
   const busy = state.process === "starting" || (supported && live && state.agent === "busy");

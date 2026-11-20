@@ -122,6 +122,27 @@ describe("watchSessionTranscript", () => {
     expect(got[1]?.messages.map((m) => m.id)).toEqual(["u1", "a1", "a2"]);
   });
 
+  it("rereads a streaming row replaced by a wrap-up nudge during a disconnect", async () => {
+    const prompt = item("u1", "start", { role: "user" });
+    const nudge = item("u2", "Please wrap up this step.", { role: "user", nudgeDeliveryId: "delivery-1" });
+    const requests = serve(async function* (req, call, signal) {
+      if (call === 0) {
+        yield frame([prompt, item("partial", "Working", { streaming: true })], 2);
+        throw new ConnectError("link dropped", Code.Unavailable);
+      }
+      const current = [prompt, nudge, item("a1", "Finished")];
+      yield frame(current.slice(Number(req.fromItem)), current.length);
+      await untilAborted(signal);
+    });
+    const { got, apply } = replies();
+    const stop = watchSessionTranscript("/repo", { taskSlug: "task", id: "session" }, apply, 1);
+    await until(() => got.length === 2);
+    stop();
+    expect(requests.map((r) => r.fromItem)).toEqual([0n, 1n]);
+    expect(got[1]?.messages.map((m) => m.id)).toEqual(["u1", "u2", "a1"]);
+    expect(got[1]?.messages[1]?.nudgeDeliveryId).toBe("delivery-1");
+  });
+
   it("starts over from item 0 when a frame begins past the end of its list", async () => {
     const requests = serve(async function* (_req, call, signal) {
       if (call === 0)

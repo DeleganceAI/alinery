@@ -14,7 +14,65 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/executions.proto.
  */
 export const file_alinery_v1_executions: GenFile = /*@__PURE__*/
-  fileDesc("ChthbGluZXJ5L3YxL2V4ZWN1dGlvbnMucHJvdG8SCmFsaW5lcnkudjEihAEKFkFsbG93Q29tcGxldGlvblJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRhc2tfc2x1ZxgCIAEoCRIUCgxleGVjdXRpb25faWQYAyABKAkSGQoRZXhwZWN0ZWRfcmV2aXNpb24YBCABKAQiPwoXQWxsb3dDb21wbGV0aW9uUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCKXAQoaU2V0U3RlcENvbnRpbnVhdGlvblJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRhc2tfc2x1ZxgCIAEoCRIQCghzdGVwX2tleRgDIAEoCRIRCglhdXRvbWF0aWMYBCABKAgSGQoRZXhwZWN0ZWRfcmV2aXNpb24YBSABKAQiQwobU2V0U3RlcENvbnRpbnVhdGlvblJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQilQEKF0NvbnRpbnVlUmV2aWV3ZWRSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIRCgl0YXNrX3NsdWcYAiABKAkSFAoMZXhlY3V0aW9uX2lkGAMgASgJEhIKCnNlc3Npb25faWQYBCABKAkSFQoNd29ya19yZXZpc2lvbhgFIAEoBCJAChhDb250aW51ZVJldmlld2VkUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZDK1AgoQRXhlY3V0aW9uU2VydmljZRJmChNTZXRTdGVwQ29udGludWF0aW9uEiYuYWxpbmVyeS52MS5TZXRTdGVwQ29udGludWF0aW9uUmVxdWVzdBonLmFsaW5lcnkudjEuU2V0U3RlcENvbnRpbnVhdGlvblJlc3BvbnNlEl0KEENvbnRpbnVlUmV2aWV3ZWQSIy5hbGluZXJ5LnYxLkNvbnRpbnVlUmV2aWV3ZWRSZXF1ZXN0GiQuYWxpbmVyeS52MS5Db250aW51ZVJldmlld2VkUmVzcG9uc2USWgoPQWxsb3dDb21wbGV0aW9uEiIuYWxpbmVyeS52MS5BbGxvd0NvbXBsZXRpb25SZXF1ZXN0GiMuYWxpbmVyeS52MS5BbGxvd0NvbXBsZXRpb25SZXNwb25zZWIGcHJvdG8z", [file_alinery_v1_common]);
+  fileDesc("ChthbGluZXJ5L3YxL2V4ZWN1dGlvbnMucHJvdG8SCmFsaW5lcnkudjEijAEKFU51ZGdlRXhlY3V0aW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGFza19zbHVnGAIgASgJEhQKDGV4ZWN1dGlvbl9pZBgDIAEoCRISCgpzZXNzaW9uX2lkGAQgASgJEg4KBnJ1bl9pZBgFIAEoCSItChZOdWRnZUV4ZWN1dGlvblJlc3BvbnNlEhMKC2RlbGl2ZXJ5X2lkGAEgASgJIoQBChZBbGxvd0NvbXBsZXRpb25SZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIRCgl0YXNrX3NsdWcYAiABKAkSFAoMZXhlY3V0aW9uX2lkGAMgASgJEhkKEWV4cGVjdGVkX3JldmlzaW9uGAQgASgEIj8KF0FsbG93Q29tcGxldGlvblJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQilwEKGlNldFN0ZXBDb250aW51YXRpb25SZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIRCgl0YXNrX3NsdWcYAiABKAkSEAoIc3RlcF9rZXkYAyABKAkSEQoJYXV0b21hdGljGAQgASgIEhkKEWV4cGVjdGVkX3JldmlzaW9uGAUgASgEIkMKG1NldFN0ZXBDb250aW51YXRpb25SZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkIpUBChdDb250aW51ZVJldmlld2VkUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGFza19zbHVnGAIgASgJEhQKDGV4ZWN1dGlvbl9pZBgDIAEoCRISCgpzZXNzaW9uX2lkGAQgASgJEhUKDXdvcmtfcmV2aXNpb24YBSABKAQiQAoYQ29udGludWVSZXZpZXdlZFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQyjgMKEEV4ZWN1dGlvblNlcnZpY2USVwoOTnVkZ2VFeGVjdXRpb24SIS5hbGluZXJ5LnYxLk51ZGdlRXhlY3V0aW9uUmVxdWVzdBoiLmFsaW5lcnkudjEuTnVkZ2VFeGVjdXRpb25SZXNwb25zZRJmChNTZXRTdGVwQ29udGludWF0aW9uEiYuYWxpbmVyeS52MS5TZXRTdGVwQ29udGludWF0aW9uUmVxdWVzdBonLmFsaW5lcnkudjEuU2V0U3RlcENvbnRpbnVhdGlvblJlc3BvbnNlEl0KEENvbnRpbnVlUmV2aWV3ZWQSIy5hbGluZXJ5LnYxLkNvbnRpbnVlUmV2aWV3ZWRSZXF1ZXN0GiQuYWxpbmVyeS52MS5Db250aW51ZVJldmlld2VkUmVzcG9uc2USWgoPQWxsb3dDb21wbGV0aW9uEiIuYWxpbmVyeS52MS5BbGxvd0NvbXBsZXRpb25SZXF1ZXN0GiMuYWxpbmVyeS52MS5BbGxvd0NvbXBsZXRpb25SZXNwb25zZWIGcHJvdG8z", [file_alinery_v1_common]);
+
+/**
+ * Ask the agent to wrap up during this run. The person still reviews and continues the step.
+ *
+ * @generated from message alinery.v1.NudgeExecutionRequest
+ */
+export type NudgeExecutionRequest = Message<"alinery.v1.NudgeExecutionRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string task_slug = 2;
+   */
+  taskSlug: string;
+
+  /**
+   * @generated from field: string execution_id = 3;
+   */
+  executionId: string;
+
+  /**
+   * @generated from field: string session_id = 4;
+   */
+  sessionId: string;
+
+  /**
+   * @generated from field: string run_id = 5;
+   */
+  runId: string;
+};
+
+/**
+ * Describes the message alinery.v1.NudgeExecutionRequest.
+ * Use `create(NudgeExecutionRequestSchema)` to create a new message.
+ */
+export const NudgeExecutionRequestSchema: GenMessage<NudgeExecutionRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_executions, 0);
+
+/**
+ * @generated from message alinery.v1.NudgeExecutionResponse
+ */
+export type NudgeExecutionResponse = Message<"alinery.v1.NudgeExecutionResponse"> & {
+  /**
+   * The mutation_id whose admission the daemon confirmed.
+   *
+   * @generated from field: string delivery_id = 1;
+   */
+  deliveryId: string;
+};
+
+/**
+ * Describes the message alinery.v1.NudgeExecutionResponse.
+ * Use `create(NudgeExecutionResponseSchema)` to create a new message.
+ */
+export const NudgeExecutionResponseSchema: GenMessage<NudgeExecutionResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_executions, 1);
 
 /**
  * Lets one live execution finish: the engine marks it permitted and tells its agent to wrap up.
@@ -52,7 +110,7 @@ export type AllowCompletionRequest = Message<"alinery.v1.AllowCompletionRequest"
  * Use `create(AllowCompletionRequestSchema)` to create a new message.
  */
 export const AllowCompletionRequestSchema: GenMessage<AllowCompletionRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_executions, 0);
+  messageDesc(file_alinery_v1_executions, 2);
 
 /**
  * @generated from message alinery.v1.AllowCompletionResponse
@@ -69,7 +127,7 @@ export type AllowCompletionResponse = Message<"alinery.v1.AllowCompletionRespons
  * Use `create(AllowCompletionResponseSchema)` to create a new message.
  */
 export const AllowCompletionResponseSchema: GenMessage<AllowCompletionResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_executions, 1);
+  messageDesc(file_alinery_v1_executions, 3);
 
 /**
  * Update this task’s continuation choice for a step, including its current and future attempts.
@@ -108,7 +166,7 @@ export type SetStepContinuationRequest = Message<"alinery.v1.SetStepContinuation
  * Use `create(SetStepContinuationRequestSchema)` to create a new message.
  */
 export const SetStepContinuationRequestSchema: GenMessage<SetStepContinuationRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_executions, 2);
+  messageDesc(file_alinery_v1_executions, 4);
 
 /**
  * @generated from message alinery.v1.SetStepContinuationResponse
@@ -125,7 +183,7 @@ export type SetStepContinuationResponse = Message<"alinery.v1.SetStepContinuatio
  * Use `create(SetStepContinuationResponseSchema)` to create a new message.
  */
 export const SetStepContinuationResponseSchema: GenMessage<SetStepContinuationResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_executions, 3);
+  messageDesc(file_alinery_v1_executions, 5);
 
 /**
  * The person accepts the assessment for this owner and work revision. A later message or
@@ -165,7 +223,7 @@ export type ContinueReviewedRequest = Message<"alinery.v1.ContinueReviewedReques
  * Use `create(ContinueReviewedRequestSchema)` to create a new message.
  */
 export const ContinueReviewedRequestSchema: GenMessage<ContinueReviewedRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_executions, 4);
+  messageDesc(file_alinery_v1_executions, 6);
 
 /**
  * @generated from message alinery.v1.ContinueReviewedResponse
@@ -182,7 +240,7 @@ export type ContinueReviewedResponse = Message<"alinery.v1.ContinueReviewedRespo
  * Use `create(ContinueReviewedResponseSchema)` to create a new message.
  */
 export const ContinueReviewedResponseSchema: GenMessage<ContinueReviewedResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_executions, 5);
+  messageDesc(file_alinery_v1_executions, 7);
 
 /**
  * Execution approvals. The read side is the `execution/<slug>/<slug>` entity (entities.proto).
@@ -191,6 +249,16 @@ export const ContinueReviewedResponseSchema: GenMessage<ContinueReviewedResponse
  * @generated from service alinery.v1.ExecutionService
  */
 export const ExecutionService: GenService<{
+  /**
+   * ACT
+   *
+   * @generated from rpc alinery.v1.ExecutionService.NudgeExecution
+   */
+  nudgeExecution: {
+    methodKind: "unary";
+    input: typeof NudgeExecutionRequestSchema;
+    output: typeof NudgeExecutionResponseSchema;
+  },
   /**
    * APPROVE
    *

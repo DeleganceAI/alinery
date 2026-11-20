@@ -1017,6 +1017,8 @@ export function ArtifactProvenanceBadges({ handoffs, onOpenRelatedTask }: { hand
 // compacted only where a row badge cannot carry the full phrase.
 export function obsLabel(kind: ObservationDisplayKind): string {
   switch (kind) {
+    case "errored":
+      return "Turn failed";
     case "failed":
       return "Failed";
     case "stale":
@@ -1050,6 +1052,8 @@ export function obsLabel(kind: ObservationDisplayKind): string {
 
 function obsTooltip(kind: ObservationDisplayKind): string {
   switch (kind) {
+    case "errored":
+      return "The provider could not finish the last turn";
     case "failed":
       return "Playbook failed";
     case "stale":
@@ -1083,7 +1087,8 @@ function obsTooltip(kind: ObservationDisplayKind): string {
 
 // Attention reason to pass to notify_session_attention, or null if no notification.
 // Unsupported/unknown never notify.
-function attentionReason(kind: ObservationDisplayKind): "idle" | "waiting_for_input" | "waiting_for_approval" | null {
+function attentionReason(kind: ObservationDisplayKind): keyof typeof ATTENTION_SUFFIX | null {
+  if (kind === "errored") return "errored";
   if (kind === "idle") return "idle";
   if (kind === "waiting_for_input") return "waiting_for_input";
   if (kind === "waiting_for_approval") return "waiting_for_approval";
@@ -1101,7 +1106,12 @@ export function notifySessionAttentionTransition(previous: ObservationDisplayKin
   ipc.notifySessionAttention(attentionBody(label, reason)).catch(() => {});
 }
 
-const ATTENTION_SUFFIX = { idle: "idle, needs you", waiting_for_input: "waiting for your input", waiting_for_approval: "waiting for your approval" } as const;
+const ATTENTION_SUFFIX = {
+  idle: "idle, needs you",
+  errored: "turn failed",
+  waiting_for_input: "waiting for your input",
+  waiting_for_approval: "waiting for your approval",
+} as const;
 
 /** The text of an attention notification: the label the session entity carries (its task's name) and why it needs the person. */
 export const attentionBody = (label: string, reason: keyof typeof ATTENTION_SUFFIX) => `${label || "session"} — ${ATTENTION_SUFFIX[reason]}`;
@@ -1208,7 +1218,7 @@ export function StatusDot({
     );
   }
 
-  if (unreadCompletion && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval" && kind !== "failed") {
+  if (unreadCompletion && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval" && kind !== "failed" && kind !== "errored") {
     return (
       <span className="statusdot" title="Completed — not yet opened">
         <span className="ind-wrap" role="img" aria-label="Unread completion">
@@ -1219,7 +1229,8 @@ export function StatusDot({
     );
   }
 
-  return <StatusMarker kind={kind} minimal={minimal} />;
+  const agent = obs?.state?.agent;
+  return <StatusMarker kind={kind} minimal={minimal} title={kind === "errored" && agent?.state === "errored" ? agent.reason || undefined : undefined} />;
 }
 
 /**
@@ -1255,10 +1266,11 @@ export function StatusMarker({
   }
 
   // Compact badges for waits and failures.
-  if (kind === "waiting_for_input" || kind === "waiting_for_approval" || kind === "failed" || kind === "unknown") {
+  if (kind === "waiting_for_input" || kind === "waiting_for_approval" || kind === "failed" || kind === "errored" || kind === "unknown") {
+    const badge = kind === "errored" ? "failed" : kind;
     return (
-      <span className={`statusdot statusdot-badge statusdot-${kind}`} title={title}>
-        <StateIcon state={kind} />
+      <span className={`statusdot statusdot-badge statusdot-${badge}`} title={title}>
+        <StateIcon state={badge} />
         {label}
       </span>
     );

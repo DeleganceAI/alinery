@@ -1,0 +1,108 @@
+diff --git a/dist/harness/generation.js b/dist/harness/generation.js
+index d046232b140f91542879ecd60d05f5796449bf31..bc571d26f049d9d83e30defc93d1914406c6b729 100644
+--- a/dist/harness/generation.js
++++ b/dist/harness/generation.js
+@@ -6,7 +6,7 @@ import { AssistantEntry, ResetEntry, SystemEntry, UserEntry } from "../entries.j
+ import { defineTask } from "../tasks.js";
+ import { addTools, sectionExtension } from "./agent.js";
+ import { compactionPolicy, createCompaction, estimateContext, selectCut } from "./compaction.js";
+-import { applyBoundary, prepareBoundary, withdrawQueuedInputs } from "./inbox.js";
++import { appendInput, applyBoundary, hasQueuedReset, prepareBoundary, withdrawQueuedInputs } from "./inbox.js";
+ import { assignJson } from "./json.js";
+ import { endRun, LiveDoc } from "./live.js";
+ import { planSystemEntries, renderSections, replaySections } from "./prompt.js";
+@@ -469,7 +469,16 @@ async function answer(runtime, message, context) {
+         const live = await tx.doc(LiveDoc, conversationId);
+         const entry = await appendAssistant(tx, conversationId, message);
+         const result = { status: "terminal", outcome: { status: "completed", result: { entryId: entry.id } } };
+-        const { users, reset } = await applyBoundary(tx, boundary, "final", runtime.now());
++        const now = runtime.now();
++        const steering = live.run?.taskId === runtime.taskId && live.run.steer !== undefined && !hasQueuedReset(boundary.inbox.items);
++        const { users, reset } = await applyBoundary(tx, boundary, steering ? "postTools" : "final", now);
++        if (steering) {
++            live.run.inputs.push(...users);
++            await placeRunSteer(tx, live.run, conversationId, now);
++            handOver(live, runtime.taskId, await createGeneration(tx, conversationId));
++            delete live.generation;
++            return result;
++        }
+         if (continuation !== undefined && users.length === 0 && !reset) {
+             const user = { role: "user", content: continuation, timestamp: runtime.now() };
+             await tx.appendEntry(UserEntry, conversationId, { model: [user] });
+@@ -574,8 +583,10 @@ async function finishToolRound(runtime, assistant, tools, context) {
+             else {
+                 delete live.tools;
+                 delete live.nestedTools;
+-                if (live.run?.taskId === runtime.taskId)
++                if (live.run?.taskId === runtime.taskId) {
+                     live.run.inputs.push(...users);
++                    await placeRunSteer(tx, live.run, conversationId, now);
++                }
+                 handOver(live, runtime.taskId, await createGeneration(tx, conversationId));
+             }
+         }
+@@ -590,6 +601,15 @@ async function appendAssistant(tx, conversationId, message) {
+     await recordUsage(tx, conversationId, "models", `${message.provider}/${message.model}`, message.usage);
+     return tx.appendEntry(AssistantEntry, conversationId, { model: [message] });
+ }
++/** Place a steering input owned by this run before its next generation. */
++async function placeRunSteer(tx, run, conversationId, now) {
++    if (!run.steer) return;
++    const { id, content } = run.steer;
++    const entry = await appendInput(tx, conversationId, content, run.steer.entry, now);
++    tx.placeSubmission(id, entry.id);
++    run.inputs.push(id);
++    delete run.steer;
++}
+ /** Start a run for `inputs`, placed input submissions: a new generation takes `pi.live.run`. */
+ export async function startRun(tx, conversationId, live, inputs) {
+     live.run = { taskId: await createGeneration(tx, conversationId, { submissionIds: inputs }), inputs };
+diff --git a/dist/harness/live.d.ts b/dist/harness/live.d.ts
+index 4694cf9b85989a7b451afe4c652a94b83f5638a2..77aa29b886b1d782aaf725889b22f0de71a58201 100644
+--- a/dist/harness/live.d.ts
++++ b/dist/harness/live.d.ts
+@@ -3,7 +3,7 @@ import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+ import type { Transaction } from "../session/transaction.ts";
+ import type { EntryId, JsonObject, SubmissionId, SubmissionSettlement, TaskId, TaskRecord, Tx } from "../types.ts";
+ import type { SchedulerOutcome } from "./scheduler.ts";
+-import type { CompactionReason, CompactionResult, ToolDiagnostic } from "./types.ts";
++import type { CompactionReason, CompactionResult, InputEntry, ToolDiagnostic } from "./types.ts";
+ /** What a running tool call publishes, shared by model-issued and nested calls. */
+ type SlotProgress = {
+     callId: string;
+@@ -78,6 +78,8 @@ export type LiveState = {
+     run?: {
+         taskId: TaskId;
+         inputs: SubmissionId[];
++        /** One host-admitted steering input scoped to this run. Ordinary follow-ups stay in the inbox. */
++        steer?: { id: SubmissionId; content: string; entry?: InputEntry };
+     };
+     /** Presentation of the current generation attempt. */
+     generation?: {
+diff --git a/dist/harness/live.js b/dist/harness/live.js
+index 86337dd2ef85c3e430fd93da0e0610176a8d45fb..4072b9c37cb15517c289959993b0b36e01eae471 100644
+--- a/dist/harness/live.js
++++ b/dist/harness/live.js
+@@ -26,6 +26,9 @@ const COMPACTION_TASK_KIND = "pi.compaction";
+  */
+ export function endRun(tx, live, taskId, settlement) {
+     if (live.run?.taskId === taskId) {
++        if (live.run.steer) {
++            tx.settleSubmission(live.run.steer.id, { status: "unanswered", reason: settlement.status === "unanswered" ? settlement.reason : "run_ended" });
++        }
+         for (const id of live.run.inputs)
+             tx.settleSubmission(id, settlement);
+         delete live.run;
+diff --git a/dist/harness/submissions.js b/dist/harness/submissions.js
+index 8496124ee10b4814b27b4b6316f27d2023bcf8e4..22321fb34ddcb8987d9bb40499402411b5a94467 100644
+--- a/dist/harness/submissions.js
++++ b/dist/harness/submissions.js
+@@ -89,6 +89,8 @@ export class Submissions {
+                 return "not_found";
+             }
+             if (record.status === "queued") {
++                const live = await tx.doc(LiveDoc, record.conversationId);
++                if (live.run?.steer?.id === id) delete live.run.steer;
+                 tx.settleSubmission(id, { status: "unanswered", reason: "aborted" });
+                 await removeInboxItem(tx, record.conversationId, id);
+                 return "aborted";

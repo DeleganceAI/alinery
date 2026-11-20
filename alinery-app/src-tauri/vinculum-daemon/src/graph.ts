@@ -20,6 +20,7 @@ export type SessionHooks = {
   status(id: string): Promise<SessionStatus>;
   reviewBlocker?(id: string, human: boolean): Promise<string | undefined>;
   send(id: string, text: string): Promise<void>;
+  nudge?(id: string, runId: string, deliveryId: string, checkOwner: (executionId: string) => void): Promise<void>;
   stop(id: string, taskSlug: string): Promise<void>;
   /** A session the engine launched: it stands for this execution of this step. */
   bind(id: string, executionId: string, step: string): void;
@@ -111,12 +112,15 @@ async function withSessionAction<T>(id: string, run: () => Promise<T>): Promise<
   }
 }
 
-export async function submitSessionWork(slug: string, sessionId: string, submit: () => Promise<void>): Promise<void> {
-  if (!slug) return submit();
-  await engineReady;
-  if (hooks) openTask(repoRoot, slug, hooks);
+export async function submitSessionWork(slug: string, sessionId: string, submit: () => Promise<void>, check?: (boundExecution?: string) => Promise<boolean>): Promise<void> {
+  if (slug) {
+    await engineReady;
+    if (hooks) openTask(repoRoot, slug, hooks);
+  }
   return withSessionAction(sessionId, async () => {
     const link = bound.get(sessionId);
+    // A replay or stale Retry must not invalidate reviewed work.
+    if (check && !(await check(link?.execId))) return;
     if (link) {
       const engine = running.get(slug)?.engine;
       if (link.slug !== slug || !engine) throw new DomainError("failed_precondition", "the owning execution is unavailable");
@@ -140,6 +144,22 @@ export async function continueReviewed(slug: string, executionId: string, sessio
     const reply = await engine.continueReviewed(executionId, sessionId, revision);
     if (reply.kind === "stale") throw new DomainError("aborted", reply.reason);
     if (reply.kind !== "accepted") throw new DomainError("failed_precondition", reply.kind === "rejected" ? reply.problems.join("\n") : "the execution is awaiting review");
+  });
+}
+
+export async function nudgeExecution(slug: string, executionId: string, sessionId: string, runId: string, deliveryId: string): Promise<string> {
+  return withSessionAction(sessionId, async () => {
+    const execution = running.get(slug)?.engine.state.executions.get(executionId);
+    if (!execution || execution.sessionId !== sessionId || !hooks?.nudge) throw new DomainError("failed_precondition", "The owning execution is unavailable.");
+    await hooks.nudge(sessionId, runId, deliveryId, (sessionExecution) => {
+      const owner = bound.get(sessionId);
+      if (owner?.slug !== slug || owner.execId !== executionId || sessionExecution !== executionId || execution.status !== "live" || execution.receipt || execution.ready) {
+        throw new DomainError("failed_precondition", "The step is no longer working toward review.");
+      }
+      const task = readTaskChecked(repoRoot, slug);
+      if (task.archived || task.draft) throw new DomainError("failed_precondition", "Only an active playbook task can be nudged.");
+    });
+    return deliveryId;
   });
 }
 

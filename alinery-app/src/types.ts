@@ -654,7 +654,8 @@ export type ProcessState = { state: "starting" } | { state: "alive" } | { state:
 // Mirrors alinery-core AgentState
 export type AgentState =
   | { state: "unknown" }
-  | { state: "busy" }
+  | { state: "busy"; correlation_id?: string }
+  | { state: "errored"; correlation_id: string; reason: string }
   | { state: "waiting_for_input"; correlation_id: string }
   | { state: "waiting_for_approval"; correlation_id: string }
   | { state: "idle" };
@@ -684,6 +685,8 @@ export type SemanticCheckpoint = {
 export type SessionTransport = "pty" | "rpc";
 
 export type SessionObservation = {
+  /** Last known state from a disconnected replica. */
+  stale?: boolean;
   lifecycle: LifecycleState;
   state: SessionState | null;
   checkpoint: SemanticCheckpoint;
@@ -703,7 +706,9 @@ export type ChatPart =
 export type ChatMessage = {
   role: "user" | "assistant" | "toolResult";
   content: ChatPart[];
+  nudgeDeliveryId?: string;
   stopReason?: string;
+  turnError?: { reason: string; failedEntryId?: string };
   customType?: string;
   /**
    * Id of the Vinculum journal row this message came from. Present only for messages read off disk;

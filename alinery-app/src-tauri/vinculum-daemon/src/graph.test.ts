@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { stateHasStart } from "./domain/executionStore.ts";
 import type { SessionHooks } from "./graph.ts";
-import { completeSession, continueReviewed, engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, taskShouldHold, tickGraphs } from "./graph.ts";
+import { completeSession, continueReviewed, engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, nudgeExecution, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, submitSessionWork, taskShouldHold, tickGraphs } from "./graph.ts";
 
 describe("execution model", () => {
   test("uses the task default when the playbook leaves the model blank", () => {
@@ -101,6 +101,51 @@ function recordingHooks(): SessionHooks & { opened: Array<{ id: string; model: s
 }
 
 describe("playbook host", () => {
+  test("a nudge requires the working owner and keeps reviewed readiness and accepted handoff intact", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-nudge-review-"));
+    const hooks = recordingHooks();
+    resetGraphs();
+    prepareGraphs(repo, hooks);
+    taskFixture(repo, "work", {});
+    await tickGraphs();
+    const execution = engineExecutions("work")[0];
+    const session = hooks.opened[0].id;
+    let sent = 0;
+    hooks.nudge = async (_id, _run, _delivery, checkOwner) => {
+      checkOwner(execution.id);
+      sent++;
+    };
+    await expect(nudgeExecution("work", execution.id, "stale-owner", "101", "click")).rejects.toThrow("owning execution");
+    expect(await nudgeExecution("work", execution.id, session, "101", "click")).toBe("click");
+    writeFileSync(join(execution.outDir, "out.md"), "ready");
+    const ready = await completeSession(session);
+    expect(ready?.outcome).toBe("ready_for_review");
+    const revision = Number(ready?.work_revision);
+    const nudge = () => nudgeExecution("work", execution.id, session, "102", "late-click");
+    await expect(nudge()).rejects.toThrow("no longer working");
+    await continueReviewed("work", execution.id, session, revision);
+    await expect(nudge()).rejects.toThrow("no longer working");
+    expect(sent).toBe(1);
+  });
+
+  test("a replayed Retry preserves a review and an accepted handoff prevents delivery", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-retry-review-"));
+    const hooks = recordingHooks();
+    resetGraphs();
+    prepareGraphs(repo, hooks);
+    taskFixture(repo, "review", { approve: true });
+    await tickGraphs();
+    const execution = engineExecutions("review")[0];
+    const sessionId = hooks.opened[0].id;
+    writeFileSync(join(execution.outDir, "out.md"), "ready");
+    const review = await completeSession(sessionId);
+    expect(review?.outcome).toBe("ready_for_review");
+    const unexpectedDelivery = async () => { throw new Error("unexpected delivery"); };
+    await submitSessionWork("review", sessionId, unexpectedDelivery, async () => false);
+    await continueReviewed("review", execution.id, sessionId, Number(review?.work_revision));
+    await expect(submitSessionWork("review", sessionId, unexpectedDelivery, async () => true)).rejects.toThrow("no longer accepts work");
+  });
+
   test("create without starting does not launch, and an old log that already started is converted once", async () => {
     const repo = mkdtempSync(join(tmpdir(), "vinculum-hold-"));
     const hooks = recordingHooks();

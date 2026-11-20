@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -9,9 +9,10 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { createRegistry, Harness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
+import { SyncService } from "alinery-proto/alinery/v1/sync_pb";
 import { JobRunner } from "../jobs/runner.ts";
-import { DaemonConnection } from "../mcpServer/client.ts";
-import { startDaemon } from "../mcpServer/daemonFixture.testutil.ts";
+import { DaemonConnection, newMeta } from "../mcpServer/client.ts";
+import { SECRET as daemonSecret, startDaemon } from "../mcpServer/daemonFixture.testutil.ts";
 import { buildFixture } from "../mcpServer/fixtureRepo.testutil.ts";
 import type { TranscriptFeed } from "../runtime/transcript.ts";
 import { Store } from "../sync/store.ts";
@@ -130,6 +131,74 @@ test("WatchTranscript on a fresh daemon returns a retained Pi conversation in on
     expect(ConnectError.from(invalid).code).toBe(Code.InvalidArgument);
   } finally {
     await daemon?.stop();
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+}, 45_000);
+
+test("RetryTurn recovers the failed conversation once through a live daemon", async () => {
+  const fx = await buildFixture();
+  const original = "Read the test ticket.";
+  const recovered = "I recovered the ticket.";
+  const reason = "The fixture provider rejected the request";
+  let healthy = false;
+  const requests: string[] = [];
+  const provider = Bun.serve({
+    hostname: "127.0.0.1", port: 0,
+    async fetch(req) {
+      const body = await req.json() as { messages: unknown[] };
+      requests.push(JSON.stringify(body.messages));
+      if (!healthy) return Response.json({ error: { message: reason } }, { status: 400 });
+      const chunk = (delta: object, finish_reason: string | null) => `data: ${JSON.stringify({ id: "retry", model: "retry", choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
+      return new Response(chunk({ role: "assistant", content: recovered }, null) + chunk({}, "stop") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    },
+  });
+  let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
+  try {
+    writeFileSync(join(dirname(fx.appConfig), "inference.json"), JSON.stringify({
+      token: "fixture-only", expires_at: Math.floor(Date.now() / 1000) + 120,
+      catalog: { base_url: `http://127.0.0.1:${provider.port}/v1`, models: [{ id: "retry", name: "Retry", context_window: 64_000, max_tokens: 512 }] },
+    }));
+    daemon = await startDaemon(fx);
+    const endpoint = { socket: daemon.socket, token: daemonSecret };
+    const protocol = daemon.context().protocol;
+    const conn = new DaemonConnection(endpoint, protocol);
+    const client = conn.api(SessionService);
+    const created = await client.createSession({ meta: newMeta(), taskSlug: fx.slug, target: { case: "auxiliary", value: { harness: "vinculum", model: "alinery/retry", prompt: original } }, start: true });
+    expect(created.started).toMatchObject({ start: "started", errors: [] });
+    const session = { taskSlug: fx.slug, id: String(created.started!.session!.id) };
+    const observe = async (agent: string) => {
+      const scope = { kind: { case: "session" as const, value: { session } } };
+      for await (const { frame } of conn.api(SyncService).subscribe({ scope }, { signal: AbortSignal.timeout(10_000) })) {
+        const rows = frame.case === "snapshot" ? frame.value.entities : frame.case === "delta" ? frame.value.changes.flatMap((change) => change.op.case === "put" ? [change.op.value] : []) : [];
+        for (const { value } of rows) if (value.case === "session" && value.value.status?.agent === agent) return value.value.status;
+      }
+      throw new Error(`Session ended before observing ${agent}`);
+    };
+    const readTranscript = async () => {
+      for await (const frame of client.watchTranscript({ session }, { signal: AbortSignal.timeout(10_000) })) return frame.items;
+      throw new Error("Missing transcript");
+    };
+    const failure = await observe("errored");
+    expect(failure.agentReason).toContain(reason);
+    const failedTranscript = await readTranscript();
+    expect(failedTranscript.find((item) => item.id === failure.agentCorrelationId)?.turnError).toBe(failure.agentReason);
+    expect(requests).toHaveLength(1);
+
+    healthy = true;
+    const retryRequest = () => ({ sessionId: session.id, failedEntryId: failure.agentCorrelationId, meta: newMeta() });
+    await Promise.all([client.retryTurn(retryRequest()), client.retryTurn(retryRequest())]);
+    await observe("idle");
+    await new DaemonConnection(endpoint, protocol).api(SessionService).retryTurn(retryRequest());
+    const transcript = await readTranscript();
+    const texts = transcript.flatMap((item) => item.content.flatMap((part) => part.kind.case === "text" ? [part.kind.value] : []));
+    expect(texts.filter((text) => text === "Continue from where the failed turn stopped.")).toHaveLength(1);
+    expect(texts).toContain(recovered);
+    expect(transcript.find((item) => item.id === failure.agentCorrelationId)?.turnError).toBe(failure.agentReason);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toContain(original);
+  } finally {
+    await daemon?.stop();
+    provider.stop(true);
     rmSync(fx.root, { recursive: true, force: true });
   }
 }, 45_000);

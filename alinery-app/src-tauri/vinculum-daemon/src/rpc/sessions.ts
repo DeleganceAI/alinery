@@ -52,6 +52,8 @@ export function toItem(item: TranscriptReply): Item {
     isError: item.isError === true,
     runningToolIds: item.runningToolIds ?? [],
     at: BigInt(Math.trunc(item.at ?? 0)),
+    turnError: item.turnError,
+    nudgeDeliveryId: item.nudgeDeliveryId,
   };
 }
 
@@ -85,6 +87,7 @@ export function promptImages(images: readonly DraftImage[]): PromptImage[] {
 /** The turn controls of a live harness session, the same for a task session and a chat thread. A refusal is a `DomainError`. */
 export type TurnControl = {
   prompt(id: string, text: string, images?: PromptImage[]): Promise<void>;
+  retry(id: string, failedEntryId: string): Promise<void>;
   abort(id: string): Promise<void>;
   setModel(id: string, model: string): Promise<Controls>;
   setThinkingLevel(id: string, level: string): Promise<Controls>;
@@ -259,6 +262,13 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
       requireCapability(ctx, Capability.ACT);
       return once(req.meta, async () => {
         await c().turns.prompt(req.sessionId, req.text, promptImages(req.images));
+        return {};
+      });
+    },
+    retryTurn: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => {
+        await c().turns.retry(req.sessionId, req.failedEntryId);
         return {};
       });
     },

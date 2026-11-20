@@ -57,7 +57,7 @@ export function journalItems(entries: ChatEntry[], running: boolean, shown: (ent
     const first = turn[0];
     const answered = turn.some((item) => item.kind === "entry" && item.role === "answer");
     if (final && running) return;
-    if (first?.kind !== "entry" || first.entry.type !== "prompt" || !answered) return;
+    if (first?.kind !== "entry" || first.entry.type !== "prompt" || first.entry.nudgeDeliveryId || !answered) return;
     const steps = turn.reduce((n, item) => n + (item.kind === "work" ? item.entries.filter(countsAsStep).length : 0), hiddenSteps);
     // A loop, not Math.max(...): spreading a long turn's timestamps overflows the call stack.
     let end = hiddenEnd;
@@ -82,13 +82,15 @@ export function journalItems(entries: ChatEntry[], running: boolean, shown: (ent
       }
       continue;
     }
-    if (entry.type === "prompt") {
+    if (entry.type === "prompt" && !entry.nudgeDeliveryId) {
       if (items.length > turnStart) closeTurn(false);
       turnStart = items.length;
       hiddenSteps = 0;
       hiddenEnd = Number.NEGATIVE_INFINITY;
     }
-    items.push({ kind: "entry", key: entry.id, entry, role: roleOf(entry) });
+    // The local nudge and its subsequent transcript entry are the same message inside this turn.
+    const key = entry.type === "prompt" && entry.nudgeDeliveryId ? `nudge:${entry.nudgeDeliveryId}` : entry.id;
+    items.push({ kind: "entry", key, entry, role: roleOf(entry) });
   }
   if (items.length > turnStart) closeTurn(true);
   return items;

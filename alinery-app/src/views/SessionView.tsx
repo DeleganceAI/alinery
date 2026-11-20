@@ -39,6 +39,7 @@ import {
   emptyTranscript,
   NEXT_TURN_MODEL_TITLE,
   NEXT_TURN_THINKING_TITLE,
+  needsUiReply,
 } from "../chatTranscript";
 import { confirmDanger } from "../confirm";
 import { lineageSessionIntent } from "../executionLineage";
@@ -115,6 +116,8 @@ import type {
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
+import { useTurnRetry } from "../useTurnRetry";
+import { useWrapUpNudge } from "../useWrapUpNudge";
 import { sessionIsRecoverable, sessionTerminalLabel } from "../vinculumHarness";
 import { FileView, richPreview } from "./CanvasFiles";
 import { ChatModelBar, ComposerStats } from "./ChatModelBar";
@@ -1097,6 +1100,41 @@ export function SessionView({
   });
   const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting ? "waiting_approval" : turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;
+  const ownsRunningExecution = executionAvailable && execution?.owner_session_id === id && execution.lifecycle === "running" && !execution.receipt_id;
+  const sessionActionAvailable =
+    showChat &&
+    terminalConnection === "open" &&
+    (!hasTask || live.sessionsCurrent) &&
+    !messageSending &&
+    !messageInterrupting &&
+    !chat.sessionMeta.isCompacting &&
+    !completionBusy &&
+    !archiveBusy &&
+    !live.session?.archived &&
+    live.session?.ended_at == null &&
+    !task?.archived;
+  const retryableExecution = execution ? ownsRunningExecution : !hasTask || (live.session != null && !live.session.execution_id);
+  const turnRetry = useTurnRetry(repoPath, id, observation, sessionActionAvailable && retryableExecution && !turnActive);
+  const runId = observedState?.agent.state === "busy" ? observedState.agent.correlation_id : undefined;
+  const showNudge = Boolean(
+    runId && ownsRunningExecution && !execution?.ready && rpcProcessLive && !observation?.stale && !chat.pendingUi.some((request) => needsUiReply(request.method)),
+  );
+  const nudge = useWrapUpNudge(repoPath, taskSlug, execution?.id ?? "", id, observation, showNudge && sessionActionAvailable, chat.entries);
+  const deliveryNotice = nudge.error && (
+    <InlineStatus
+      tone={nudge.unconfirmed ? "warning" : "error"}
+      action={
+        nudge.unconfirmed &&
+        !readingHistory && (
+          <button type="button" className="btn small" onClick={nudge.send} disabled={nudge.pending || terminalConnection !== "open" || observation?.stale}>
+            Check delivery
+          </button>
+        )
+      }
+    >
+      {nudge.unconfirmed ? nudge.error : `Couldn’t send the wrap-up nudge. ${nudge.error}`}
+    </InlineStatus>
+  );
   const composerCanAbort = canAbortChatSession(messageReadiness);
   const sendNowEnabled =
     turnActive &&
@@ -1590,6 +1628,8 @@ export function SessionView({
                     {liveRpc || vinculum ? (
                       <ChatPane
                         entries={chat.entries}
+                        deliveryNotice={deliveryNotice}
+                        wrapUpPrompt={nudge.prompt}
                         status={chatStatus}
                         visibility={chatVisibility}
                         onLoadOlder={loadOlder}
@@ -1619,8 +1659,11 @@ export function SessionView({
                         <div className="terminal-frame">
                           <ChatPane
                             entries={chat.entries}
+                            deliveryNotice={deliveryNotice}
+                            wrapUpPrompt={nudge.prompt}
                             status={chatStatus}
-                            stepActivity={finishingStep ? "Finishing step…" : readyEndpoint ? "Ready for review" : undefined}
+                            turnRetry={turnRetry}
+                            stepActivity={finishingStep ? "Finishing step…" : readyEndpoint && agentState !== "errored" ? "Ready for review" : undefined}
                             visibility={chatVisibility}
                             onLoadOlder={loadOlder}
                             loadingOlder={loadingOlder}
@@ -1631,7 +1674,17 @@ export function SessionView({
                           <>
                             <ChatComposer
                               besideSend={
-                                reviewCurrent && review && !review.endpoint && execution && executionView ? (
+                                showNudge ? (
+                                  <button
+                                    type="button"
+                                    className="btn ghost small"
+                                    title="Ask the agent to finish this step during the current turn"
+                                    disabled={!sessionActionAvailable || nudge.pending || nudge.sent || nudge.unconfirmed}
+                                    onClick={nudge.send}
+                                  >
+                                    {nudge.sent ? "Nudge sent" : nudge.pending ? "Sending nudge…" : "Nudge to wrap up"}
+                                  </button>
+                                ) : reviewCurrent && review && !review.endpoint && execution && executionView ? (
                                   <ReviewedCompletion
                                     repo={repoPath}
                                     slug={taskSlug}
@@ -1642,6 +1695,7 @@ export function SessionView({
                                       !rpcProcessLive ||
                                       completionBusy ||
                                       messageSending ||
+                                      turnRetry?.pending === true ||
                                       turnActive ||
                                       chat.sessionMeta.isCompacting === true ||
                                       agentState === "waiting_for_approval" ||
@@ -1754,6 +1808,8 @@ export function SessionView({
                         <div className="terminal-frame">
                           <ChatPane
                             entries={chat.entries}
+                            deliveryNotice={deliveryNotice}
+                            wrapUpPrompt={nudge.prompt}
                             status="idle"
                             visibility={chatVisibility}
                             onLoadOlder={loadOlder}

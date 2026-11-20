@@ -7,9 +7,23 @@ import "alinery/v1/common.proto";
 // Execution approvals. The read side is the `execution/<slug>/<slug>` entity (entities.proto).
 // The engine decides everything else about an execution; the daemon only passes the person's permission on.
 service ExecutionService {
+  rpc NudgeExecution(NudgeExecutionRequest) returns (NudgeExecutionResponse);  // ACT
   rpc SetStepContinuation(SetStepContinuationRequest) returns (SetStepContinuationResponse);  // APPROVE
   rpc ContinueReviewed(ContinueReviewedRequest) returns (ContinueReviewedResponse);  // APPROVE
   rpc AllowCompletion(AllowCompletionRequest) returns (AllowCompletionResponse);  // APPROVE
+}
+
+// Ask the agent to wrap up during this run. The person still reviews and continues the step.
+message NudgeExecutionRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  string execution_id = 3;
+  string session_id = 4;
+  string run_id = 5;
+}
+
+message NudgeExecutionResponse {
+  string delivery_id = 1; // The mutation_id whose admission the daemon confirmed.
 }
 
 // Lets one live execution finish: the engine marks it permitted and tells its agent to wrap up.

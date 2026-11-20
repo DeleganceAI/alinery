@@ -66,6 +66,7 @@ async function start() {
   };
   const turnCalls: string[] = [];
   const turns: TurnControl = {
+    retry: async (id, failed) => void turnCalls.push(`retry ${id} ${failed}`),
     prompt: async (id, text, images = []) => void turnCalls.push(`prompt ${id} ${text}${images.map((i) => ` +${i.mimeType}:${i.data}`).join("")}`),
     abort: async (id) => void turnCalls.push(`abort ${id}`),
     setModel: async (id, model) => {
@@ -269,6 +270,10 @@ test("a session's turn controls reach the daemon's runner, and what it refuses l
   await c.session.promptSession({ meta: m, sessionId: "s1", text: "once" });
   await c.session.promptSession({ meta: m, sessionId: "s1", text: "once" });
   expect(c.turnCalls.filter((line) => line === "prompt s1 once")).toHaveLength(1);
+  const retry = { meta: meta(), sessionId: "s1", failedEntryId: "14" };
+  await c.session.retryTurn(retry);
+  await c.session.retryTurn(retry);
+  expect(c.turnCalls.filter((line) => line === "retry s1 14")).toHaveLength(1);
 });
 
 test("a prompt's images reach the runner as image parts, and one the composer could not have sent is refused", async () => {

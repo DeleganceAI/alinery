@@ -4,9 +4,9 @@ import { fileURLToPath } from "node:url";
 import { fireEvent, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { ACTOR, type ChatEntry, subagent } from "../chat/types";
+import { ACTOR, type ChatEntry, subagent, type WrapUpPrompt } from "../chat/types";
 import { chatVisibilityFromAppearance, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
-import { applyRpcLine, emptyTranscript } from "../chatTranscript";
+import { applyRpcLine, applyVinculumTranscript, emptyTranscript } from "../chatTranscript";
 import { stubScrollSize } from "../test/scroll";
 import { ChatPane } from "./ChatPane";
 
@@ -17,6 +17,40 @@ function pane(entries: ChatEntry[], visibility = DEFAULT_CHAT_VISIBILITY, status
 }
 
 describe("ChatPane", () => {
+  it("shows a wrap-up prompt immediately and reconciles the same bubble by delivery ID within the active turn", () => {
+    const text = "Please wrap up this step.";
+    const nudge: WrapUpPrompt = { deliveryId: "receipt-1", text, at, status: "sending" };
+    const messages = [
+      { id: "u1", role: "user", text, at },
+      { id: "a1", role: "assistant", text: "Checking the result.", at },
+    ];
+    const entries = applyVinculumTranscript(messages).entries;
+    const placed = applyVinculumTranscript([...messages, { id: "u2", role: "user", nudgeDeliveryId: nudge.deliveryId, text, at }]).entries;
+    const view = render(<ChatPane status="running" entries={entries} wrapUpPrompt={nudge} />);
+    const row = view.getByText("Wrap-up nudge").closest("li");
+    expect(row?.dataset.node).toBe("you");
+    expect(row?.textContent).toContain(text);
+    expect(row?.textContent).toContain("Sending…");
+    expect(view.getAllByText(text)).toHaveLength(2); // An ordinary message with identical text is independent.
+    expect(view.container.querySelector(".chat-turn-end")).toBeNull();
+
+    view.rerender(<ChatPane status="running" entries={entries} wrapUpPrompt={{ ...nudge, status: "pending" }} />);
+    expect(view.getByText("Sent").closest("li")).toBe(row);
+
+    // The authoritative stream can arrive before the RPC reply, even a late refusal.
+    for (const status of ["sending", "failed", "pending", "ended"] as const) {
+      view.rerender(<ChatPane status="running" entries={placed} wrapUpPrompt={{ ...nudge, status }} />);
+      expect(view.getByText("Wrap-up nudge").closest("li")).toBe(row);
+      expect(row?.querySelector(".chat-status")).toBeNull();
+      expect(view.getAllByText(text)).toHaveLength(2);
+      expect(view.container.querySelector(".chat-turn-end")).toBeNull();
+    }
+    view.rerender(<ChatPane status="idle" entries={placed} />);
+    expect(view.getByText("Wrap-up nudge").closest("li")).toBe(row);
+    expect(view.container.querySelectorAll(".chat-turn-end")).toHaveLength(1);
+    view.unmount();
+  });
+
   it("updates block copy controls on existing replies without hiding whole-message copying", () => {
     const entries: ChatEntry[] = [{ id: "copy", at, actor: ACTOR.agent, type: "text", text: "```sh\nsudo ls\n```\n\n> Quoted advice" }];
     const view = render(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({})} />);

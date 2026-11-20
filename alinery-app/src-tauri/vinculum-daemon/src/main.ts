@@ -18,6 +18,8 @@ import { writeAtomic } from "./platform/fs.ts";
 import { agentShellEnv, libreOfficeDir, runtimePart, writeShims } from "./agentShell.ts";
 import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
 import { stopOwningHarness } from "./runtime/sessionStop.ts";
+import { latestFailedTurn, retryFailedTurn, committedTurnMessages } from "./runtime/failedTurn.ts";
+import { steerWrapUp } from "./runtime/nudge.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
 import { removeBoxRecord, writeBoxRecord } from "./domain/boxRegistry.ts";
@@ -46,7 +48,7 @@ import { Watcher } from "./sync/watcher.ts";
 import { completeSessionMeta, createExecutionSession, getTaskExecution, materializeSessions, overlayStart, startSession, taskWorktree } from "./tasks.ts";
 import { ChatPublisher, type ChatSessions, loadChat } from "./domain/chat.ts";
 import { setSessionName } from "./domain/sessionOps.ts";
-import { readTask } from "./domain/taskFiles.ts";
+import { readTask, readTaskChecked } from "./domain/taskFiles.ts";
 import { DomainError } from "./platform/lock.ts";
 import { acquireRepoOwnership } from "./domain/ownership.ts";
 import { KeepAwake } from "./platform/keepawake.ts";
@@ -63,13 +65,13 @@ import { renderPage } from "./domain/rendered.ts";
 import { canvasEnabled } from "./domain/canvas.ts";
 import { runMcp } from "./mcpServer/server.ts";
 import { skillCatalog, vinculumAgentDir } from "./skills.ts";
-import { retainedTranscript } from "./domain/history.ts";
-import { appendEntryMessages, formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
+import { readMetaChecked, retainedTranscript } from "./domain/history.ts";
+import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 // Bundled at compile time, so the daemon reports the app release it was built with.
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 52;
+const PROTOCOL = 55;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -100,6 +102,8 @@ type Live = {
   harness: OpenedHarness | null;
   conversationId: string;
   liveRun: boolean;
+  runId?: string;
+  failedTurn?: { id: string; reason: string };
   seenNonce: string;
   executionId: string;
   titledBucket: number;
@@ -458,11 +462,10 @@ function startRecordedShell(id: string, taskSlug: string) {
 }
 
 function sessionState(row: Live) {
-  const agent = row.agent.correlation_id ? { state: row.agent.state, correlation_id: row.agent.correlation_id } : row.agent.reason ? { state: row.agent.state, reason: row.agent.reason } : { state: row.agent.state };
   const playbook = row.playbook.reason ? { state: row.playbook.state, reason: row.playbook.reason } : { state: row.playbook.state };
   return {
     process: { state: row.process === "exited" ? "exited" : row.process },
-    agent,
+    agent: row.agent.state === "busy" && row.runId ? { ...row.agent, correlation_id: row.runId } : row.agent,
     playbook,
     adapter: "vinculum",
     message_adapter: "unsupported",
@@ -569,21 +572,9 @@ async function seedPrompt(conversation: Conversation, prompt: string) {
 }
 
 // conversation.context() is the next model request. It drops assistant messages whose stop reason is error, aborted, or deferred, so a failed turn never reaches the pane. The transcript is the stored entries, plus the in-flight partial. Nested tool slots stay out.
-type EntryPage = Awaited<ReturnType<Conversation["entries"]>>;
-async function committedMessages(readPage: (cursor: EntryPage["next"]) => Promise<EntryPage>): Promise<TranscriptSource[]> {
-  const messages: TranscriptSource[] = [];
-  let cursor: EntryPage["next"];
-  for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-    const page = await readPage(cursor);
-    for (const entry of page.items) appendEntryMessages(messages, entry);
-    cursor = page.next;
-    if (!cursor) break;
-  }
-  return messages;
-}
 
 async function transcriptMessages(row: Live, conversation: Conversation): Promise<{ messages: TranscriptSource[]; tools: TranscriptToolSlot[] }> {
-  const messages = await committedMessages((cursor) => conversation.entries({ order: "ascending" }, 200, cursor, context));
+  const messages = await committedTurnMessages(conversation);
   const live = row.harness ? await row.harness.documentState(LiveDoc, conversation.id, context) : undefined;
   try {
     const partial = live?.value?.generation?.message;
@@ -659,6 +650,9 @@ async function sessionControls(conversation: Conversation) {
 }
 
 function watch(row: Live, harness: OpenedHarness, conversationId: string) {
+  let watchVersion = 0;
+  let lastRunning: boolean | undefined;
+  const settledAgent = () => row.failedTurn ? { state: "errored", correlation_id: row.failedTurn.id, reason: row.failedTurn.reason } : { state: "idle" };
   const attach = <T>(pending: Promise<WatchHandle<T> | undefined>, apply: (value: T, initial?: boolean) => void) => {
     pending
       .then((state) => {
@@ -685,18 +679,35 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
     } else {
       row.wait = undefined;
       if (row.agent.state === "waiting_for_input" || row.agent.state === "waiting_for_approval") {
-        row.agent = { state: row.liveRun ? "busy" : "idle" };
+        row.agent = row.liveRun ? { state: "busy" } : settledAgent();
       }
     }
     commitSession(row.taskSlug, row.id);
   });
   attach(harness.watchDoc(LiveDoc, conversationId, context), (value) => {
     const running = Boolean(value?.run);
-    const finished = row.liveRun && !running;
+    const runId = value?.run?.inputs[0]?.toString();
+    if (lastRunning === running && row.runId === runId) return;
+    const finished = lastRunning === true && !running;
+    lastRunning = running;
+    row.runId = runId;
+    const version = ++watchVersion;
     row.liveRun = running;
-    if (row.agent.state !== "waiting_for_input" && row.agent.state !== "waiting_for_approval") row.agent = { state: running ? "busy" : "idle" };
-    commitSession(row.taskSlug, row.id);
-    if (finished && !row.taskSlug) void maybeTitleChat(row);
+    if (running) {
+      row.failedTurn = undefined;
+      if (row.agent.state !== "waiting_for_input" && row.agent.state !== "waiting_for_approval") row.agent = { state: "busy" };
+      commitSession(row.taskSlug, row.id);
+      return;
+    }
+    // Read the terminal receipt on initial attachment too, so a daemon restart restores the same failed turn.
+    void conversationFor(row).then(async (conversation) => {
+      const failure = conversation ? await latestFailedTurn(conversation) : undefined;
+      if (watchVersion !== version || live.get(row.id) !== row || row.process === "exited" || row.stopping) return;
+      row.failedTurn = failure;
+      if (row.agent.state !== "waiting_for_input" && row.agent.state !== "waiting_for_approval") row.agent = settledAgent();
+      commitSession(row.taskSlug, row.id);
+      if (finished && !row.taskSlug && !failure) void maybeTitleChat(row);
+    }).catch((error) => console.error(`turn outcome unavailable for ${row.id}: ${error}`));
   });
   attach(harness.watchDoc(PhaseRequest, conversationId, context), (value, initial) => {
     if (!value?.nonce || value.nonce === row.seenNonce) return;
@@ -923,6 +934,30 @@ async function harnessSession(id: string): Promise<{ row: Live; conversation: Co
 /** The turn controls of a live harness session: SessionService and ChatService call these (they were the `prompt`, `abort`, `set_model`
  * and `set_thinking_level` ops of the JSON-lines wire). */
 const rawTurns: TurnControl = {
+  async retry(id, failedEntryId) {
+    const { row, conversation } = await harnessSession(id);
+    const ensureActive = () => {
+      const meta = readMetaChecked(repo, row.taskSlug, id);
+      const waiting = row.agent.state === "waiting_for_input" || row.agent.state === "waiting_for_approval";
+      if (live.get(id) !== row || row.stopping || row.process !== "alive" || waiting || meta.archived || meta.ended_at != null || (row.taskSlug && readTaskChecked(repo, row.taskSlug).archived)) {
+        throw new DomainError("failed_precondition", "The session is no longer available to retry.");
+      }
+      return meta;
+    };
+    await retryFailedTurn(conversation, failedEntryId, (check, send) => submitSessionWork(
+      row.taskSlug,
+      id,
+      async () => {
+        ensureActive();
+        await send();
+      },
+      async (boundExecution) => {
+        const meta = ensureActive();
+        if (meta.execution_id && boundExecution !== meta.execution_id) throw new DomainError("failed_precondition", "The owning execution is unavailable.");
+        return check();
+      },
+    ));
+  },
   async prompt(id, text, images = []) {
     const { row, conversation } = await harnessSession(id);
     if (!text.trim()) throw new DomainError("invalid_argument", "empty-prompt");
@@ -977,6 +1012,7 @@ const refused = async <T>(run: () => Promise<T>): Promise<T> => {
   }
 };
 const turns: TurnControl = {
+  retry: (id, failedEntryId) => refused(() => rawTurns.retry(id, failedEntryId)),
   prompt: (id, text, images) => refused(() => rawTurns.prompt(id, text, images)),
   abort: (id) => refused(() => rawTurns.abort(id)),
   setModel: (id, model) => refused(() => rawTurns.setModel(id, model)),
@@ -1234,9 +1270,22 @@ void resumeInterrupted().then(() => startGraphs(repo, {
     return conversation.commit(async (tx) => {
       if ((await tx.doc(InboxDoc, conversation.id)).items.some((item) => item.mode !== "write")) return "The session has queued user input.";
       if ((await tx.doc(Attention, conversation.id)).wait) return "The session is waiting for a response.";
-      if (human && (await tx.doc(LiveDoc, conversation.id)).run) return "The current turn is still finishing.";
+      const { run } = await tx.doc(LiveDoc, conversation.id);
+      if (run?.steer) return "The agent has a wrap-up request to address.";
+      if (human && run) return "The current turn is still finishing.";
       return undefined;
     }, context);
+  },
+  async nudge(id, runId, deliveryId, checkOwner) {
+    const { row, conversation } = await harnessSession(id);
+    await steerWrapUp(conversation, runId, deliveryId, async (tx) => {
+      const waiting = (await tx.doc(Attention, conversation.id)).wait || row.agent.state === "waiting_for_input" || row.agent.state === "waiting_for_approval";
+      const meta = readMetaChecked(repo, row.taskSlug, id);
+      if (live.get(id) !== row || row.stopping || row.process !== "alive" || waiting || meta.archived || meta.ended_at != null || meta.execution_id !== row.executionId) {
+        throw new DomainError("failed_precondition", "The owning session is unavailable to nudge.");
+      }
+      checkOwner(row.executionId);
+    });
   },
   async send(id, text) {
     const row = live.get(id);

@@ -86,6 +86,15 @@ async function start(hostExecutable: string | undefined = process.execPath, with
 const meta = (id: string) => ({ clientId: "c1", mutationId: id });
 const code = async (call: Promise<unknown>) => ConnectError.from(await call.then(() => null, (e) => e)).code;
 
+test("nudging requires an authenticated actor, the owning session and an observed run", async () => {
+  const { client } = await start("/bin/not-the-app");
+  const req = { taskSlug: "t", executionId: "e1", sessionId: "s1", runId: "r1", meta: meta("nudge") };
+  expect(await code(client("").nudgeExecution(req))).toBe(Code.Unauthenticated);
+  expect(await code(client().nudgeExecution({ ...req, runId: "" }))).toBe(Code.InvalidArgument);
+  expect(await code(client().nudgeExecution({ ...req, meta: meta("wrong-owner"), sessionId: "other" }))).toBe(Code.FailedPrecondition);
+  expect(engineExecutions("t")[0].permitted).toBe(false);
+});
+
 test("changing step continuation persists the task policy and updates its current unaccepted owner", async () => {
   const { client, store, revision } = await start();
   const change = { taskSlug: "t", stepKey: "work", automatic: true, expectedRevision: revision(), meta: meta("policy") };

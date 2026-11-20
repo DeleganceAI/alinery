@@ -1,15 +1,36 @@
 import { create } from "@bufbuild/protobuf";
-import { Code, ConnectError, type Transport } from "@connectrpc/connect";
+import { Code, ConnectError, createRouterTransport, type Transport } from "@connectrpc/connect";
 import { renderHook, waitFor } from "@testing-library/react";
 import { type Entity, EntitySchema } from "alinery-proto/alinery/v1/entities_pb";
-import type { ContinueReviewedRequest } from "alinery-proto/alinery/v1/executions_pb";
+import { type ContinueReviewedRequest, ExecutionService, type NudgeExecutionRequest } from "alinery-proto/alinery/v1/executions_pb";
 import { afterEach, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
 import { cursor, daemonHarness, put, scriptedSync, snapshot, untilAborted } from "../test/daemonHarness";
-import { continueReviewed, ExecutionConflict, executionKey, readTaskExecution, readTaskExecutions, replyOf, useTaskExecution } from "./execution";
+import { continueReviewed, ExecutionConflict, executionKey, nudgeExecution, readTaskExecution, readTaskExecutions, replyOf, useTaskExecution } from "./execution";
+import { UnconfirmedDelivery } from "./mutation";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 afterEach(() => vi.resetAllMocks());
+
+it("confirms a nudge against its original run and delivery id after a disconnect", async () => {
+  const requests: NudgeExecutionRequest[] = [];
+  vi.mocked(daemonTransport).mockReturnValue(
+    createRouterTransport((router) =>
+      router.service(ExecutionService, {
+        nudgeExecution(req) {
+          requests.push(req);
+          if (requests.length === 1) throw new ConnectError("disconnected", Code.Unavailable);
+          return { deliveryId: requests.length === 2 ? "different-click" : req.meta?.mutationId };
+        },
+      }),
+    ),
+  );
+  const error = await nudgeExecution("/repo", "task", "e1", "s1", "r1").catch((cause) => cause);
+  expect(error).toBeInstanceOf(UnconfirmedDelivery);
+  await error.checkDelivery();
+  expect(requests[0]).toMatchObject({ taskSlug: "task", executionId: "e1", sessionId: "s1", runId: "r1", meta: { mutationId: expect.any(String) } });
+  expect(requests).toEqual([requests[0], requests[0], requests[0]]);
+});
 
 const state = (permission: { kind: string }, lifecycle = "running") => ({
   version: 2,

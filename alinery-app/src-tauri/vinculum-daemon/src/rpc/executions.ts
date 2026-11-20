@@ -4,7 +4,7 @@ import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { ExecutionService } from "alinery-proto/alinery/v1/executions_pb";
 import { executionKey } from "../domain/executions.ts";
-import { continueReviewed, permitExecution, setStepContinuation } from "../graph.ts";
+import { continueReviewed, nudgeExecution, permitExecution, setStepContinuation } from "../graph.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
 import { requireCapability } from "./auth.ts";
@@ -22,6 +22,18 @@ export function executionService(dedupe: Dedupe, store: Store): ServiceImpl<type
     }
   };
   return {
+    nudgeExecution: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      const meta = metaOf(req.meta);
+      // An admitted nudge can still be canceled with its run. Reconcile from the durable submission.
+      return domain(async () => {
+        if (!SLUG.test(req.taskSlug) || !req.executionId || !req.sessionId || !req.runId) {
+          throw fail(Code.InvalidArgument, "invalid_argument", "NudgeExecution needs a task, execution, owner session, and active run");
+        }
+        const deliveryId = await nudgeExecution(req.taskSlug, req.executionId, req.sessionId, req.runId, meta.mutationId);
+        return { deliveryId };
+      });
+    },
     setStepContinuation: (req, ctx) => {
       requireCapability(ctx, Capability.APPROVE);
       return dedupe.once(metaOf(req.meta), () =>

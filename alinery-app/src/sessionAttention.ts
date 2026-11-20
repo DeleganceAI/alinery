@@ -2,6 +2,7 @@ import type { AgentState, NotificationSuppression, SessionListItem, SessionMeta,
 
 export type ObservationDisplayKind =
   | "failed"
+  | "errored"
   | "stale"
   | "completed"
   | "ready_to_advance"
@@ -55,6 +56,7 @@ export function observationDisplayKind(observation: SessionObservation): Observa
   if (processLive && agent.state === "waiting_for_input") return "waiting_for_input";
   if (processLive && agent.state === "waiting_for_approval") return "waiting_for_approval";
   if (processLive && agent.state === "busy") return "busy";
+  if (state.process.state === "alive" && agent.state === "errored") return "errored";
   if (state.playbook.state === "completed" || state.playbook.state === "ready_to_advance") {
     return state.playbook.state === "ready_to_advance" ? "ready_to_advance" : "completed";
   }
@@ -75,7 +77,7 @@ export function sessionDisplayKind(
 ): ObservationDisplayKind {
   const observed = observation ? observationDisplayKind(observation) : "loading";
   const acknowledgedExit = exitAcknowledged && (!observation?.state || observation.state.process.state === "exited");
-  const kind = acknowledgedExit ? "exited" : superseded && (observed === "idle" || observed === "exited") ? "stale" : observed;
+  const kind = acknowledgedExit ? "exited" : superseded && (observed === "idle" || observed === "errored" || observed === "exited") ? "stale" : observed;
   if (!exitAcknowledged && exitCode != null && exitCode !== 0 && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval") {
     return "failed";
   }
@@ -125,7 +127,10 @@ export function hasAcknowledgedExit(session: SessionMeta): boolean {
 
 export function sessionFailureNeedsAttention(session: SessionMeta, observation?: SessionObservation): boolean {
   if (hasUnacknowledgedExit(session)) return true;
-  if (!observation || observationDisplayKind(observation) !== "failed") return false;
+  if (!observation) return false;
+  const kind = observationDisplayKind(observation);
+  if (kind === "errored") return true;
+  if (kind !== "failed") return false;
   return observation.state?.process.state !== "exited" || !hasAcknowledgedExit(session);
 }
 
@@ -272,6 +277,9 @@ export function liveNoticeSuppression(item: SessionListItem, notice: SessionNoti
     return { notice, occurrence: agent.correlation_id };
   }
   if (notice === "waiting_for_approval" && agent?.state === "waiting_for_approval") {
+    return { notice, occurrence: agent.correlation_id };
+  }
+  if (notice === "failure" && agent?.state === "errored" && observation?.state?.process.state === "alive" && agent.correlation_id) {
     return { notice, occurrence: agent.correlation_id };
   }
   if (notice === "failure" && observation?.state?.playbook.state === "failed" && observationDisplayKind(observation) === "failed" && (item.status_revision ?? 0) > 0) {

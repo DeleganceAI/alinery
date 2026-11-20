@@ -1,5 +1,5 @@
 // A Pi session's transcript from `WatchTranscript`: the daemon sends items from an
-// index, then only what changed. This keeps the list the pane renders and resumes at its end after a drop.
+// index, then only what changed. On reconnect, re-read any tail that was still changing.
 import { toJson } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
@@ -38,6 +38,8 @@ export function messageOf(item: TranscriptItem): VinculumMessage {
     ...(item.toolName ? { toolName: item.toolName } : {}),
     ...(item.toolCallId ? { toolCallId: item.toolCallId } : {}),
     ...(item.isError ? { isError: true } : {}),
+    ...(item.turnError ? { turnError: item.turnError } : {}),
+    ...(item.nudgeDeliveryId ? { nudgeDeliveryId: item.nudgeDeliveryId } : {}),
     ...(item.runningToolIds.length > 0 ? { runningToolIds: item.runningToolIds } : {}),
     ...(item.at ? { at: Number(item.at) } : {}),
   };
@@ -54,7 +56,7 @@ export function applyFrame(items: readonly VinculumMessage[], frame: WatchTransc
   return [...items.slice(0, start), ...frame.items.map(messageOf)];
 }
 
-/** Calls `apply` with the whole transcript after every frame. Returns the stop. A dropped stream reconnects after a second and resumes at the end of the list. */
+/** Calls `apply` with the whole transcript after every frame. Returns the stop. */
 export function watchSessionTranscript(
   repo: string,
   session: { taskSlug: string; id: string },
@@ -70,7 +72,10 @@ export function watchSessionTranscript(
       try {
         const client = createClient(SessionService, daemonTransport(repo));
         let needsReplay = false;
-        for await (const frame of client.watchTranscript({ session, fromItem: BigInt(items.length) }, { signal: ac.signal })) {
+        // A nudge or a completed reply can take a streaming row's index while we're disconnected.
+        const firstUnfinished = items.findIndex((item) => item.streaming || item.runningToolIds?.length);
+        const fromItem = BigInt(firstUnfinished < 0 ? items.length : firstUnfinished);
+        for await (const frame of client.watchTranscript({ session, fromItem }, { signal: ac.signal })) {
           const next = applyFrame(items, frame);
           if (!next) {
             items = [];

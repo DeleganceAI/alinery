@@ -5,7 +5,8 @@ import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync, re
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
-import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
+import { ROOT_CONVERSATION_ID, type TaskId } from "@earendil-works/pi-durable";
+import { generationError } from "../runtime/failedTurn.ts";
 import type { SessionControls } from "../sessionControls.ts";
 import { appendEntryMessages, formatTranscript, type TranscriptSource } from "../transcript.ts";
 import { replayRanges } from "../terminal.ts";
@@ -76,7 +77,7 @@ function readParts(parts: Part[], offset: number, limit: number): Buffer {
   return Buffer.concat(out);
 }
 
-function readMetaChecked(repo: string, slug: string, id: string): Json {
+export function readMetaChecked(repo: string, slug: string, id: string): Json {
   let meta: Json;
   try {
     meta = JSON.parse(readFileSync(metaPathOf(repo, slug, id), "utf8")) as Json;
@@ -108,8 +109,16 @@ export function retainedTranscript(repo: string, slug: string, id: string, contr
     db = new DatabaseSync(url.href, { readOnly: true });
     db.exec("PRAGMA trusted_schema = OFF");
     const messages: TranscriptSource[] = [];
+    const lastErrors = new Map<TaskId, TranscriptSource>();
     for (const { record } of db.prepare("SELECT record FROM entries WHERE conversation_id = ? ORDER BY id").iterate(ROOT_CONVERSATION_ID)) {
-      appendEntryMessages(messages, JSON.parse(String(record)));
+      appendEntryMessages(messages, JSON.parse(String(record)), lastErrors);
+    }
+    if (lastErrors.size) {
+      const task = db.prepare("SELECT record FROM tasks WHERE conversation_id = ? AND id = ?");
+      for (const [id, message] of lastErrors) {
+        const row = task.get(ROOT_CONVERSATION_ID, id);
+        if (row) message.turnError = generationError(JSON.parse(String(row.record)));
+      }
     }
     return { items: formatTranscript(messages), controls: controls ?? { model: String(meta.model ?? ""), thinking: "", thinking_levels: [] } };
   } catch (error) {
