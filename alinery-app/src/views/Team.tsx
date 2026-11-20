@@ -146,6 +146,7 @@ export function TeamView({ active, appearance, onAppearanceChange }: { active: b
   }
 
   const teamPots = teams?.pots.filter((pot) => pot.teamId) ?? [];
+  const sharedWithYou = shares.filter((row) => !row.mine);
 
   return (
     <div className="team-page">
@@ -174,7 +175,7 @@ export function TeamView({ active, appearance, onAppearanceChange }: { active: b
         {repos.length > 0 ? (
           <div className="list team-list">
             {repos.map((repo) => {
-              const shared = shares.some((row) => row.name === repoLabel(repo).slice(0, 60));
+              const shared = shares.some((row) => row.mine && row.name === repoLabel(repo).slice(0, 60));
               return (
                 <div key={repo} className="row">
                   <div className="rt">
@@ -198,10 +199,10 @@ export function TeamView({ active, appearance, onAppearanceChange }: { active: b
       </section>
       <section>
         <h3>Shared with you</h3>
-        {shares.length === 0 ? <p className="dim">Nothing is shared yet.</p> : null}
-        {shares.length > 0 ? (
+        {sharedWithYou.length === 0 ? <p className="dim">No teammate has shared a daemon yet.</p> : null}
+        {sharedWithYou.length > 0 ? (
           <div className="list team-list">
-            {shares.map((row) => (
+            {sharedWithYou.map((row) => (
               <div
                 key={row.id}
                 className="row"
