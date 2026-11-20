@@ -38,7 +38,7 @@ import {
   sessionStartedAt,
   sessionUpdatedAt,
 } from "../sessionAttention";
-import { canAbortChatSession } from "../sessionMessage";
+import { canAbortChatSession, isTurnActive } from "../sessionMessage";
 import {
   ArchiveTaskModal,
   ArtifactProvenanceBadges,
@@ -47,6 +47,7 @@ import {
   EmptyState,
   ExecutionAvailabilityNotice,
   ExecutionOutputs,
+  executionControlsAvailable,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   harnessDisplayName,
@@ -905,9 +906,11 @@ export function TaskDetail({
     );
   };
 
-  const autoApproveAll = task?.auto_approve_all === true;
+  const autoApproveAll = feed.reply ? feed.reply.state.auto_approve_all === true : task?.auto_approve_all === true;
+  const autoApproveDisabled =
+    !task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve" || !!feed.error || !executionControlsAvailable(feed.reply);
   const setAutoApproveAll = (enabled: boolean) => {
-    if (!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve") return;
+    if (autoApproveDisabled) return;
     setBusy("auto-approve");
     setErr(null);
     const epoch = taskMutationEpoch.current;
@@ -917,7 +920,6 @@ export function TaskDetail({
         if (epoch === taskMutationEpoch.current) {
           taskMutationEpoch.current += 1;
           setTask(updated);
-          setExecutionView((current) => (current ? { ...current, state: { ...current.state, auto_approve_all: updated.auto_approve_all === true } } : current));
         } else {
           void load();
         }
@@ -1041,7 +1043,7 @@ export function TaskDetail({
 
         {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
 
-        {executionView && !executionError && <ExecutionAvailabilityNotice live={executionView.live} controls />}
+        {executionView && !executionError && <ExecutionAvailabilityNotice view={executionView} />}
 
         {executionError && (
           <InlineStatus tone="error" detail={executionError}>
@@ -1182,7 +1184,7 @@ export function TaskDetail({
                 type="button"
                 className={`btn ghost small auto-approve${autoApproveAll ? " on" : ""}`}
                 aria-pressed={autoApproveAll}
-                disabled={!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve"}
+                disabled={autoApproveDisabled}
                 title={
                   autoApproveAll
                     ? "Intermediate steps continue automatically. Turn off to use each step’s saved choice. Final steps stay open for review."
@@ -1303,7 +1305,7 @@ export function TaskDetail({
                         Completion permission: {execution.permission.kind}
                         {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
                       </p>
-                      {!executionView.state.history_only && execution.ready && (
+                      {!executionView.state.history_only && execution.ready && !isTurnActive({ observation: observationsById[execution.owner_session_id] }) && (
                         <>
                           {execution.ready.endpoint && execution.lifecycle === "running" && <p>Ready for review</p>}
                           <ReviewedCompletion
@@ -1311,7 +1313,7 @@ export function TaskDetail({
                             slug={slug}
                             execution={execution}
                             steps={steps}
-                            disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
+                            disabled={!!busy || !!executionError || !executionControlsAvailable(executionView)}
                           />
                         </>
                       )}
@@ -1864,8 +1866,7 @@ export function TaskDetail({
                         const execution = executionForSession(s);
                         const superseded = Boolean(execution && execution.owner_session_id !== s.id);
                         const terminalLabel = sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited");
-                        const currentExecution =
-                          !superseded && !executionError && executionView?.live?.status === "available" && !executionView.state.history_only ? execution : undefined;
+                        const currentExecution = !superseded && !executionError && executionControlsAvailable(executionView) ? execution : undefined;
                         const ready =
                           !s.archived &&
                           isLive &&

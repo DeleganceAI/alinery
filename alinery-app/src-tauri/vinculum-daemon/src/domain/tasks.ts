@@ -9,6 +9,7 @@ import type { Playbook } from "playbook-engine/src/playbook.ts";
 import { writeDurable } from "../platform/fs.ts";
 import { branchNameValid, localBranches, registeredWorktrees, worktreeAdd } from "../platform/git.ts";
 import { DomainError, withTaskMutation } from "../platform/lock.ts";
+import { taskAutoApproveAll } from "./executionProjection.ts";
 import { executionPath } from "./executionStore.ts";
 import {
   alineryDir,
@@ -478,13 +479,18 @@ export async function setAutoApproveAll(repo: string, slug: string, enabled: boo
     } catch (e) {
       throw new DomainError("failed_precondition", `task execution state unavailable (pre-v2 tasks cannot launch): ${(e as Error).message}`);
     }
-    // Completion reads execution.json, not task.md. The task is written first so a failed execution write leaves the engine off
-    // rather than approving while the file says off.
-    task.auto_approve_all = enabled;
-    await writeTaskUnlocked(repo, task);
-    if (state.auto_approve_all !== enabled) {
-      state.auto_approve_all = enabled;
-      await writeExecutionState(repo, slug, state);
+    try {
+      task.auto_approve_all = enabled;
+      await writeTaskUnlocked(repo, task);
+      if (state.auto_approve_all !== enabled) {
+        state.auto_approve_all = enabled;
+        await writeExecutionState(repo, slug, state);
+      }
+    } catch (error) {
+      // A durable write can fail before or after rename. Match the task display to what completion now reads.
+      task.auto_approve_all = taskAutoApproveAll(repo, slug);
+      await writeTaskUnlocked(repo, task);
+      throw error;
     }
     return task;
   });

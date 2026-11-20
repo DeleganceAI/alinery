@@ -96,7 +96,7 @@ export interface Execution {
    * A later edit of the task set does not change it.
    */
   automatic?: boolean;
-  /** Human granted permission to finish this particular execution. Reset on resume. */
+  /** Human granted permission to finish this execution, including after a resume. */
   permitted: boolean;
   /** Immutable publication set. Set once on acceptance; later files never join it. */
   receipt: Occurrence[] | null;
@@ -105,6 +105,8 @@ export interface Execution {
   workRevision?: number;
   attempt?: number;
   ready?: ReadyAssessment;
+  /** The latest feedback on a submitted handoff. Its successful reply allows a new human review. */
+  pendingReviewInput?: string;
   /** Used to replay a reviewed Continue only for the revision actually accepted. */
   acceptedRevision?: number;
   /** Failed, but the harness could not confirm the process stopped: it still holds capacity and the worktree until exit is confirmed. */
@@ -137,7 +139,7 @@ export type Event =
   | { t: 'started'; execId: string; sessionId: string; consumed?: FileRecord[] }
   | { t: 'resumed'; execId: string; sessionId: string; consumed?: FileRecord[] }
   | { t: 'step-mode'; step: string; automatic: boolean }
-  | { t: 'work-changed'; execId: string }
+  | { t: 'work-changed'; execId: string; reviewInput?: string }
   | { t: 'ready'; execId: string; assessment: ReadyAssessment }
   | { t: 'permitted'; execId: string }
   | { t: 'accepted'; execId: string; revision?: number; published: Occurrence[]; files?: FileRecord[]; worktree?: { ref: string; tree: string } }
@@ -173,8 +175,8 @@ export function apply(state: State, ev: Event): void {
       if (ev.t === 'resumed') {
         e.attempt = (e.attempt ?? 0) + 1;
         e.workRevision = (e.workRevision ?? 0) + 1;
-        e.permitted = false;
         delete e.ready;
+        delete e.pendingReviewInput;
       }
       return;
     case 'step-mode':
@@ -189,12 +191,15 @@ export function apply(state: State, ev: Event): void {
       if (e) {
         e.workRevision = (e.workRevision ?? 0) + 1;
         delete e.ready;
+        if (ev.reviewInput) e.pendingReviewInput = ev.reviewInput;
+        else delete e.pendingReviewInput;
       }
       return;
     case 'ready':
       if (e) {
         e.workRevision = ev.assessment.revision;
         e.ready = ev.assessment;
+        delete e.pendingReviewInput;
       }
       return;
     case 'permitted':
@@ -205,6 +210,7 @@ export function apply(state: State, ev: Event): void {
       e.receipt = ev.published;
       if (ev.revision !== undefined) e.acceptedRevision = ev.revision;
       delete e.ready;
+      delete e.pendingReviewInput;
       if (ev.files || ev.worktree) {
         const m = (e.manifest ??= { consumed: [], published: [] });
         m.published = ev.files ?? [];
@@ -216,6 +222,7 @@ export function apply(state: State, ev: Event): void {
       if (!e || e.status === 'done') return;
       delete e.unconfirmed;
       delete e.ready;
+      delete e.pendingReviewInput;
       if (e.receipt) {
         e.status = 'done';
         e.failure = null;
@@ -229,6 +236,7 @@ export function apply(state: State, ev: Event): void {
       e.status = 'failed';
       e.failure = ev.reason;
       delete e.ready;
+      delete e.pendingReviewInput;
       if (ev.unconfirmed) e.unconfirmed = true;
       else delete e.unconfirmed;
       return;

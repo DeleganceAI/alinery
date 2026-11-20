@@ -59,6 +59,7 @@ import {
   ContextActionBar,
   ExecutionAvailabilityNotice,
   ExecutionOutputs,
+  executionControlsAvailable,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   harnessDisplayName,
@@ -304,7 +305,7 @@ export function SessionView({
   }, [repoPath, taskSlug, id]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [executionError, setExecutionError] = useState("");
-  const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only;
+  const executionAvailable = !executionError && executionControlsAvailable(executionView);
   const [completionBusy, setCompletionBusy] = useState(false);
   const [invalidatedReview, setInvalidatedReview] = useState("");
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
@@ -939,7 +940,6 @@ export function SessionView({
   const liveRpc = observation?.transport === "rpc";
   // Exited RPC sessions still support replay, but their processes cannot accept commands.
   const rpcProcessLive = liveRpc && observation?.lifecycle.state === "live" && observation.state?.process.state === "alive";
-  const readyEndpoint = reviewCurrent && review?.endpoint && executionAvailable && rpcProcessLive && !messageSending;
   const livePty = observation?.transport === "pty";
   const vinculumCoding = vinculum && !leftover && !navHistory && !showPanel;
   const showChat = vinculumCoding && Boolean(termIntent) && !livePty;
@@ -1143,6 +1143,16 @@ export function SessionView({
     !chat.sessionMeta.isCompacting &&
     (messageDraft.body.trim().length > 0 || (messageDraft.attachments?.length ?? 0) > 0);
   const queuedMeta = chat.sessionMeta.queuedMessageCount ?? 0;
+  const canShowReview =
+    reviewCurrent &&
+    !turnActive &&
+    !messageSending &&
+    !messageInterrupting &&
+    !turnRetry?.pending &&
+    !chat.sessionMeta.isCompacting &&
+    queuedMeta === 0 &&
+    !chat.pendingUi.some((request) => needsUiReply(request.method));
+  const readyEndpoint = canShowReview && review?.endpoint && executionAvailable && rpcProcessLive;
   const chatMetaHead = chat.sessionMeta.model || model;
   const applyControls = (controls: Parameters<typeof applySessionControls>[1]) =>
     setChat((current) => {
@@ -1247,7 +1257,7 @@ export function SessionView({
   });
   const continuationControls =
     showChatComposer && !readingHistory && vinculum && ownsRunningExecution && executionView && execution && !execution.ready?.endpoint ? (
-      <StepContinuationMode key={execution.id} repo={repoPath} slug={taskSlug} step={execution.candidate.step_key} view={executionView}>
+      <StepContinuationMode key={execution.id} repo={repoPath} slug={taskSlug} execution={execution} view={executionView}>
         {followControl}
       </StepContinuationMode>
     ) : null;
@@ -1310,7 +1320,7 @@ export function SessionView({
         <CopyTextButton text={cwd} label="worktree path" />
       </div>
       {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
-      {executionView && <ExecutionAvailabilityNotice live={executionView.live} controls />}
+      {executionView && <ExecutionAvailabilityNotice view={executionView} />}
       {hasTask && !navHistory && effectiveLifecycle?.state === "never_started" && (
         <div className="session-execution">
           <p>{execution?.start_requested ? "Start requested; waiting for the daemon to acquire capacity." : "This session is queued. Opening it does not start it."}</p>
@@ -1688,25 +1698,13 @@ export function SessionView({
                                   >
                                     {nudge.sent ? "Nudge sent" : nudge.pending ? "Sending nudge…" : "Nudge to wrap up"}
                                   </button>
-                                ) : reviewCurrent && review && !review.endpoint && execution && executionView ? (
+                                ) : canShowReview && review && !review.endpoint && execution && executionView ? (
                                   <ReviewedCompletion
                                     repo={repoPath}
                                     slug={taskSlug}
                                     execution={execution}
                                     steps={executionView.definition.step}
-                                    disabled={
-                                      !executionAvailable ||
-                                      !rpcProcessLive ||
-                                      completionBusy ||
-                                      messageSending ||
-                                      turnRetry?.pending === true ||
-                                      turnActive ||
-                                      chat.sessionMeta.isCompacting === true ||
-                                      agentState === "waiting_for_approval" ||
-                                      agentState === "waiting_for_input" ||
-                                      Boolean(messageDraft.body || messageDraft.attachments?.length) ||
-                                      queuedMeta > 0
-                                    }
+                                    disabled={!executionAvailable || !rpcProcessLive || completionBusy || Boolean(messageDraft.body || messageDraft.attachments?.length)}
                                   />
                                 ) : undefined
                               }

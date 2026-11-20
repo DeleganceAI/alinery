@@ -46,8 +46,9 @@ export class FakeHarness implements Harness {
     return this.sessions.get(id)?.status ?? { kind: 'unknown' };
   }
 
-  async send(id: SessionId, text: string): Promise<void> {
+  async send(id: SessionId, text: string, onlyIfIdle?: () => boolean): Promise<void> {
     const session = this.#get(id);
+    if (onlyIfIdle && (session.status.kind !== 'idle' || !onlyIfIdle())) throw new Error('session no longer eligible');
     session.inbox.push(text);
     session.wake?.();
   }

@@ -2,14 +2,17 @@ import { FastForward, Hand } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { setStepContinuation } from "../sync/execution";
 import { toast } from "../toast";
-import type { TaskExecutionReply } from "../types";
+import type { ExecutionRecord, TaskExecutionReply } from "../types";
 
-type Props = { repo: string; slug: string; step: string; view: TaskExecutionReply; children?: ReactNode };
+type Props = { repo: string; slug: string; execution: ExecutionRecord; view: TaskExecutionReply; children?: ReactNode };
 
-export function StepContinuationMode({ repo, slug, step, view, children }: Props) {
+export function StepContinuationMode({ repo, slug, execution, view, children }: Props) {
   const [saving, setSaving] = useState(false);
   const all = view.state.auto_approve_all === true;
-  const automatic = all || view.state.enabled_steps.includes(step);
+  const step = execution.candidate.step_key;
+  const permission = execution.permission.kind;
+  // A one-time grant applies to this execution; the toolbar still shows the step's saved mode.
+  const automatic = all || permission === "automatic" || (permission === "human_granted" && view.state.enabled_steps.includes(step));
   const changeMode = async (enable: boolean) => {
     if (all || saving || enable === automatic) return;
     setSaving(true);

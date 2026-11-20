@@ -92,6 +92,8 @@ export type SessionStatus =
    * completion. The engine decides what idle means for this execution.
    */
   | { kind: 'idle' }
+  /** The session needs human input, an approval or explicit recovery. */
+  | { kind: 'waiting' }
   /** Process has exited. Terminal until resumed. */
   | { kind: 'exited'; exitCode: number | null }
   /** Harness could not start the process or lost it abnormally. Terminal until resumed. */
@@ -131,9 +133,10 @@ export interface Harness {
 
   /**
    * Deliver a message into a live session: human steering, or the engine's
-   * "you may wrap up now" after the gate opens.
+   * "you may wrap up now" after the gate opens. For a conditional reminder,
+   * recheck the predicate before admission and reject if busy or awaiting a person.
    */
-  send(id: SessionId, text: string): Promise<void>;
+  send(id: SessionId, text: string, onlyIfIdle?: () => boolean): Promise<void>;
 
   /**
    * Ask the agent to finish and resolve when exit is confirmed. Called by the

@@ -136,7 +136,7 @@ test('a resumed owner reusing the session id cannot continue its previous attemp
   assert.ok(report(await engine.requestCompletion(e.id, owner)).revision > old.revision);
 });
 
-test('replacing an owner retains its conversation across reopen and only the replacement can publish', async () => {
+test('a resumed execution retains its grant and owner history across reopen; only the replacement can publish', async () => {
   const dir = taskDir();
   const harness = idle();
   harness.resume = (_id, launch) => harness.start(launch);
@@ -145,6 +145,7 @@ test('replacing an owner retains its conversation across reopen and only the rep
   await engine.tick();
   const [execution] = byStep(engine, 'choose');
   const previous = execution.sessionId!;
+  await engine.permit(execution.id);
   harness.crash(previous);
   await engine.tick();
   await engine.resume(execution.id);
@@ -154,7 +155,7 @@ test('replacing an owner retains its conversation across reopen and only the rep
   assert.deepEqual(current.previousSessionIds, [previous]);
   writeText(join(current.outDir, 'next.md'), 'for review');
   assert.equal((await reopened.requestCompletion(current.id, previous)).kind, 'stale');
-  assert.equal((await reopened.requestCompletion(current.id, current.sessionId!)).kind, 'ready');
+  assert.equal((await reopened.requestCompletion(current.id, current.sessionId!)).kind, 'accepted');
 });
 
 test('a policy change waits for a genuine outstanding question; admitted work invalidates the old report while the check is pending', async () => {
@@ -175,6 +176,38 @@ test('a policy change waits for a genuine outstanding question; admitted work in
   assert.equal(e.status, 'live');
   assert.equal(e.receipt, null);
   assert.equal(e.ready, undefined);
+});
+
+test('an answer verified during admission of a newer review message cannot restore Continue', async () => {
+  const harness = idle();
+  let beginCheck!: () => void;
+  let finishCheck!: (answered: boolean) => void;
+  const checking = new Promise<void>((resolve) => { beginCheck = resolve; });
+  const firstAnswer = new Promise<boolean>((resolve) => { finishCheck = resolve; });
+  const engine = openEngine(branch, harness, taskDir(), {
+    reviewFollowUpFinished: async (_owner, id) => {
+      if (id !== 'first') return id === 'second';
+      beginCheck();
+      return firstAnswer;
+    },
+  });
+  await engine.tick();
+  const [e] = byStep(engine, 'choose');
+  const owner = e.sessionId!;
+  writeText(join(e.outDir, 'next.md'), 'ready');
+  report(await engine.requestCompletion(e.id, owner));
+  harness.sessions.get(owner)!.status = { kind: 'idle' };
+  await engine.invalidateReadiness(e.id, owner, 'first');
+  const observing = engine.tick();
+  await checking;
+  await engine.invalidateReadiness(e.id, owner, 'second');
+  finishCheck(true);
+  await observing;
+  assert.equal(e.ready, undefined);
+  assert.equal(e.pendingReviewInput, 'second');
+  await engine.tick();
+  assert.ok(e.ready);
+  assert.equal(e.receipt, null);
 });
 
 test('a receipt that cannot be saved never releases its owner, and the same reviewed Continue retries that receipt', async () => {

@@ -1550,14 +1550,51 @@ describe("Vinculum session chat", () => {
     expect(screen.queryByRole("button", { name: /Continue to|Continuing…/ })).toBeNull();
   });
 
+  it("keeps Continue hidden when the revised handoff is reported before the agent finishes answering", async () => {
+    const record = executionRecord({ owner_session_id: "session" });
+    const ready = { revision: 1, endpoint: false, destinations: ["worker"], roles: ["result.md"] };
+    getTaskExecution.mockResolvedValue(executionReply([{ ...record, ready }]));
+    const rendered = renderSession({ intent: "attach", messageDraft: { body: "What files are here?", pendingActions: [], attachments: [] } });
+    const label = "Continue to Retained worker";
+    await screen.findByRole("button", { name: label });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: label })).toBeNull());
+    rendered.rerender(sessionView({ intent: "attach" }));
+
+    await act(async () => {
+      sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy", correlation_id: "answering" }));
+      getTaskExecution.mockResolvedValue(executionReply([{ ...record, ready: { ...ready, revision: 2 } }]));
+      fakeExecution.refresh();
+    });
+    await screen.findByRole("button", { name: "Queue" });
+    expect(screen.queryByRole("button", { name: label })).toBeNull();
+
+    await act(async () => {
+      daemon.setTranscript("session", [{ id: "answer", role: "assistant", content: [{ type: "text", text: "The output is result.md." }] }]);
+      sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    });
+    fireEvent.click(await screen.findByRole("button", { name: label }));
+    expect(fakeExecution.continueReviewed).toHaveBeenCalledExactlyOnceWith("/repo", "task", "execution-a", "session", 2);
+  });
+
   it("persists the running step's mode and respects task-wide automatic continuation", async () => {
-    const reply = executionReply([executionRecord({ owner_session_id: "session" })]);
+    const record = executionRecord({ owner_session_id: "session" });
+    const reply = executionReply([record]);
     reply.revision = 8n;
+    // An older task can list this step as automatic while its current execution waits for review.
+    reply.state.enabled_steps = ["worker"];
     getTaskExecution.mockResolvedValue(reply);
     const pending = deferred<void>();
     fakeExecution.setStepContinuation.mockImplementation(async (_repo, _task, _step, automatic) => {
       await pending.promise;
-      getTaskExecution.mockResolvedValue({ ...reply, state: { ...reply.state, enabled_steps: automatic ? ["worker"] : [] } });
+      getTaskExecution.mockResolvedValue({
+        ...reply,
+        state: {
+          ...reply.state,
+          enabled_steps: automatic ? ["worker"] : [],
+          executions: { [record.id]: { ...record, permission: { kind: automatic ? "automatic" : "locked" } } },
+        },
+      });
     });
     renderSession({ intent: "attach" });
     const group = await screen.findByRole("group", { name: "Session continuation controls" });
@@ -1585,6 +1622,19 @@ describe("Vinculum session chat", () => {
     expect(manual).toHaveProperty("disabled", true);
     fireEvent.click(manual);
     expect(fakeExecution.setStepContinuation).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    [[], "Wait for me"],
+    [["worker"], "Continue automatically"],
+  ] as const)("keeps the saved mode for enabled steps %j after a one-time approval", async (enabled, selected) => {
+    const record = executionRecord({ owner_session_id: "session", permission: { kind: "human_granted", execution_id: "execution-a", session_id: "session" } });
+    const reply = executionReply([record]);
+    reply.state.enabled_steps = [...enabled];
+    getTaskExecution.mockResolvedValue(reply);
+    renderSession({ intent: "attach" });
+    const controls = within(await screen.findByRole("group", { name: "Session continuation controls" }));
+    expect(controls.getByRole("button", { name: selected, pressed: true })).toBeDefined();
   });
 
   it("keeps a ready endpoint open for ordinary conversation and waits for a fresh review after sending", async () => {

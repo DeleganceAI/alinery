@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { userInfo } from "node:os";
+import { randomUUID } from "node:crypto";
 import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
@@ -19,6 +20,7 @@ import { agentShellEnv, libreOfficeDir, runtimePart, writeShims } from "./agentS
 import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
 import { stopOwningHarness } from "./runtime/sessionStop.ts";
 import { latestFailedTurn, retryFailedTurn, committedTurnMessages } from "./runtime/failedTurn.ts";
+import { answeredReviewFollowUp, hasSettledAnswer } from "./runtime/reviewFollowUp.ts";
 import { steerWrapUp } from "./runtime/nudge.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
@@ -733,9 +735,9 @@ function sessionCwd(taskSlug: string, id: string): string {
 function phaseResultText(reply: Record<string, unknown>): string {
   if (typeof reply.error === "string" && reply.error) return `Alinery rejected phase completion: ${reply.error}. Keep this session open and resolve the error.`;
   if (reply.outcome === "accepted") return "Alinery accepted phase completion. Do no further work; this session is finishing.";
-  if (reply.outcome === "ready_for_review") return "Your handoff is ready for human review. Stay available for feedback. Only report readiness again after new work.";
+  if (reply.outcome === "ready_for_review") return "Your handoff is ready for human review. End this turn so the reviewer can inspect your work. If they send feedback here, address it and report readiness again.";
   if (reply.outcome === "pending_work") return `${reply.reason} Yield now, address the pending work, then report readiness again.`;
-  if (reply.outcome === "waiting_for_input") {
+  if (reply.outcome === "invalid_outputs") {
     const diagnostics = Array.isArray(reply.diagnostics) ? reply.diagnostics.filter((item) => typeof item === "string").join("\n") : "";
     const detail = diagnostics ? `\n${diagnostics}` : "";
     return `Assigned publications need correction.${detail}\nWrite the assigned artifacts, then call alinery_phase_complete again. Individual outputs may be omitted.`;
@@ -745,9 +747,7 @@ function phaseResultText(reply: Record<string, unknown>): string {
 }
 
 function applyPhaseReply(row: Live, reply: Record<string, unknown>) {
-  if (reply.outcome === "waiting_for_input") row.agent = { state: "waiting_for_input", correlation_id: String(reply.correlation_id ?? "") };
-  if (reply.outcome === "ready_for_review" && !row.wait) row.agent = { state: row.liveRun ? "busy" : "idle" };
-  if (reply.outcome === "accepted") row.agent = { state: "idle" };
+  // Validation is a tool result. Pi's run and Attention watches own the agent's activity and waits.
   if (reply.playbook) row.playbook = { state: String(reply.playbook) };
   commitSession(row.taskSlug, row.id);
 }
@@ -944,7 +944,7 @@ const rawTurns: TurnControl = {
       }
       return meta;
     };
-    await retryFailedTurn(conversation, failedEntryId, (check, send) => submitSessionWork(
+    await retryFailedTurn(conversation, failedEntryId, (check, send, requestId) => submitSessionWork(
       row.taskSlug,
       id,
       async () => {
@@ -956,6 +956,7 @@ const rawTurns: TurnControl = {
         if (meta.execution_id && boundExecution !== meta.execution_id) throw new DomainError("failed_precondition", "The owning execution is unavailable.");
         return check();
       },
+      requestId,
     ));
   },
   async prompt(id, text, images = []) {
@@ -966,24 +967,15 @@ const rawTurns: TurnControl = {
     await ensureModel(conversation, resolved, context);
     // Images ride in the same user message; a model that reads none gets Pi's placeholder in their place.
     const content = images.length > 0 ? [{ type: "text" as const, text }, ...images] : text;
+    const requestId = randomUUID();
     await submitSessionWork(row.taskSlug, id, async () => {
       if (live.get(id) !== row || row.stopping || row.process === "exited") throw new DomainError("failed_precondition", "the session owner changed");
-      await conversation.submit({ type: "input", content, whenBusy: "followUp" }, context);
-    });
+      await conversation.submit({ type: "input", content, whenBusy: "followUp", requestId }, context);
+    }, undefined, requestId);
   },
   async abort(id) {
-    const { row, conversation } = await harnessSession(id);
-    try {
-      await conversation.abort(context);
-    } catch (error) {
-      // A completion wait is local agent state, not a live run. Abort still has to release it.
-      if (row.agent.state !== "waiting_for_approval" && row.agent.state !== "waiting_for_input") throw error;
-    }
-    if (row.agent.state === "waiting_for_approval" || row.agent.state === "waiting_for_input") {
-      row.agent = { state: row.liveRun ? "busy" : "idle" };
-      row.wait = undefined;
-      commitSession(row.taskSlug, row.id);
-    }
+    const { conversation } = await harnessSession(id);
+    await conversation.abort(context);
   },
   async setModel(id, requested) {
     const refusal = setModelRefusal(live.has(id), requested);
@@ -1263,6 +1255,24 @@ void resumeInterrupted().then(() => startGraphs(repo, {
   status(id) {
     return Promise.resolve(sessionHarnessStatus(live.get(id)));
   },
+  async reviewFollowUpFinished(id, requestId) {
+    const row = live.get(id);
+    if (!row || !row.taskSlug || row.stopping || row.process !== "alive") return false;
+    try {
+      const conversation = await conversationFor(row);
+      if (!conversation) return false;
+      return await conversation.commit(async (tx) => {
+        if ((await tx.doc(Attention, conversation.id)).wait || !(await answeredReviewFollowUp(tx, conversation.id, requestId))) return false;
+        if (live.get(id) !== row || row.process !== "alive" || row.stopping) return false;
+        const meta = readMetaChecked(repo, row.taskSlug, id);
+        const task = readTaskChecked(repo, row.taskSlug);
+        return !meta.archived && meta.ended_at == null && meta.execution_id === row.executionId && !task.archived && !task.draft && task.engine_version === 2;
+      }, context);
+    } catch (error) {
+      console.error(`vinculum: ${id} review follow-up check failed: ${error}`);
+      return false;
+    }
+  },
   async reviewBlocker(id, human) {
     const row = live.get(id);
     const conversation = row ? await conversationFor(row) : null;
@@ -1287,14 +1297,25 @@ void resumeInterrupted().then(() => startGraphs(repo, {
       checkOwner(row.executionId);
     });
   },
-  async send(id, text) {
+  async send(id, text, onlyIfIdle) {
     const row = live.get(id);
     const conversation = row ? await conversationFor(row) : null;
     if (!row || !conversation) throw new Error(`unknown session ${id}`);
     const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
     if (!resolved) throw new Error("no model is configured");
     await ensureModel(conversation, resolved, context);
-    await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
+    if (onlyIfIdle) {
+      const settled = await conversation.commit(async (tx) => {
+        if ((await tx.doc(Attention, conversation.id)).wait) return false;
+        return hasSettledAnswer(tx, conversation.id);
+      }, context);
+      const meta = readMetaChecked(repo, row.taskSlug, id);
+      if (!settled || live.get(id) !== row || row.stopping || sessionHarnessStatus(row).kind !== "idle" ||
+        meta.archived || meta.ended_at != null || meta.execution_id !== row.executionId || !onlyIfIdle()) {
+        throw new Error("Session is no longer eligible for an idle reminder.");
+      }
+    }
+    await conversation.submit({ type: "input", content: text, whenBusy: onlyIfIdle ? "reject" : "followUp" }, context);
   },
   stop: stopHarnessSession,
   bind(id, executionId, step) {

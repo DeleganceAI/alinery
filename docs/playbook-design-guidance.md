@@ -288,9 +288,10 @@ The ancestry value 0 is not permission to rename existing physical `00-ticket.md
 `auto_advance_default` initializes the task's choice for each step. The person can change that choice for current and future attempts. Task-wide automatic approval overrides the choice while enabled.
 
 - The harness finishes its writes and verification and calls the completion tool. Invalid outputs leave the session open for correction.
-- On a manual step, validation records the current owner, work revision, outputs and downstream routing. The person can inspect the draft or send feedback. New work invalidates the review.
+- On a manual step, validation records the current owner, work revision, outputs and downstream routing. Sending feedback hides **Continue**. Once the agent has successfully answered the latest follow-up and has no outstanding work, the engine checks the current files and routing again. Valid output returns to review, even when the follow-up was a question and the files stayed the same.
 - **Continue** beside Send accepts the observed revision. The engine rechecks the files and their routing and persists a receipt. Repeating that acceptance after a lost reply returns the recorded result.
 - Eligible automatic intermediate steps accept validated work directly. A ready endpoint stays open for questions under either policy. Session View shows **Ready for review** and Task Detail offers an explicit finish action.
+- On automatic steps, 30 seconds of continuous idle with valid outputs and a missing completion call can trigger a reminder to the agent. The limit is two per execution during the daemon run. Steps set to **Wait for me** receive no automatic idle reminders.
 - A successor starts once its required inputs are available, the producing session has exited, and the task has capacity. Questions and substantive approvals keep their own meaning in the conversation.
 
 ## Completion and process shutdown are separate transitions

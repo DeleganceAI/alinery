@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { stateHasStart } from "./domain/executionStore.ts";
 import type { SessionHooks } from "./graph.ts";
 import { completeSession, continueReviewed, engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, nudgeExecution, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, submitSessionWork, taskShouldHold, tickGraphs } from "./graph.ts";
@@ -55,7 +55,9 @@ describe("task record", () => {
     expect(sessionHarnessStatus(undefined)).toEqual({ kind: "unknown" });
     expect(sessionHarnessStatus({ process: "alive", playbook: { state: "failed" }, agent: { state: "idle" }, liveRun: false })).toEqual({ kind: "unknown" });
     expect(sessionHarnessStatus({ process: "exited", playbook: { state: "failed" }, agent: { state: "idle" }, liveRun: false })).toEqual({ kind: "failed", reason: "session failed" });
-    expect(sessionHarnessStatus({ process: "alive", playbook: { state: "in_progress" }, agent: { state: "waiting_for_approval" }, liveRun: false })).toEqual({ kind: "idle" });
+    for (const state of ["waiting_for_approval", "waiting_for_input", "errored"]) {
+      expect(sessionHarnessStatus({ process: "alive", playbook: { state: "in_progress" }, agent: { state }, liveRun: false })).toEqual({ kind: "waiting" });
+    }
     expect(sessionHarnessStatus({ process: "alive", playbook: { state: "in_progress" }, agent: { state: "idle" }, liveRun: false })).toEqual({ kind: "idle" });
   });
 });
@@ -101,6 +103,79 @@ function recordingHooks(): SessionHooks & { opened: Array<{ id: string; model: s
 }
 
 describe("playbook host", () => {
+  test("the next discovery opens a repaired task playbook", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-playbook-repair-"));
+    const hooks = recordingHooks();
+    resetGraphs();
+    prepareGraphs(repo, hooks);
+    taskFixture(repo, "repair", {});
+    const path = join(repo, ".alinery", "tasks", "repair", "playbook.md");
+    const original = readFileSync(path, "utf8");
+    writeFileSync(path, "invalid playbook");
+    await tickGraphs();
+    expect(hooks.opened).toHaveLength(0);
+    writeFileSync(path, original);
+    await tickGraphs();
+    expect(hooks.opened).toHaveLength(1);
+  });
+
+  test("invalid publications leave the work with the agent and real waits still block review", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-invalid-outputs-"));
+    const hooks = recordingHooks();
+    resetGraphs();
+    prepareGraphs(repo, hooks);
+    taskFixture(repo, "work", {});
+    await tickGraphs();
+    const session = hooks.opened[0].id;
+    const invalid = await completeSession(session);
+    expect(invalid?.outcome).toBe("invalid_outputs");
+    expect(invalid?.diagnostics).not.toEqual([]);
+    expect(invalid?.correlation_id).toBeUndefined();
+    const execution = engineExecutions("work")[0];
+    writeFileSync(join(execution.outDir, "out.md"), "corrected");
+    hooks.reviewBlocker = async () => "A tool approval is pending.";
+    expect(await completeSession(session)).toMatchObject({ outcome: "pending_work", reason: "A tool approval is pending." });
+    hooks.reviewBlocker = async () => undefined;
+    expect(await completeSession(session)).toMatchObject({ outcome: "ready_for_review" });
+  });
+
+  test("an idle reminder reaches the unreviewed session and rechecks the task at delivery", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-idle-reminder-"));
+    const hooks = recordingHooks();
+    resetGraphs();
+    prepareGraphs(repo, hooks);
+    taskFixture(repo, "work", {});
+    await tickGraphs();
+    const execution = engineExecutions("work")[0];
+    writeFileSync(join(execution.outDir, "out.md"), "done");
+    const messages: string[] = [];
+    const eligibility: boolean[] = [];
+    hooks.send = async (id, text, onlyIfIdle) => {
+      expect(id).toBe(execution.sessionId!);
+      if (messages.length) {
+        const path = join(repo, ".alinery", "tasks", "work", "task.md");
+        writeFileSync(path, `archived = true\n${readFileSync(path, "utf8")}`);
+      }
+      const allowed = onlyIfIdle?.() ?? false;
+      eligibility.push(allowed);
+      if (!allowed) throw new Error("task is no longer available");
+      messages.push(text);
+    };
+    let now = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      await tickGraphs();
+      now += 30_000;
+      await tickGraphs();
+      now += 30_000;
+      await tickGraphs();
+    } finally {
+      clock.mockRestore();
+    }
+    expect(messages).toHaveLength(1);
+    expect(eligibility).toEqual([true, false]);
+  });
+
   test("a nudge requires the working owner and keeps reviewed readiness and accepted handoff intact", async () => {
     const repo = mkdtempSync(join(tmpdir(), "vinculum-nudge-review-"));
     const hooks = recordingHooks();

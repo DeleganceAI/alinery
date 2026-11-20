@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fold, readLog, type State, type StateJson, stateFromJson, stateToJson } from "playbook-engine/src/state.ts";
+import type { Step } from "playbook-engine/src/playbook.ts";
 import { writeDurable } from "../platform/fs.ts";
 import { withTaskMutation } from "../platform/lock.ts";
 import { projectExecution, projectionContext, projectOccurrences } from "./executionProjection.ts";
@@ -71,13 +72,16 @@ export function loadEngineState(repo: string, slug: string): EngineLoad {
 export const stateHasStart = (state: State | undefined): boolean => [...(state?.executions.values() ?? [])].some((e) => e.sessionId !== null);
 
 /** The Rust-shaped records the engine's executions and occurrences stand for; the old runner's and manual ones stay. */
-export function mergedRecords(file: Json, state: State, repo: string, slug: string): { executions: Json; occurrences: Json } {
-  const project = projectionContext(repo, slug, state.executions.values());
+export function mergedRecords(file: Json, state: State, repo: string, slug: string, loadedSteps?: Step[]): { executions: Json; occurrences: Json } {
+  const project = projectionContext(repo, slug, state.executions.values(), loadedSteps);
   const autoApproveAll = file.auto_approve_all === true;
   const keep = (map: unknown, isEngine: (id: string) => boolean): Json =>
     Object.fromEntries(Object.entries((map && typeof map === "object" ? map : {}) as Json).filter(([id]) => !isEngine(id)));
   const executions: Json = keep(file.executions, isEngineExecution);
-  for (const execution of state.executions.values()) executions[execution.id] = projectExecution(execution, autoApproveAll, project);
+  const retained = file.executions as Record<string, { outputs?: unknown }> | undefined;
+  for (const execution of state.executions.values()) {
+    executions[execution.id] = projectExecution(execution, autoApproveAll, project, retained?.[execution.id]?.outputs);
+  }
   return { executions, occurrences: { ...keep(file.occurrences, isEngineOccurrence), ...(projectOccurrences(state, project.artifactsDir) as Json) } };
 }
 
@@ -87,7 +91,7 @@ export function mergedRecords(file: Json, state: State, repo: string, slug: stri
  * the engine's executions under their own ids. Both halves of the write come from one deep copy of `state`
  * taken before the first wait, so a state that moves on while the lock is awaited cannot split them.
  */
-export function saveEngineState(repo: string, slug: string, state: State): Promise<void> {
+export function saveEngineState(repo: string, slug: string, state: State, loadedSteps?: Step[]): Promise<void> {
   const dir = taskDir(repo, slug);
   const frozen = stateFromJson(JSON.parse(JSON.stringify(stateToJson(state))) as StateJson);
   const engine = mapPaths(stateToJson(frozen), relativeTo(dir));
@@ -102,7 +106,7 @@ export function saveEngineState(repo: string, slug: string, state: State): Promi
       }
       file.enabled_steps = [...enabled].sort();
     }
-    Object.assign(file, mergedRecords(file, frozen, repo, slug));
+    Object.assign(file, mergedRecords(file, frozen, repo, slug, loadedSteps));
     file.revision = (typeof file.revision === "number" ? file.revision : 0) + 1;
     await writeDurable(executionPath(repo, slug), JSON.stringify(file));
   });

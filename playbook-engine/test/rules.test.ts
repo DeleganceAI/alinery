@@ -607,3 +607,108 @@ test('nested fan-out: the merges of the inner families can themselves be merged 
   assert.equal(finals[0].inputs['merged*.md'].length, 2);
   assert.deepEqual(engine.diagnose().blocked, []);
 });
+
+/** One automatic or manual step that returns from its turn without reporting completion. */
+async function idleStep(automatic = true, autoApproveAll = () => false) {
+  const dir = taskDir();
+  const pb = playbook([step('work', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'report.md' }], autoAdvanceDefault: automatic })]);
+  let now = 0;
+  const harness = new FakeHarness(async () => {});
+  const engine = openEngine(pb, harness, dir, { now: () => now, autoApproveAll });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const [execution] = byStep(engine, 'work');
+  const session = harness.sessions.get(execution.sessionId!)!;
+  const tickAt = async (at: number) => {
+    now = at;
+    await engine.tick();
+  };
+  await tickAt(0);
+  return { engine, harness, session, execution, tickAt, output: session.launch.outputs['report.md'] };
+}
+
+test('an automatic step with valid outputs gets at most two idle reminders, at least 30s apart', async () => {
+  const { session, output, tickAt } = await idleStep();
+  writeText(output, 'done');
+  await tickAt(29_999);
+  assert.deepEqual(session.inbox, []);
+  await tickAt(30_000);
+  assert.equal(session.inbox.length, 1);
+  assert.match(session.inbox[0], /call the completion tool/);
+  await tickAt(59_999);
+  assert.equal(session.inbox.length, 1);
+  await tickAt(60_000);
+  await tickAt(600_000);
+  assert.equal(session.inbox.length, 2);
+});
+
+test('idle reminders respect Wait for me, including after one-time permission, and the task override', async () => {
+  let override = false;
+  const { session, engine, execution, output, tickAt } = await idleStep(false, () => override);
+  writeText(output, 'done');
+  await tickAt(90_000);
+  assert.deepEqual(session.inbox, []);
+  await engine.permit(execution.id);
+  assert.match(session.inbox[0], /Permission to finish granted/);
+  await tickAt(180_000);
+  assert.equal(session.inbox.length, 1);
+  override = true;
+  await tickAt(180_000);
+  await tickAt(210_000);
+  assert.equal(session.inbox.length, 2);
+  override = false;
+  await tickAt(300_000);
+  assert.equal(session.inbox.length, 2);
+});
+
+test('missing or invalid outputs do not trigger reminders, and an assessed endpoint waits for human review', async () => {
+  const { session, output, engine, execution, tickAt } = await idleStep();
+  await tickAt(30_000);
+  writeText(output, '');
+  await tickAt(60_000);
+  writeText(output, 'ready');
+  assert.equal((await session.launch.requestCompletion()).kind, 'ready');
+  await tickAt(90_000);
+  await tickAt(180_000);
+  assert.deepEqual(session.inbox, []);
+  await engine.continueReviewed(execution.id, session.id, execution.ready!.revision);
+  await tickAt(600_000);
+  assert.deepEqual(session.inbox, []);
+});
+
+test('working, waiting for a person and admitting new work all restart the idle period', async () => {
+  const { session, engine, execution, output, tickAt } = await idleStep();
+  writeText(output, 'ready');
+  session.status = { kind: 'running' };
+  await tickAt(29_000);
+  session.status = { kind: 'idle' };
+  await tickAt(30_000);
+  session.status = { kind: 'waiting' };
+  await tickAt(59_000);
+  session.status = { kind: 'idle' };
+  await tickAt(60_000);
+  await engine.invalidateReadiness(execution.id, session.id);
+  await tickAt(89_000);
+  await tickAt(118_999);
+  assert.deepEqual(session.inbox, []);
+  await tickAt(119_000);
+  assert.equal(session.inbox.length, 1);
+});
+
+test('new user work during reminder admission cancels that reminder and keeps the send allowance', async () => {
+  const { session, harness, engine, execution, output, tickAt } = await idleStep();
+  writeText(output, 'ready');
+  const send = harness.send.bind(harness);
+  harness.send = async (...args) => {
+    await engine.invalidateReadiness(execution.id, session.id);
+    await send(...args);
+  };
+  await tickAt(30_000);
+  assert.deepEqual(session.inbox, []);
+  harness.send = send;
+  await tickAt(30_001);
+  await tickAt(60_001);
+  await tickAt(90_001);
+  assert.equal(session.inbox.length, 2);
+});

@@ -43,14 +43,13 @@ function definitionOfStruct(d: JsonObject): NormalizedPlaybook {
 export function replyOf(e: Entity | undefined): TaskExecutionReply | undefined {
   if (e?.value.case !== "execution") return undefined;
   const row = e.value.value;
-  // The row is generated types on one side and the views' types on the other, so each half is
-  // cast. Do not default a missing half to `{}` and cast that: an empty object satisfies the cast
-  // and then throws in a view (`definition.step.find` on `{}`). A row without both halves is not
-  // a reply, and the caller already has the "no row yet" path for it.
-  if (!row.state || !row.definition) return undefined;
+  // A refused engine may have readable execution history even when its playbook could not be read.
+  if (!row.state) return undefined;
+  const refusal = row.state.engine_unavailable;
+  if (!row.definition && (typeof refusal !== "string" || !refusal.trim())) return undefined;
   return {
     state: row.state as unknown as TaskExecutionState,
-    definition: definitionOfStruct(row.definition),
+    definition: definitionOfStruct(row.definition ?? {}),
     live: { status: "available" },
     revision: e.revision,
   };

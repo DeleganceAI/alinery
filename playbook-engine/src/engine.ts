@@ -75,6 +75,8 @@ export interface EngineOptions {
   autoApproveAll?: () => boolean;
   /** A policy change may advance an earlier report only after subsequent agent activity and input have settled. */
   canAdvanceReviewed?: (sessionId: string) => Promise<boolean>;
+  /** True when this exact follow-up has a successful final reply and the session has no outstanding work. */
+  reviewFollowUpFinished?: (sessionId: string, requestId: string) => Promise<boolean>;
   /**
    * Prompt tokens that belong to one launch. Called while rendering that step.
    * When set, it replaces `PROMPT_EXTRA` and `REVIEW_HANDOFF_FILE` for that launch, including with empty strings.
@@ -85,6 +87,8 @@ export interface EngineOptions {
    * Empty adds nothing. A throw fails that launch, so a requirement is never dropped without a trace.
    */
   requirements?: () => string | Promise<string>;
+  /** Clock in milliseconds for idle reminders. */
+  now?: () => number;
   /** Values for prompt tokens that are not derived from the execution. `{{ARTIFACTS_DIR}}` is each execution's own output directory. */
   tokens?: {
     TICKET_FILE?: string;
@@ -98,6 +102,10 @@ export interface EngineOptions {
 }
 
 const WRAP_UP = 'Permission to finish granted. Complete your writes, give a brief handoff, then call the completion tool. If it reports readiness for review, remain available for follow-up requests. Finish only after acceptance.';
+
+const IDLE_REMINDER = 'Your assigned outputs are in place. If you are done, call the completion tool to submit them. If you still need an answer from the human, ask for it.';
+const IDLE_REMINDER_AFTER_MS = 30_000;
+const IDLE_REMINDER_LIMIT = 2;
 
 export class StepContinuationRefusal extends Error {
   readonly reason: 'unknown-step' | 'task-override';
@@ -113,6 +121,9 @@ export class Engine {
   #state: State;
   /** Executions whose shutdown this process has already requested. Rebuilt lazily after restart; stop() is idempotent. */
   readonly #stopping = new Set<string>();
+  /** A fresh engine observes a full idle period before sending any reminders. */
+  readonly #idleSince = new Map<string, number>();
+  readonly #remindersSent = new Map<string, number>();
   #saving: Promise<void> | null = null;
   #dirty = false;
   #saveError: unknown;
@@ -204,7 +215,7 @@ export class Engine {
     if (e.status !== 'live' || !e.sessionId) return { kind: 'rejected', problems: [`execution is ${e.status}, not live`] };
     const check = this.#assess(e);
     if ('problems' in check) {
-      if (e.ready) this.#append({ t: 'work-changed', execId });
+      if (e.ready || e.pendingReviewInput) this.#append({ t: 'work-changed', execId });
       await this.flush();
       return { kind: 'rejected', problems: check.problems };
     }
@@ -233,11 +244,27 @@ export class Engine {
   }
 
   /** Admit work before delivering it, including when no readiness has yet been reported. */
-  async invalidateReadiness(execId: string, sessionId: string): Promise<void> {
+  async invalidateReadiness(execId: string, sessionId: string, requestId?: string): Promise<void> {
     const e = this.#must(execId);
     if (!sessionId || e.sessionId !== sessionId || e.status !== 'live' || e.receipt) throw new Error('The execution no longer accepts work from this owner.');
-    this.#append({ t: 'work-changed', execId });
+    this.#append({ t: 'work-changed', execId, reviewInput: e.ready || e.pendingReviewInput ? requestId : undefined });
     await this.flush();
+  }
+
+  /** Reassess a previously submitted handoff after feedback. Only offer a human decision here. */
+  async #reviewAfterFeedback(e: Execution): Promise<void> {
+    const requestId = e.pendingReviewInput;
+    const revision = e.workRevision;
+    if (!requestId || !revision || !e.sessionId || e.status !== 'live' || !this.#opts.reviewFollowUpFinished) return;
+    if (!(await this.#opts.reviewFollowUpFinished(e.sessionId, requestId))) return;
+    // A newer message, explicit completion, or owner change can arrive while checking the reply.
+    if (e.pendingReviewInput !== requestId || e.workRevision !== revision) return;
+    const check = this.#assess(e);
+    if ('problems' in check || (!check.assessment.endpoint && this.#permitted(e))) {
+      this.#append({ t: 'work-changed', execId: e.id });
+      return;
+    }
+    this.#append({ t: 'ready', execId: e.id, assessment: { ...check.assessment, revision } });
   }
 
   async setStepContinuation(stepKey: string, automatic: boolean, checkRevision?: () => void): Promise<void> {
@@ -373,6 +400,12 @@ export class Engine {
   async #observe(): Promise<void> {
     for (const e of this.#occupying()) {
       const s = await this.#opts.harness.status(e.sessionId!);
+      if (s.kind === 'idle' && e.pendingReviewInput) await this.#reviewAfterFeedback(e);
+      if (s.kind === 'idle' && this.#canRemind(e)) {
+        await this.#remindIfIdle(e);
+      } else {
+        this.#idleSince.delete(e.id);
+      }
       if (s.kind === 'exited') this.#append({ t: 'exited', execId: e.id });
       else if (s.kind === 'failed') {
         if (e.status !== 'failed' || e.unconfirmed) this.#append({ t: 'failed', execId: e.id, reason: s.reason });
@@ -380,6 +413,34 @@ export class Engine {
         // Not proof the process stopped: it keeps its capacity and worktree until a person confirms.
         this.#append({ t: 'failed', execId: e.id, reason: 'harness has no record of the session', unconfirmed: true });
       }
+    }
+  }
+
+  #canRemind(e: Execution): boolean {
+    return e.status === 'live' && !e.ready && !e.receipt && !e.pendingReviewInput && this.#automatic(e);
+  }
+
+  /** An automatic step can end its turn after writing the outputs and forget to request completion. */
+  async #remindIfIdle(e: Execution): Promise<void> {
+    const now = (this.#opts.now ?? Date.now)();
+    const since = this.#idleSince.get(e.id);
+    if (since === undefined) {
+      this.#idleSince.set(e.id, now);
+      return;
+    }
+    const sent = this.#remindersSent.get(e.id) ?? 0;
+    if (sent >= IDLE_REMINDER_LIMIT || now - since < IDLE_REMINDER_AFTER_MS) return;
+    const revision = e.workRevision;
+    const sessionId = e.sessionId!;
+    const outputsReady = () => inspectOutputs(e.outDir, this.#step(e.step).outputs).ok;
+    if (!outputsReady()) return;
+    this.#idleSince.set(e.id, now); // A failed delivery also waits a full period before retry.
+    const eligible = () => e.sessionId === sessionId && e.workRevision === revision && this.#canRemind(e) && outputsReady();
+    try {
+      await this.#opts.harness.send(sessionId, IDLE_REMINDER, eligible);
+      this.#remindersSent.set(e.id, sent + 1);
+    } catch {
+      // The session may have started work or lost its connection since the idle observation.
     }
   }
 
@@ -487,8 +548,12 @@ export class Engine {
   }
 
   #permitted(e: Execution): boolean {
+    return e.permitted || this.#automatic(e);
+  }
+
+  #automatic(e: Execution): boolean {
     const gate = typeof e.automatic === 'boolean' ? e.automatic : (this.#opts.autoAdvance?.[e.step] ?? this.#step(e.step).autoAdvanceDefault);
-    return gate || (this.#opts.autoApproveAll?.() ?? false) || e.permitted;
+    return gate || (this.#opts.autoApproveAll?.() ?? false);
   }
 
   /** Sessions occupying capacity: anything with a process that has not confirmed exit. */
@@ -526,6 +591,10 @@ export class Engine {
 
   /** The single write path: apply in memory, then save the whole State. */
   #append(ev: Event): void {
+    if (ev.t === 'work-changed' || ev.t === 'permitted' || ev.t === 'resumed') this.#idleSince.delete(ev.execId);
+    if (ev.t === 'step-mode') {
+      for (const e of this.#occupying()) if (e.step === ev.step) this.#idleSince.delete(e.id);
+    }
     apply(this.#state, ev);
     this.persist();
   }

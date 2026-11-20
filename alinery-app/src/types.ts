@@ -933,6 +933,8 @@ export type TaskExecutionState = {
   auto_approve_all?: boolean;
   /** The records are the old runner's. They show as finished history, with no approve or resume. */
   history_only?: boolean;
+  /** Why the daemon cannot run this task's retained playbook. Its saved records remain readable. */
+  engine_unavailable?: string;
   launch_defaults: LaunchChoices;
   /**
    * The maps below come from the engine block, and `getTaskExecution` merges them only for a

@@ -65,7 +65,7 @@ export async function committedTurnMessages(conversation: Conversation) {
 export async function retryFailedTurn(
   conversation: Conversation,
   failedEntryId: string,
-  submitWork: (check: () => Promise<boolean>, send: () => Promise<void>) => Promise<void>,
+  submitWork: (check: () => Promise<boolean>, send: () => Promise<void>, requestId: string) => Promise<void>,
 ) {
   if (!failedEntryId) throw new DomainError("invalid_argument", "Retry needs the failed turn.");
   const requestId = `alinery:retry:${failedEntryId}`;
@@ -79,5 +79,6 @@ export async function retryFailedTurn(
     async () => {
       await conversation.submit({ type: "input", content: "Continue from where the failed turn stopped.", requestId, whenBusy: "reject" }, context);
     },
+    requestId,
   );
 }

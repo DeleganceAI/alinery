@@ -209,6 +209,7 @@ export class BoardProjector {
     const input = TASK_INPUT.test(m[2]);
     if (!input && m[2] !== "task.md") return [];
     const out = input ? [`tasks/${m[1]}/task.md`] : [];
+    if (m[2] === "playbook.md") out.push(`tasks/${m[1]}/execution.json`);
     // A task's name is what its sessions' attention notifications call them.
     if (m[2] === "task.md") out.push(...this.sessionMetas(m[1]));
     const seen = new Set([m[1]]);

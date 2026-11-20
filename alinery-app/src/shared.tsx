@@ -38,6 +38,7 @@ import type {
   TaskActivityMap,
   TaskActivityRef,
   TaskActivitySummary,
+  TaskExecutionReply,
   TaskExecutionState,
   UpdateStatus,
 } from "./types";
@@ -486,12 +487,25 @@ export function executionAvailabilityLabel(live: ExecutionAvailability | undefin
   }
 }
 
-export function ExecutionAvailabilityNotice({ live, controls = false }: { live: ExecutionAvailability | undefined; controls?: boolean }) {
-  if (live?.status === "available") return null;
+export function executionControlsAvailable(view: TaskExecutionReply | null | undefined): boolean {
+  return view?.live?.status === "available" && !view.state.history_only && !view.state.engine_unavailable;
+}
+
+export function ExecutionAvailabilityNotice({ view }: { view: TaskExecutionReply }) {
+  const { live, state } = view;
+  if (live?.status === "available") {
+    if (state.engine_unavailable) {
+      return (
+        <InlineStatus tone="warning" detail={state.engine_unavailable}>
+          Playbook execution controls are unavailable for this task.
+        </InlineStatus>
+      );
+    }
+    return state.history_only ? <InlineStatus tone="info">This task uses an older execution format. Its playbook history is read-only.</InlineStatus> : null;
+  }
   return (
     <InlineStatus tone="info">
-      {executionAvailabilityLabel(live)}. Showing saved progress, not confirmed live status.
-      {controls && " Execution controls are disabled until project ownership and live status are available."}
+      {executionAvailabilityLabel(live)}. Showing saved progress, not confirmed live status. Execution controls are disabled until project ownership and live status are available.
       <details>
         <summary>Technical details</summary>
         <pre className="inline-status-detail">{live?.detail ?? "Owner availability could not be determined."}</pre>

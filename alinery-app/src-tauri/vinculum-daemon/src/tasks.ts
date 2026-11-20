@@ -5,7 +5,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { writeAtomic } from "./platform/fs.ts";
 import { withTaskMutation } from "./platform/lock.ts";
-import { engineExecutions, resumeFailedSession, runTask } from "./graph.ts";
+import { engineExecutions, engineRefusal, resumeFailedSession, runTask } from "./graph.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
 import type { Playbook, Step } from "playbook-engine/src/playbook.ts";
 import { projectExecution, projectionContext, taskAutoApproveAll } from "./domain/executionProjection.ts";
@@ -41,15 +41,17 @@ function definitionOf(playbook: Playbook): Record<string, unknown> {
   };
 }
 
-function executionState(repo: string, slug: string, lane: string, appIdentity: string): Record<string, unknown> | undefined {
+function executionState(repo: string, slug: string, lane: string, appIdentity: string, playbook?: Playbook): Record<string, unknown> | undefined {
   const path = executionPath(repo, slug);
   if (!existsSync(path)) return undefined;
   const state = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const refusal = engineRefusal(state, { lane, identity: appIdentity });
+  if (refusal) state.engine_unavailable = refusal;
   // The file holds the engine's state (or an old log is folded for it); its records are projected again here, so the
   // permission follows `auto_approve_all` as it is now, which a Rust writer can change without a save.
   const stored = loadEngineState(repo, slug);
   if ((stored.kind === "stored" || stored.kind === "converted") && (stored.state.seeds.length > 0 || stored.state.executions.size > 0)) {
-    Object.assign(state, mergedRecords(state, stored.state, repo, slug));
+    Object.assign(state, mergedRecords(state, stored.state, repo, slug, refusal ? undefined : playbook?.steps));
   }
   // Records the old runner wrote are history. The views offer no approve or resume for them.
   if (stored.kind === "history_only") state.history_only = true;
@@ -68,13 +70,22 @@ function sessionReply(meta: Record<string, unknown>, worktree: string): Record<s
   return { worktree, created: Math.floor(Date.now() / 1000), model: "", ...meta, harness: recordedHarness(meta.harness) };
 }
 
-export function getTaskExecution(repo: string, slug: string, lane: string, appIdentity: string): Record<string, unknown> {
+export function getTaskExecution(repo: string, slug: string, lane: string, appIdentity: string, playbook?: Playbook): Record<string, unknown> {
   const sourcePath = join(repo, ".alinery", "tasks", slug, "playbook.md");
-  const state = executionState(repo, slug, lane, appIdentity);
-  if (!state || !existsSync(sourcePath)) return { error: "task execution state unavailable" };
-  const parsed = parsePlaybookMd(readFileSync(sourcePath, "utf8"));
-  if (!parsed.playbook) return { error: parsed.diagnostics.map((item) => item.message).join("; ") };
-  return { state, definition: definitionOf(parsed.playbook) };
+  const state = executionState(repo, slug, lane, appIdentity, playbook);
+  if (!state) return { error: "task execution state unavailable" };
+  if (playbook && !state.engine_unavailable && !state.history_only) return { state, definition: definitionOf(playbook) };
+  let error: string;
+  try {
+    const parsed = parsePlaybookMd(readFileSync(sourcePath, "utf8"));
+    if (parsed.playbook) return { state, definition: definitionOf(parsed.playbook) };
+    error = `Invalid task playbook.md: ${parsed.diagnostics.map((item) => item.message).join("; ")}`;
+  } catch {
+    error = "The task’s playbook.md could not be read.";
+  }
+  // Keep the records readable while clients that need the definition still receive a refusal.
+  state.engine_unavailable = [state.engine_unavailable, error].filter(Boolean).join(" ");
+  return { state, error };
 }
 
 export async function overlayStart(repo: string, reply: Request, requested: boolean): Promise<Request> {

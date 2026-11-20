@@ -7,6 +7,7 @@ import { parse } from "smol-toml";
 import { Engine, StepContinuationRefusal } from "playbook-engine/src/engine.ts";
 import type { CompletionReply, Harness, Launch, SessionStatus } from "playbook-engine/src/harness.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
+import type { Playbook } from "playbook-engine/src/playbook.ts";
 import type { Execution } from "playbook-engine/src/state.ts";
 import { historyDir, loadEngineState, saveEngineState, stateHasStart } from "./domain/executionStore.ts";
 import { DomainError } from "./platform/lock.ts";
@@ -19,7 +20,8 @@ export type SessionHooks = {
   open(id: string, taskSlug: string, model: string, prompt: string): Promise<void>;
   status(id: string): Promise<SessionStatus>;
   reviewBlocker?(id: string, human: boolean): Promise<string | undefined>;
-  send(id: string, text: string): Promise<void>;
+  reviewFollowUpFinished?(sessionId: string, requestId: string): Promise<boolean>;
+  send(id: string, text: string, onlyIfIdle?: () => boolean): Promise<void>;
   nudge?(id: string, runId: string, deliveryId: string, checkOwner: (executionId: string) => void): Promise<void>;
   stop(id: string, taskSlug: string): Promise<void>;
   /** A session the engine launched: it stands for this execution of this step. */
@@ -30,11 +32,11 @@ export type SessionHooks = {
 
 export type PlaybookView = { state: string; reason?: string };
 
-type Running = { slug: string; engine: Engine };
+type Running = { repo: string; slug: string; engine: Engine; playbook: Playbook };
 
 const running = new Map<string, Running>();
 const bound = new Map<string, { slug: string; execId: string }>();
-const rejected = new Set<string>();
+const rejected = new Map<string, string>();
 const held = new Set<string>();
 let hooks: SessionHooks | null = null;
 let repoRoot = "";
@@ -74,11 +76,11 @@ export function engineAxis(): Array<{ id: string; playbook: PlaybookView }> {
   return sessions;
 }
 
-function phaseReply(reply: CompletionReply, execId: string): Record<string, unknown> {
+function phaseReply(reply: CompletionReply): Record<string, unknown> {
   if (reply.kind === "accepted") return { ok: true, outcome: "accepted", published: reply.published, playbook: "ready_to_advance" };
   if (reply.kind === "ready") return { ok: true, outcome: "ready_for_review", work_revision: reply.revision, endpoint: reply.endpoint, destinations: reply.destinations };
   if (reply.kind === "stale") return { error: reply.reason };
-  return { ok: true, outcome: "waiting_for_input", diagnostics: reply.problems, correlation_id: `completion-outputs:${execId}` };
+  return { ok: true, outcome: "invalid_outputs", diagnostics: reply.problems };
 }
 
 export async function completeSession(sessionId: string, currentOwner = () => true, expectedExecution?: string): Promise<Record<string, unknown> | undefined> {
@@ -93,7 +95,7 @@ export async function completeSession(sessionId: string, currentOwner = () => tr
       const blocker = await hooks?.reviewBlocker?.(sessionId, false);
       if (blocker) return { ok: true, outcome: "pending_work", reason: blocker };
     }
-    return phaseReply(await engine.requestCompletion(link.execId, sessionId, attempt), link.execId);
+    return phaseReply(await engine.requestCompletion(link.execId, sessionId, attempt));
   });
 }
 
@@ -112,7 +114,7 @@ async function withSessionAction<T>(id: string, run: () => Promise<T>): Promise<
   }
 }
 
-export async function submitSessionWork(slug: string, sessionId: string, submit: () => Promise<void>, check?: (boundExecution?: string) => Promise<boolean>): Promise<void> {
+export async function submitSessionWork(slug: string, sessionId: string, submit: () => Promise<void>, check?: (boundExecution?: string) => Promise<boolean>, requestId?: string): Promise<void> {
   if (slug) {
     await engineReady;
     if (hooks) openTask(repoRoot, slug, hooks);
@@ -124,7 +126,7 @@ export async function submitSessionWork(slug: string, sessionId: string, submit:
     if (link) {
       const engine = running.get(slug)?.engine;
       if (link.slug !== slug || !engine) throw new DomainError("failed_precondition", "the owning execution is unavailable");
-      await engine.invalidateReadiness(link.execId, sessionId);
+      await engine.invalidateReadiness(link.execId, sessionId, requestId);
     }
     await submit();
   });
@@ -254,7 +256,7 @@ export function sessionHarnessStatus(row: { process: "starting" | "alive" | "exi
   if (row.process === "exited") return { kind: "exited", exitCode: null };
   if (row.process === "starting") return { kind: "starting" };
   if (row.agent.state === "busy" || row.liveRun) return { kind: "running" };
-  return { kind: "idle" };
+  return row.agent.state === "idle" ? { kind: "idle" } : { kind: "waiting" };
 }
 
 /** A session file that already ended confirms the exit. A missing file stays unknown. */
@@ -332,8 +334,14 @@ function harnessFor(slug: string, hooks: SessionHooks, taskDir: string): Harness
       if (status.kind === "unknown" && typeof readSessionMeta(taskDir, id)?.ended_at === "number") return { kind: "exited", exitCode: null };
       return status;
     },
-    send(id: string, text: string) {
-      return hooks.send(id, text);
+    send(id, text, onlyIfIdle) {
+      if (!onlyIfIdle) return hooks.send(id, text);
+      const owner = running.get(slug);
+      return withSessionAction(id, () => hooks.send(id, text, () => {
+        const task = readTaskChecked(repoRoot, slug);
+        return owner !== undefined && running.get(slug) === owner && bound.get(id)?.slug === slug &&
+          !task.archived && !task.draft && task.engine_version === 2 && onlyIfIdle();
+      }));
     },
     stop(id: string) {
       return hooks.stop(id, slug);
@@ -349,31 +357,44 @@ function ticketPath(taskDir: string): string | undefined {
   return undefined;
 }
 
+/** The disk preconditions shared by engine discovery and the execution entity. */
+export function engineRefusal(execution: Record<string, unknown>, daemon: typeof owner): string | undefined {
+  if (execution.creation !== "ready") return "Task creation has not finished.";
+  if (daemon && ((typeof execution.owning_lane === "string" && execution.owning_lane !== daemon.lane) || (typeof execution.owning_app_config_identity === "string" && execution.owning_app_config_identity !== daemon.identity))) {
+    return "Another Alinery daemon owns this task.";
+  }
+}
+
 function openTask(repo: string, slug: string, hooks: SessionHooks, release = false) {
-  if (running.has(slug) || rejected.has(slug)) return;
+  if (running.has(slug)) return;
   const taskDir = join(repo, ".alinery", "tasks", slug);
   const sourcePath = join(taskDir, "playbook.md");
-  if (!existsSync(sourcePath)) return;
   const execution = readExecutionFile(taskDir);
-  if (!execution || execution.creation !== "ready") return;
-  // One daemon owns a task. The same check guards a session open (main.ts taskOpenAllowed).
-  if (owner && ((typeof execution.owning_lane === "string" && execution.owning_lane !== owner.lane) || (typeof execution.owning_app_config_identity === "string" && execution.owning_app_config_identity !== owner.identity))) return;
+  if (!execution || engineRefusal(execution, owner)) return;
+  let source: string;
+  try {
+    source = readFileSync(sourcePath, "utf8");
+  } catch {
+    return;
+  }
+  if (rejected.get(slug) === source) return;
   const stored = loadEngineState(repo, slug);
   // Records the old Rust runner wrote. They stay as history; nothing is seeded, reserved or launched.
   if (stored.kind === "history_only") return;
-  const parsed = parsePlaybookMd(readFileSync(sourcePath, "utf8"));
-  if (!parsed.playbook) {
-    rejected.add(slug);
-    console.error(`vinculum: ${slug} playbook: ${parsed.diagnostics.map((d) => d.message).join("; ")}`);
+  const { playbook, diagnostics } = parsePlaybookMd(source);
+  if (!playbook) {
+    rejected.set(slug, source);
+    console.error(`vinculum: ${slug} playbook: ${diagnostics.map((d) => d.message).join("; ")}`);
     return;
   }
+  rejected.delete(slug);
   const task = readTaskModels(taskDir);
   const cwd = task.cwd || repo;
   const engine = Engine.open({
-    playbook: parsed.playbook,
+    playbook,
     harness: harnessFor(slug, hooks, taskDir),
     load: () => (stored.kind === "stored" || stored.kind === "converted" ? stored.state : undefined),
-    save: (state) => saveEngineState(repo, slug, state),
+    save: (state) => saveEngineState(repo, slug, state, playbook.steps),
     onSaved: () => hooks?.executionChanged?.(slug),
     historyDir: historyDir(repo, slug),
     // A failed record (git missing, a damaged repository) must not fail the acceptance it documents.
@@ -393,6 +414,7 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
       return Array.isArray(steps) ? steps.filter((step): step is string => typeof step === "string") : [];
     },
     autoApproveAll: () => readExecutionFile(taskDir)?.auto_approve_all === true,
+    reviewFollowUpFinished: hooks.reviewFollowUpFinished,
     canAdvanceReviewed: async (sessionId) => {
       try {
         const current = readTaskChecked(repo, slug);
@@ -406,7 +428,7 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
     tokens: {
       TICKET_FILE: ticketPath(taskDir) ?? "",
       TASK_SLUG: slug,
-      TASK_NAME: task.name || parsed.playbook.title,
+      TASK_NAME: task.name || playbook.title,
       WORKTREE: cwd,
       SESSION_HISTORY_DIR: join(taskDir, "sessions"),
     },
@@ -422,7 +444,7 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
   for (const row of engine.state.executions.values()) {
     if (row.sessionId) bound.set(row.sessionId, { slug, execId: row.id });
   }
-  running.set(slug, { slug, engine });
+  running.set(slug, { repo, slug, engine, playbook });
   if (release || !taskShouldHold(execution.initial_start_requested === true, stateHasStart(engine.state))) held.delete(slug);
   else held.add(slug);
 }
@@ -443,6 +465,12 @@ export function holdTask(slug: string) {
 
 export function engineExecutions(slug: string): Execution[] {
   return [...(running.get(slug)?.engine.state.executions.values() ?? [])];
+}
+
+export function loadedPlaybook(repo: string, slug: string, lane: string, identity: string): Playbook | undefined {
+  const task = running.get(slug);
+  if (task?.repo !== repo || (owner && (owner.lane !== lane || owner.identity !== identity))) return undefined;
+  return task.playbook;
 }
 
 export async function runTask(slug: string) {

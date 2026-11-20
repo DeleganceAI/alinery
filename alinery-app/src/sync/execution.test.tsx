@@ -178,11 +178,7 @@ it("any other refusal keeps its message and is not a conflict", async () => {
   expect(String(error.message)).toContain("only a live execution can be permitted");
 });
 
-// `state` and `definition` are `google.protobuf.Struct` fields, so proto3 lets either arrive unset.
-// `replyOf` used to substitute `{}` and cast that through `as unknown as` — an empty object that
-// satisfied the cast and then threw in a view (`definition.step.find` on `{}`). A row missing a
-// half is not a reply; the caller's "no row yet" path already covers it.
-it("treats a row without a definition as no row, instead of casting an empty object", () => {
+it("waits for both state and definition when the daemon has not reported a refusal", () => {
   const half = create(EntitySchema, {
     key: executionKey("task"),
     revision: 1n,
@@ -196,6 +192,20 @@ it("treats a row without a definition as no row, instead of casting an empty obj
     value: { case: "execution", value: { slug: "task", definition } as never },
   });
   expect(replyOf(otherHalf)).toBeUndefined();
+});
+
+it("retains execution history and the reason when the daemon cannot read the playbook", () => {
+  const reason = "The task’s playbook.md could not be read.";
+  const retained = create(EntitySchema, {
+    key: executionKey("task"),
+    revision: 4n,
+    value: { case: "execution", value: { slug: "task", state: { ...state({ kind: "locked" }), engine_unavailable: reason } } },
+  });
+  const reply = replyOf(retained);
+  expect(reply?.live?.status).toBe("available");
+  expect(reply?.state.engine_unavailable).toBe(reason);
+  expect(reply?.state.executions?.e1.owner_session_id).toBe("s1");
+  expect(reply?.definition.step).toEqual([]);
 });
 
 // `definition` is a free-form Struct, so a row can carry it and still lack `step` (an older build's

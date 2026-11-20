@@ -1825,6 +1825,46 @@ describe("authoritative task execution", () => {
     expect((screen.getByRole("button", { name: "Finish step" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("offers a reviewed step in History after its owner finishes the active turn", async () => {
+    const fixture = task();
+    scenario.task = fixture;
+    scenario.sessions = [session({ id: "owner-a", harness: "vinculum" })];
+    sessionStatuses.mockResolvedValue({ "owner-a": observation("busy") });
+    const ready = { revision: 2, endpoint: false, destinations: ["worker"], roles: ["result.md"] };
+    mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ ready })]));
+    renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    const entry = within(await screen.findByRole("article", { name: "Execution execution-a" }));
+    const label = "Continue to Retained worker";
+    await waitFor(() => expect(entry.queryByRole("button", { name: label })).toBeNull());
+
+    await act(async () => {
+      sessionStatuses.mockResolvedValue({ "owner-a": observation("idle") });
+    });
+    fireEvent.click(await entry.findByRole("button", { name: label }));
+    expect(fakeExecution.continueReviewed).toHaveBeenCalledExactlyOnceWith("/r", "a-task", "execution-a", "owner-a", 2);
+  });
+
+  it("shows the online daemon's refusal and keeps a ready execution readable in History", async () => {
+    const fixture = task();
+    scenario.task = fixture;
+    const retained = executionReply([executionRecord({ ready: { revision: 3, endpoint: true, destinations: [], roles: ["result.md"] } })]);
+    const reason = "This execution belongs to another app configuration.";
+    retained.state.engine_unavailable = reason;
+    mocks.getTaskExecution.mockResolvedValue(retained);
+    renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+
+    expect(await screen.findByText(reason)).toBeDefined();
+    const history = within(screen.getByRole("article", { name: "Execution execution-a" }));
+    fireEvent.click(history.getByText("Inputs and outputs"));
+    expect(history.getByText("research/2-result-10.md")).toBeDefined();
+    const finish = history.getByRole("button", { name: "Finish step" });
+    expect(finish).toHaveProperty("disabled", true);
+    fireEvent.click(finish);
+    expect(fakeExecution.continueReviewed).not.toHaveBeenCalled();
+  });
+
   it("retains saved execution details while live authority changes and only grants completion after recovery", async () => {
     vi.useFakeTimers();
     const fixture = task();
@@ -1942,18 +1982,48 @@ describe("Task Detail auto approval", () => {
     expect(toggle.classList.contains("on")).toBe(false);
     expect(screen.queryByText("Automatic")).toBeNull();
 
-    ipcSpies.setAutoApproveAllForRepo.mockResolvedValue({ ...scenario.task, auto_approve_all: true });
+    ipcSpies.setAutoApproveAllForRepo.mockImplementation(async (_repo, _slug, enabled) => {
+      mocks.getTaskExecution.mockResolvedValue({ ...retained, state: { ...retained.state, auto_approve_all: enabled } });
+      fakeExecution.refresh();
+      return { ...scenario.task, auto_approve_all: enabled };
+    });
     fireEvent.click(toggle);
     await waitFor(() => expect(ipcSpies.setAutoApproveAllForRepo).toHaveBeenCalledWith("/repo", "parent", true));
     await waitFor(() => expect(screen.getByRole("button", { name: "Auto Approval All" }).getAttribute("aria-pressed")).toBe("true"));
     expect(screen.getByRole("button", { name: "Auto Approval All" }).classList.contains("on")).toBe(true);
     expect(screen.getByText("Automatic")).toBeTruthy();
 
-    ipcSpies.setAutoApproveAllForRepo.mockResolvedValue({ ...scenario.task, auto_approve_all: false });
     fireEvent.click(screen.getByRole("button", { name: "Auto Approval All" }));
     await waitFor(() => expect(ipcSpies.setAutoApproveAllForRepo).toHaveBeenCalledWith("/repo", "parent", false));
     await waitFor(() => expect(screen.getByRole("button", { name: "Auto Approval All" }).getAttribute("aria-pressed")).toBe("false"));
     expect(screen.queryByText("Automatic")).toBeNull();
+  });
+
+  it("displays the task setting until a healthy execution snapshot arrives, even before the first run", async () => {
+    scenario.task = { ...parentTask, engine_version: 2, auto_approve_all: true };
+    const pending = deferred<ReturnType<typeof executionReply>>();
+    mocks.getTaskExecution.mockReturnValue(pending.promise);
+    await renderDetail();
+    const toggle = screen.getByRole("button", { name: "Auto Approval All", pressed: true });
+    expect(toggle).toHaveProperty("disabled", true);
+    fireEvent.click(toggle);
+    expect(ipcSpies.setAutoApproveAllForRepo).not.toHaveBeenCalled();
+
+    const ready = executionReply([]);
+    ready.state.auto_approve_all = false;
+    await act(async () => pending.resolve(ready));
+    expect(screen.getByRole("button", { name: "Auto Approval All", pressed: false })).toHaveProperty("disabled", false);
+  });
+
+  it.each([{ history_only: true }, { engine_unavailable: "Another Alinery daemon owns this task." }])("disables Auto Approval All for an online task with %j", async (status) => {
+    scenario.task = { ...parentTask, engine_version: 2, auto_approve_all: false };
+    const retained = executionReply();
+    mocks.getTaskExecution.mockResolvedValue({ ...retained, state: { ...retained.state, auto_approve_all: true, ...status } });
+    await renderDetail();
+    const toggle = await screen.findByRole("button", { name: "Auto Approval All", pressed: true });
+    expect(toggle).toHaveProperty("disabled", true);
+    fireEvent.click(toggle);
+    expect(ipcSpies.setAutoApproveAllForRepo).not.toHaveBeenCalled();
   });
 
   it("keeps Auto Approval All off for an archived task", async () => {
