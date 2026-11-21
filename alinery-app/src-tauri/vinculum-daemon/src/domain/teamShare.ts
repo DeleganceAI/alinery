@@ -1,10 +1,12 @@
 // One daemon, one team. The shell delivers the sync credential; this process keeps it beside the
-// repo and pushes task.md plus numbered artifact markdown to the accounts service. It never opens
-// a Supabase socket.
+// repo and pushes task.md plus numbered artifact markdown to the accounts service. Teammates'
+// comments come back the other way: the heartbeat only says some wait, and a separate call fetches
+// them into the artifact's comments file. It never opens a Supabase socket.
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { writeOwnerOnly } from "../platform/fs.ts";
+import { writeAtomic, writeOwnerOnly } from "../platform/fs.ts";
+import { addComment, loadComments } from "./artifactComments.ts";
 
 const BODY_LIMIT = 1_000_000;
 const TASK = /^tasks\/([^/]+)\/task\.md$/;
@@ -19,6 +21,68 @@ export type ShareSnapshot = {
 
 export function sharePath(repo: string): string {
   return join(repo, ".alinery", "team-share.json");
+}
+
+// Its own file, because finalizing a review deletes the comments file: what was fetched must not come back.
+function cursorPath(repo: string): string {
+  return join(repo, ".alinery", "team-share-comments.json");
+}
+
+export function readCommentCursor(repo: string): string {
+  try {
+    const since = (JSON.parse(readFileSync(cursorPath(repo), "utf8")) as { since?: unknown }).since;
+    return typeof since === "string" ? since : "";
+  } catch {
+    return "";
+  }
+}
+
+export type TeamComment = {
+  task_slug: string;
+  filename: string;
+  body: string;
+  created_at: string;
+  author_email: string | null;
+  anchor_id?: string;
+  anchor_kind?: string;
+  anchor_label?: string;
+  anchor_excerpt?: string;
+  line_start?: number;
+  line_end?: number;
+};
+
+/**
+ * Writes each comment into its artifact's comments file and moves the cursor past the batch. A comment on an artifact
+ * this repository no longer has is passed over; one already in the file (a fetch the cursor missed) is not added twice.
+ */
+export function saveTeamComments(repo: string, rows: TeamComment[]): number {
+  let saved = 0;
+  let since = readCommentCursor(repo);
+  for (const row of rows) {
+    if (typeof row.created_at === "string" && row.created_at > since) since = row.created_at;
+    const author = row.author_email || "a teammate";
+    const created_at_ms = Date.parse(row.created_at);
+    if (typeof row.body !== "string" || !ARTIFACT.test(`tasks/${row.task_slug}/artifacts/${row.filename}`) || Number.isNaN(created_at_ms)) continue;
+    if (!existsSync(join(repo, ".alinery", "tasks", row.task_slug, "artifacts", row.filename))) continue;
+    try {
+      const existing = loadComments(repo, row.task_slug, row.filename);
+      if (existing.some((c) => c.author === author && c.created_at_ms === created_at_ms && c.body === row.body.trim())) continue;
+      const anchor = {
+        anchor_id: row.anchor_id ?? "",
+        anchor_kind: row.anchor_kind ?? "",
+        anchor_label: row.anchor_label ?? "",
+        anchor_excerpt: row.anchor_excerpt ?? "",
+        line_start: row.line_start ?? 0,
+        line_end: row.line_end ?? 0,
+      };
+      addComment(repo, row.task_slug, row.filename, { ...anchor, body: row.body }, { author, created_at_ms });
+      saved += 1;
+    } catch (error) {
+      console.error(`team comment ${row.task_slug}/${row.filename}: ${(error as Error).message}`);
+    }
+  }
+  writeAtomic(cursorPath(repo), JSON.stringify({ since }));
+  return saved;
 }
 
 function accountsOk(url: string): boolean {
@@ -160,10 +224,12 @@ export async function clearTeamShare(repo: string): Promise<Record<string, never
   stopTimers();
   pushedTasks = new Map();
   pushedArtifacts = new Map();
-  try {
-    unlinkSync(sharePath(repo));
-  } catch {
-    /* already gone */
+  for (const path of [sharePath(repo), cursorPath(repo)]) {
+    try {
+      unlinkSync(path);
+    } catch {
+      /* already gone */
+    }
   }
   return {};
 }
@@ -172,13 +238,31 @@ function enqueue(job: () => Promise<void>) {
   chain = chain.then(job, job);
 }
 
-async function post(file: ShareFile, path: string, body: unknown) {
+async function post(file: ShareFile, path: string, body: unknown): Promise<Record<string, unknown>> {
   const response = await fetch(`${file.accounts_url}${path}`, {
     method: "POST",
     headers: { authorization: `Bearer ${file.token}`, "content-type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(`accounts answered ${response.status}`);
+  try {
+    const reply = await response.json();
+    return reply && typeof reply === "object" ? (reply as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function pull(repo: string, gen: number) {
+  for (let page = 0; page < 50; page++) {
+    const file = readShareFile(repo);
+    if (!file || gen !== generation) return;
+    const reply = await post(file, "/api/daemon/comments", { comments_since: readCommentCursor(repo) });
+    if (gen !== generation) return;
+    const rows = Array.isArray(reply.comments) ? (reply.comments as TeamComment[]) : [];
+    saveTeamComments(repo, rows);
+    if (reply.more !== true || rows.length === 0) return;
+  }
 }
 
 async function push(repo: string, gen: number) {
@@ -222,7 +306,14 @@ async function heartbeat(repo: string, gen: number) {
   const file = readShareFile(repo);
   if (!file || gen !== generation) return;
   try {
-    await post(file, "/api/daemon/heartbeat", lastError ? { error: lastError } : {});
+    const reply = await post(file, "/api/daemon/heartbeat", { ...(lastError ? { error: lastError } : {}), comments_since: readCommentCursor(repo) });
+    if (reply.comment_updates === true && gen === generation) {
+      enqueue(() =>
+        pull(repo, gen).catch((error) => {
+          console.error(`team comments: ${(error as Error).message}`);
+        }),
+      );
+    }
   } catch {
     /* the next beat tries again; a dead accounts host must not stop the daemon */
   }

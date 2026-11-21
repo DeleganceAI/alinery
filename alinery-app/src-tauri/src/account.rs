@@ -1601,14 +1601,7 @@ pub(crate) async fn account_team_share(app: AppHandle, share_id: String) -> Resu
 }
 
 #[tauri::command]
-pub(crate) async fn account_team_comment(
-    app: AppHandle,
-    share_id: String,
-    task_slug: String,
-    filename: String,
-    body: String,
-    anchor: Option<Value>,
-) -> Result<(), String> {
+pub(crate) async fn account_team_comment(app: AppHandle, share_id: String, task_slug: String, filename: String, body: String, anchor: Option<Value>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = account_auth_path(&app)?;
         let payload = serde_json::json!({ "task_slug": task_slug, "filename": filename, "body": body, "anchor": anchor }).to_string();

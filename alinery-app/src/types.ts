@@ -1212,6 +1212,8 @@ export type ArtifactComment = {
   line_end: number;
   body: string;
   created_at_ms: number;
+  /** The teammate who wrote it on the team's shared copy; null for the user's own. */
+  author?: string | null;
 };
 
 /** The anchor half of a comment — where in the rendered artifact it points. */

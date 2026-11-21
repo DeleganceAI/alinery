@@ -223,6 +223,8 @@ message Comment {
   uint32 line_end = 9;
   string body = 10;
   uint64 created_at_ms = 11;
+  // The teammate who wrote it on the team's shared copy; empty for the owner's own comment.
+  string author = 12;
 }
 // A comment not yet added (`comment_draft/<slug>/<artifact>/<anchor_id>`), from `artifact-comment-drafts.json`.
 // `stale`: the artifact changed since the draft was saved.
