@@ -1,6 +1,7 @@
 import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Plus, Search, Server, TriangleAlert, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
 import { AccountMenu } from "./AccountMenu";
 import type { ArchiveTaskPhase } from "./archiveTask";
@@ -581,6 +582,11 @@ function EmptyStateArt({ src }: { src: string | true }) {
  * element marked data-autofocus (React's autoFocus fires while the dialog is
  * still display:none, so it cannot be used here); confirm.tsx keeps its tested
  * safe-default-focus contract through that attribute.
+ *
+ * It is portaled to document.body. A modal inside a container query (the
+ * playbooks page is one) is painted in the top layer, but WebKit still
+ * hit-tests it where the container laid it out, so the buttons you see never
+ * receive the click.
  */
 export function Dialog({
   onClose,
@@ -614,7 +620,7 @@ export function Dialog({
     };
   }, []);
 
-  return (
+  return createPortal(
     <dialog
       ref={ref}
       className={`modal${className ? ` ${className}` : ""}`}
@@ -639,7 +645,8 @@ export function Dialog({
       }}
     >
       {children}
-    </dialog>
+    </dialog>,
+    document.body,
   );
 }
 
