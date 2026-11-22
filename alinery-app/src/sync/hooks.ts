@@ -79,7 +79,7 @@ export function useLink(replica: Replica | null): { reachable: boolean; stale: b
   return { reachable, stale };
 }
 
-/** One-shot read for a dialog: the live-session count of a repo's daemon, 0 if it does not answer within `timeoutMs`. */
+/** One-shot read for a dialog: the live-session count of a repo's daemon, 0 as soon as its stream fails (no daemon, a host that is not connected) or if it does not answer within `timeoutMs`. Waiting out the timeout on a dead link held the quit dialog back 3 s. */
 export function liveSessionsNow(repo: string, timeoutMs = 3000): Promise<number> {
   const { replica, release } = acquireScope(repo, REPO_SCOPE);
   return new Promise<number>((resolve) => {
@@ -90,7 +90,10 @@ export function liveSessionsNow(repo: string, timeoutMs = 3000): Promise<number>
       release();
       resolve(n);
     };
-    const read = () => (replica.ready ? done(liveSessionsOf(replica.get(DAEMON_STATUS_KEY))) : undefined);
+    const read = () => {
+      if (replica.ready) done(liveSessionsOf(replica.get(DAEMON_STATUS_KEY)));
+      else if (replica.settled && !replica.reachable) done(0);
+    };
     const timer = setTimeout(() => done(0), timeoutMs);
     off = replica.listen(read);
     read();

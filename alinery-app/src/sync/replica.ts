@@ -12,6 +12,8 @@ export class Replica {
   stale = false;
   /** A complete snapshot has been swapped in at least once. */
   ready = false;
+  /** The run loop has reported once: a first stream delivered a frame or failed. A one-shot reader stops waiting on it. */
+  settled = false;
   private rows = new Map<string, Entity>();
   private building: Map<string, Entity> | null = null;
   private listeners = new Set<() => void>();
@@ -56,7 +58,8 @@ export class Replica {
   /** Link state from the run loop. A change wakes listeners; rows are untouched. */
   setLink(up: boolean) {
     const stale = !up && this.ready;
-    if (this.reachable === up && this.stale === stale) return;
+    if (this.settled && this.reachable === up && this.stale === stale) return;
+    this.settled = true;
     this.reachable = up;
     this.stale = stale;
     if (!up) this.building = null; // a half-received snapshot is worthless on a new stream
