@@ -1905,7 +1905,7 @@ main {
   padding: 4px 12px 12px;
 }
 .playbook-option .playbook-ring-mark {
-  align-self: flex-start;
+  align-self: center;
 }
 .create-form-panel {
   flex: 1;
@@ -2137,9 +2137,21 @@ main {
   border: 5px solid var(--accent);
   background: var(--surface);
 }
+.playbook-card-details {
+  margin: -8px 16px 12px;
+}
+.playbook-card-details > summary {
+  width: fit-content;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  cursor: pointer;
+}
+.playbook-card-details > .playbook-option-description {
+  margin: 8px 0 0;
+}
 .playbook-card-overview {
-  margin: 0 16px 16px;
-  padding-top: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px solid var(--border);
 }
 .playbook-process-list {

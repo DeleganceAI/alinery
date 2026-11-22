@@ -1538,9 +1538,6 @@ export function CreateTaskPage({
                             <span className="playbook-option-title">{item.title ?? item.source.reference.key}</span>
                             <span aria-hidden="true" className="playbook-option-indicator" />
                           </span>
-                          <span className="playbook-option-description" id={`create-playbook-description-${identity}`}>
-                            {item.description}
-                          </span>
                           {item.diagnostics.map((diagnostic) => (
                             <span key={`${diagnostic.code}:${diagnostic.field}:${diagnostic.line}:${diagnostic.message}`}>{diagnostic.message}</span>
                           ))}
@@ -1558,28 +1555,39 @@ export function CreateTaskPage({
                       >
                         <Star size={16} strokeWidth={1.5} fill={starred ? "currentColor" : "none"} aria-hidden="true" />
                       </button>
-                      {selected && selectedSource && (
-                        <section className="playbook-card-overview" aria-label={`${item.title ?? selectedSource.definition.title} workflow preview`}>
-                          <ul className="playbook-process-list">
-                            {selectedSource.definition.step.slice(0, 3).map((step) => (
-                              <li key={step.key}>
-                                <span>{step.title}</span>
-                                {step.inputs.some((input) => input.mode === "each") && <span className="playbook-process-parallel">Parallel</span>}
-                              </li>
-                            ))}
-                          </ul>
-                          {selectedSource.definition.step.length > 3 && <div className="playbook-process-more">+{selectedSource.definition.step.length - 3} more steps</div>}
+                      <details className="playbook-card-details">
+                        <summary>Details</summary>
+                        <p className="playbook-option-description" id={`create-playbook-description-${identity}`}>
+                          {item.description}
+                        </p>
+                        {!(selected && selectedSource) && item.steps && (
                           <div className="playbook-card-process">
-                            <span>
-                              {selectedSource.definition.step.length} {selectedSource.definition.step.length === 1 ? "step" : "steps"}
-                              {selectedSource.definition.step.some((step) => step.inputs.some((input) => input.mode === "each")) && " · Parallel work"}
-                            </span>
-                            <button className="btn ghost small" type="button" onClick={() => setWorkflowPreviewOpen(true)}>
-                              View workflow
-                            </button>
+                            {item.steps.length} {item.steps.length === 1 ? "step" : "steps"}
                           </div>
-                        </section>
-                      )}
+                        )}
+                        {selected && selectedSource && (
+                          <section className="playbook-card-overview" aria-label={`${item.title ?? selectedSource.definition.title} workflow preview`}>
+                            <ul className="playbook-process-list">
+                              {selectedSource.definition.step.slice(0, 3).map((step) => (
+                                <li key={step.key}>
+                                  <span>{step.title}</span>
+                                  {step.inputs.some((input) => input.mode === "each") && <span className="playbook-process-parallel">Parallel</span>}
+                                </li>
+                              ))}
+                            </ul>
+                            {selectedSource.definition.step.length > 3 && <div className="playbook-process-more">+{selectedSource.definition.step.length - 3} more steps</div>}
+                            <div className="playbook-card-process">
+                              <span>
+                                {selectedSource.definition.step.length} {selectedSource.definition.step.length === 1 ? "step" : "steps"}
+                                {selectedSource.definition.step.some((step) => step.inputs.some((input) => input.mode === "each")) && " · Parallel work"}
+                              </span>
+                              <button className="btn ghost small" type="button" onClick={() => setWorkflowPreviewOpen(true)}>
+                                View workflow
+                              </button>
+                            </div>
+                          </section>
+                        )}
+                      </details>
                     </div>
                   );
                 })

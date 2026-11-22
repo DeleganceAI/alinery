@@ -619,8 +619,11 @@ describe("scoped playbook selection", () => {
     const preview = await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     expect(screen.queryByRole("region", { name: "One-shot workflow preview" })).toBeNull();
     expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop", "global/superdevelop", "repo/broken", "repo/superdevelop"]);
-    if (!preview.parentElement) throw new Error("Preview must be inside the selected card");
-    expect(within(preview.parentElement).getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    const card = preview.closest<HTMLElement>(".playbook-picker-card");
+    if (!card) throw new Error("Preview must be inside the selected card");
+    expect(within(card).getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    // The description and the workflow preview stay folded until the person opens Details.
+    expect(preview.closest("details")?.open).toBe(false);
     expect(within(preview).getByText("Build")).toBeTruthy();
   });
 
