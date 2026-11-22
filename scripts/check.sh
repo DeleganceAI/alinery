@@ -4,6 +4,8 @@
 #
 #   ./scripts/check.sh            everything
 #   ./scripts/check.sh --quick    skips the slow behavioural suites
+#   ./scripts/check.sh --release  everything, minus the known-flaky tests in scripts/tests/release-flaky.txt
+#                                 (what alinery-deploy's release check runs; the dev gate keeps running them)
 #
 # --quick drops the suites that spawn a real alineryd over a real socket, drive a pty with
 # expect(1), or build throwaway git repos. Everything that can catch a bad code change
@@ -17,10 +19,12 @@ APP="$ROOT/alinery-app"
 TAURI="$APP/src-tauri"
 
 QUICK=0
+RELEASE=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --quick) QUICK=1 ;;
-    -h|--help) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --release) RELEASE=1 ;;
+    -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "ERROR: unknown argument: $1" >&2; exit 1 ;;
   esac
   shift
@@ -51,6 +55,28 @@ export BUN
 # proto/ needs its own node_modules before the app or the daemon resolve alinery-proto.
 "$ROOT/scripts/install-proto.sh" --with-dev
 
+# A release does not wait on a known flake: --release skips the tests listed in release-flaky.txt.
+# Vitest and bun have no skip flag; a name pattern that matches every test except the listed ones does the same.
+CARGO_SKIP=()
+VITEST_ARGS=()
+DAEMON_ARGS=()
+if [ "$RELEASE" -eq 1 ]; then
+  vitest_skip=""
+  daemon_skip=""
+  while read -r suite rest; do
+    name="${rest%%  #*}"
+    escaped="$(printf '%s' "$name" | sed 's/[][\\.*^$(){}+?|/]/\\&/g')"
+    case "$suite" in
+      cargo) CARGO_SKIP+=(--skip "$name") ;;
+      vitest) vitest_skip="${vitest_skip:+$vitest_skip|}$escaped" ;;
+      daemon) daemon_skip="${daemon_skip:+$daemon_skip|}$escaped" ;;
+      *) echo "ERROR: release-flaky.txt: unknown suite '$suite'" >&2; exit 1 ;;
+    esac
+  done < <(grep -Ev '^[[:space:]]*(#|$)' "$ROOT/scripts/tests/release-flaky.txt")
+  [ -z "$vitest_skip" ] || VITEST_ARGS=(-t "^(?!.*(${vitest_skip}))")
+  [ -z "$daemon_skip" ] || DAEMON_ARGS=(-t "^(?!.*(${daemon_skip}))")
+fi
+
 # ---------- frontend ----------
 step "frontend: biome (lint + format)"
 (cd "$APP" && npm run --silent lint)
@@ -58,19 +84,19 @@ step "frontend: biome (lint + format)"
 step "frontend: typecheck (sources + tests)"
 (cd "$APP" && npm run --silent typecheck)
 
-step "frontend: vitest"
-(cd "$APP" && npm run --silent test)
+step "frontend: vitest${VITEST_ARGS[0]+, skipping known-flaky}"
+(cd "$APP" && npm run --silent test -- ${VITEST_ARGS[@]+"${VITEST_ARGS[@]}"})
 
 # ---------- bun ----------
 step "proto: bun test"
 (cd "$ROOT/proto" && "$BUN" test)
 
-step "daemon: bun test"
+step "daemon: bun test${DAEMON_ARGS[0]+, skipping known-flaky}"
 # Apply the pinned runtime patch even when this checkout already has the unpatched dependency.
 (cd "$TAURI/vinculum-daemon" && "$BUN" install --frozen-lockfile)
 # Many daemon tests start real processes; a slow runner overruns bun's 5 s default, and a timed-out test has its processes
 # killed, a shared fixture daemon among them, which fails every test after it. bunfig.toml's `timeout` is ignored (bun 1.4.3).
-(cd "$TAURI/vinculum-daemon" && "$BUN" test --timeout 30000)
+(cd "$TAURI/vinculum-daemon" && "$BUN" test --timeout 30000 ${DAEMON_ARGS[@]+"${DAEMON_ARGS[@]}"})
 
 step "playbook engine: bun test"
 [ -d "$ROOT/playbook-engine/node_modules" ] || (cd "$ROOT/playbook-engine" && "$BUN" install --frozen-lockfile)
@@ -88,8 +114,8 @@ step "rust: fmt"
 step "rust: clippy"
 (cd "$TAURI" && cargo clippy --workspace --all-targets -- -D warnings)
 
-step "rust: tests (--workspace)"
-(cd "$TAURI" && cargo test --workspace)
+step "rust: tests (--workspace)${CARGO_SKIP[0]+, skipping $(( ${#CARGO_SKIP[@]} / 2 )) known-flaky}"
+(cd "$TAURI" && cargo test --workspace -- ${CARGO_SKIP[@]+"${CARGO_SKIP[@]}"})
 
 # ---------- source-invariant gates ----------
 step "source gates"
