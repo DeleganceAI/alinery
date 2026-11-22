@@ -1137,7 +1137,7 @@ export default function App() {
   };
 
   const replayPlaybookGuide = () => {
-    setOnboardingStep("playbooks");
+    setOnboardingStep("overview");
     setOnboardingOpen(true);
   };
 

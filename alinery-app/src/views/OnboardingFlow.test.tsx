@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
@@ -9,6 +10,7 @@ import { fakeBoard } from "../test/boardHooks";
 import type { AppConfig, BoardTask, NormalizedPlaybook, NormalizedStep, PlaybookRef, RepoOverrides, ScopedPlaybook } from "../types";
 import { Grid } from "./Grid";
 import { OnboardingFlow } from "./OnboardingFlow";
+import { ANNOTATED_STEP, PROMPT_NOTES } from "./PlaybookLessons";
 
 const settingsMocks = vi.hoisted(() => ({ readEffectiveConfig: vi.fn(), readRepoSettings: vi.fn(), writeRepoOverrides: vi.fn() }));
 vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), ...settingsMocks }));
@@ -122,7 +124,7 @@ afterEach(() => {
 describe("onboarding step persistence", () => {
   it("persists the step and rejects prototype keys", () => {
     expect(readSavedOnboardingStep()).toBe("models");
-    expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual(["models", "playbooks"]);
+    expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual(["models", "overview", "learn", "agents", "playbooks"]);
 
     writeSavedOnboardingStep("playbooks");
     expect(readSavedOnboardingStep()).toBe("playbooks");
@@ -271,9 +273,9 @@ describe("OnboardingFlow wizard", () => {
       />,
     );
     const retry = await screen.findByRole("button", { name: "Retry preview" });
-    expect(screen.queryByRole("region", { name: "Dependency graph canvas" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "SuperDevelop ring" })).toBeNull();
     fireEvent.click(retry);
-    expect(await screen.findByRole("region", { name: "Dependency graph canvas" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "SuperDevelop ring" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Retry preview" })).toBeNull();
   });
 
@@ -290,19 +292,16 @@ describe("OnboardingFlow wizard", () => {
     });
   };
 
-  it("pauses autoplay when selecting a graph node so its contract stays available", async () => {
+  it("pauses autoplay when selecting a ring node so its contract stays available", async () => {
     vi.useFakeTimers();
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
     await act(async () => {});
     await advanceDemo(2600);
-    fireEvent.click(within(screen.getByRole("region", { name: "Dependency graph canvas" })).getByRole("button", { name: "Highlight Plan" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "SuperDevelop ring" })).getByRole("button", { name: "Plan" }));
     expect(screen.getByRole("button", { name: "Resume demo" })).toBeTruthy();
     await advanceDemo(6000);
     expect(screen.getByRole("region", { name: "Plan step contract" })).toBeTruthy();
     expect(screen.getByText("Step 4 of 7")).toBeTruthy();
-    const progress = screen.getByRole("progressbar", { name: "Playbook demo" });
-    expect(progress.getAttribute("aria-valuenow")).toBe("4");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Plan, step 4 of 7");
   });
 
   it.each([
@@ -334,13 +333,12 @@ describe("OnboardingFlow wizard", () => {
     await act(async () => {});
     await advanceDemo(2600);
     await advanceDemo(900);
-    fireEvent.click(within(screen.getByRole("region", { name: "Dependency graph canvas" })).getByRole("button", { name: "Highlight Plan" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "SuperDevelop ring" })).getByRole("button", { name: "Plan" }));
     expect(screen.getByRole("region", { name: "Plan step contract" })).toBeTruthy();
     await advanceDemo(5000);
     fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
     expect(screen.getByRole("region", { name: "Investigate step contract" })).toBeTruthy();
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
-    expect(screen.getByRole("progressbar", { name: "Playbook demo" }).getAttribute("aria-valuetext")).toBe("Investigate, step 2 of 7");
     await advanceDemo(1699);
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
     await advanceDemo(1);
@@ -385,17 +383,30 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
   });
 
-  it("continues through exactly two steps and opens task creation without executing a task", async () => {
+  it("continues through its five steps and opens task creation without executing a task", async () => {
     const props = flowProps();
     const createTask = vi.spyOn(tasks, "createTaskForRepo");
     const createSession = vi.spyOn(sessions, "createSession");
     render(<OnboardingFlow {...props} />);
-    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "01Models",
+      "02Playbooks: Overview",
+      "03Playbooks: Components",
+      "04Playbooks: Expertise",
+      "05Playbooks: Library",
+    ]);
     expect(screen.queryByText("First task")).toBeNull();
     expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Change repository" }));
     expect(props.onChangeRepo).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByTestId("onboarding-step-overview")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByTestId("onboarding-step-learn")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByTestId("onboarding-step-agents")).toBeTruthy();
+    expect(readSavedOnboardingStep()).toBe("agents");
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
     expect(readSavedOnboardingStep()).toBe("playbooks");
@@ -407,7 +418,7 @@ describe("OnboardingFlow wizard", () => {
     expect(createTask).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
+    expect(screen.getByTestId("onboarding-step-agents")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Skip Onboarding" })).toBeTruthy();
   });
   it("makes provider subscriptions and API-key setup visible before the model choice", async () => {
@@ -428,17 +439,10 @@ describe("OnboardingFlow wizard", () => {
     render(<OnboardingFlow {...props} initialStep="playbooks" />);
     await act(async () => {});
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
-    const progress = screen.getByRole("progressbar", { name: "Playbook demo" });
-    expect(progress.getAttribute("aria-valuemin")).toBe("1");
-    expect(progress.getAttribute("aria-valuemax")).toBe("7");
-    expect(progress.getAttribute("aria-valuenow")).toBe("1");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Clarify, step 1 of 7");
     expect(screen.getByRole("button", { name: "Pause demo" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Simulate|Advance step|Approve|Reset/ })).toBeNull();
     await advanceDemo(2600);
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
-    expect(progress.getAttribute("aria-valuenow")).toBe("2");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Investigate, step 2 of 7");
     fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
     await advanceDemo(4000);
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
@@ -457,8 +461,6 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 7 of 7")).toBeTruthy();
     await advanceDemo(3800);
     expect(screen.getByText("Demo complete")).toBeTruthy();
-    expect(progress.getAttribute("aria-valuenow")).toBe("7");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Demo complete");
     await advanceDemo(2799);
     expect(screen.getByText("Demo complete")).toBeTruthy();
     await advanceDemo(1);
@@ -477,10 +479,10 @@ describe("OnboardingFlow wizard", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Academic Survey/i }));
     expect(screen.getByText("Step 1 of 3")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
-    const graph = screen.getByRole("region", { name: "Dependency graph canvas" });
-    fireEvent.click(within(graph).getByRole("button", { name: /Gather Candidate Sources — example 1/i }));
+    const graph = screen.getByRole("region", { name: "Academic Survey ring" });
+    fireEvent.click(within(graph).getByRole("button", { name: "Gather Candidate Sources" }));
     expect(screen.getByText("each — spawns parallel sessions")).toBeTruthy();
-    fireEvent.click(within(graph).getByRole("button", { name: /Deduplicate and Dispatch Sources/i }));
+    fireEvent.click(within(graph).getByRole("button", { name: "Deduplicate and Dispatch Sources" }));
     expect(screen.getByText("complete — waits for all upstream outputs")).toBeTruthy();
     await advanceDemo(4000);
     expect(screen.getByText("Step 3 of 3")).toBeTruthy();
@@ -500,7 +502,7 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: /Models/ }));
     await advanceDemo(4000);
-    fireEvent.click(screen.getByRole("tab", { name: /Playbooks/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Playbooks: Library/ }));
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
     view.unmount();
     await advanceDemo(0);
@@ -521,19 +523,71 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
   });
 
-  it("opens the mechanics guide by default and lets users collapse and reopen it", async () => {
-    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
+  it("explains what a playbook is beside the Academic Survey ring", async () => {
+    render(<OnboardingFlow {...flowProps()} initialStep="overview" />);
+    const body = screen.getByTestId("onboarding-step-overview");
+    expect(within(body).getByRole("heading", { name: "A playbook is an expert's process, written down for agents" })).toBeTruthy();
+    // One point each for the expert's process, artifacts, steering, the guarantee and trust.
+    expect(body.querySelectorAll(".onboarding-points li")).toHaveLength(5);
+    expect(within(body).getByText("Agents coordinate through files.")).toBeTruthy();
+    expect(await within(body).findByRole("region", { name: "Academic Survey ring" })).toBeTruthy();
+    // The legend names the three marks: a step, where a person steps in, and an artifact handoff.
+    const legend = within(body).getByRole("list", { name: "How to read the ring" });
+    expect(
+      within(legend)
+        .getAllByRole("listitem")
+        .map((item) => item.querySelector("strong")?.textContent),
+    ).toEqual(["A step", "You step in", "Artifact handoff"]);
+  });
+
+  it("shows the four components as four small drawings, with a link to the Learn page", async () => {
+    render(<OnboardingFlow {...flowProps()} initialStep="learn" />);
     await act(async () => {});
-    const guide = screen.getByLabelText("Core playbook mechanics") as HTMLDetailsElement;
-    expect(guide.open).toBe(true);
-    fireEvent.click(within(guide).getByText("How work moves"));
-    expect(guide.open).toBe(false);
-    fireEvent.click(within(guide).getByText("How work moves"));
-    expect(guide.open).toBe(true);
-    expect(within(guide).getAllByRole("listitem")).toHaveLength(3);
-    expect(within(guide).getByRole("heading", { name: "Auto-advance" })).toBeTruthy();
-    expect(within(guide).getByRole("heading", { name: "Human checkpoint" })).toBeTruthy();
-    expect(within(guide).getByRole("heading", { name: "Parallel agents" })).toBeTruthy();
+    const body = screen.getByTestId("onboarding-step-learn");
+    const blocks = within(body).getAllByRole("figure");
+    expect(blocks.map((block) => block.querySelector("figcaption")?.textContent)).toEqual(["Fan out, then merge", "Parallel steps", "Loop back", "Human checkpoints"]);
+    for (const block of blocks) expect(block.querySelectorAll("svg .nd").length).toBeGreaterThan(2);
+    expect(blocks.map((block) => block.querySelectorAll(".hand").length)).toEqual([0, 0, 0, 1]);
+    expect(
+      within(body)
+        .getByRole("link", { name: /alinery\.ai\/learn/ })
+        .getAttribute("href"),
+    ).toBe("https://alinery.ai/learn");
+  });
+
+  it("opens the agents page on a real step's prompt, with a comment beside each part it points at", async () => {
+    // The comments are matched against the bundled prompt's own text, so this reads the real file.
+    const source = readFileSync("src-tauri/playbooks/academic-survey/playbook.md", "utf8");
+    const prompt = source.split(`<!-- alinery:step ${ANNOTATED_STEP} -->`)[1].split("<!-- alinery:step")[0];
+    for (const note of PROMPT_NOTES) expect(prompt).toContain(`\n\n${note.starts}`);
+    playbookMock.readPlaybook.mockImplementation(async (reference) => {
+      const definition = previewDefinition(reference.key, "Academic Survey");
+      const steps = [...definition.step, { ...definition.step[0], key: ANNOTATED_STEP, title: "Read and Evaluate One Source", prompt: prompt.replace(/^\s*## .*\n+/, "") }];
+      return { source: { reference, path: null }, definition: { ...definition, step: steps }, source_text: "", modified_at_ms: null };
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      render(<OnboardingFlow {...flowProps()} initialStep="agents" />);
+      await act(async () => {});
+      const stage = screen.getByRole("region", { name: "Academic Survey step prompts" });
+      expect(within(stage).getByText("Agent 4 of 4")).toBeTruthy();
+      expect(within(stage).getByRole("heading", { name: "Read and Evaluate One Source" })).toBeTruthy();
+      const notes = within(stage).getAllByRole("button");
+      expect(notes.map((note) => note.querySelector("strong")?.textContent)).toEqual(PROMPT_NOTES.map((note) => note.label));
+      const pressed = () => notes.map((note) => note.getAttribute("aria-pressed") === "true");
+      expect(pressed()).toEqual([true, false, false, false, false]);
+      // The highlight moves to the next comment by itself, until the person chooses one.
+      act(() => void vi.advanceTimersByTime(3600));
+      expect(pressed()).toEqual([false, true, false, false, false]);
+      fireEvent.click(notes[4]);
+      act(() => void vi.advanceTimersByTime(60000));
+      expect(pressed()).toEqual([false, false, false, false, true]);
+      // Another step shows its own prompt.
+      fireEvent.click(within(screen.getByRole("region", { name: "Academic Survey ring" })).getByRole("button", { name: "Queries" }));
+      expect(within(stage).getByRole("heading", { name: "Queries" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("offers building a new playbook separately through the existing creation form", async () => {
@@ -544,6 +598,9 @@ describe("OnboardingFlow wizard", () => {
     expect(within(examples).queryByText("Build a New Playbook")).toBeNull();
     expect(within(examples).getAllByRole("radio")).toHaveLength(4);
     expect(screen.queryByText("Make it your own")).toBeNull();
+    // The dashed card under the examples opens the same form as the footer button.
+    fireEvent.click(screen.getByRole("button", { name: "Build your own playbook" }));
+    expect(props.onOpenCreateWithPlaybook).toHaveBeenCalledTimes(1);
     const footer = screen.getByRole("contentinfo");
     const builderButton = within(footer).getByRole("button", { name: "Build a new playbook" });
     expect(

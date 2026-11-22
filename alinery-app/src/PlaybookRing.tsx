@@ -1,5 +1,5 @@
 import { Hand } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useId, useState } from "react";
 import "./PlaybookRing.css";
 import { selectorsOverlap } from "./PlaybookGraph";
 import type { NormalizedStep } from "./types";
@@ -43,13 +43,15 @@ export function classifyRingEdges(steps: NormalizedStep[]): RingEdges {
   return { rails, chords, loop };
 }
 
+/** A step's prompt without the "## Execution contract" section every bundled step shares. */
+export const stepOwnPrompt = (prompt: string) => prompt.replace(/^##\s+execution contract\b[\s\S]*?(?=\n#{1,2}\s|$(?![\s\S]))/im, "").trim();
+
 /**
  * First prose paragraph of a step prompt: skips headings, lists, fences, tables, and template-only lines.
  * Every bundled step opens with the shared "## Execution contract" section, so that section is dropped first.
  */
 export function promptExcerpt(prompt: string, max = 240): string {
-  const own = prompt.replace(/^##\s+execution contract\b[\s\S]*?(?=\n#{1,2}\s|$(?![\s\S]))/im, "");
-  for (const block of own.split(/\n\s*\n/)) {
+  for (const block of stepOwnPrompt(prompt).split(/\n\s*\n/)) {
     const paragraph = block.trim();
     if (!paragraph || /^(#|-|\*|\||```|\{\{|<|\d+\.)/.test(paragraph)) continue;
     // Strip emphasis markers only; underscores inside tokens like {{TASK_NAME}} stay.
@@ -112,6 +114,7 @@ type Props = {
   label: string;
   /** The step that stays highlighted when nothing is hovered. */
   selectedStepKey: string | null;
+  /** Without it the ring is a picture: its nodes are not buttons and it is hidden from assistive technology. */
   onSelectStep?: (key: string) => void;
   onHoverStep?: (key: string | null) => void;
   /** Rendered in the centre of the ring. */
@@ -141,7 +144,7 @@ export function PlaybookRing({ steps, size = "full", label, selectedStepKey, onS
   return (
     <section className={`playbook-ring playbook-ring-${size}`} aria-label={label}>
       {/* No <title>: WebKit shows it as a tooltip wherever the pointer rests. */}
-      <svg viewBox={`0 0 ${spec.w} ${spec.h}`} preserveAspectRatio="xMidYMid meet" role="presentation" aria-hidden={count === 0 || undefined}>
+      <svg viewBox={`0 0 ${spec.w} ${spec.h}`} preserveAspectRatio="xMidYMid meet" role="presentation" aria-hidden={count === 0 || !onSelectStep || undefined}>
         <defs>
           {(["chord", "loop"] as const).map((kind) => (
             <marker
@@ -281,17 +284,19 @@ export function PlaybookRing({ steps, size = "full", label, selectedStepKey, onS
             <g
               key={step.key}
               className={classes.join(" ")}
-              role="button"
-              tabIndex={0}
-              aria-label={step.title}
-              aria-pressed={step.key === selectedStepKey}
-              onClick={select}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  select();
-                }
-              }}
+              {...(onSelectStep && {
+                role: "button",
+                tabIndex: 0,
+                "aria-label": step.title,
+                "aria-pressed": step.key === selectedStepKey,
+                onClick: select,
+                onKeyDown: (event: KeyboardEvent<SVGGElement>) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    select();
+                  }
+                },
+              })}
               onMouseEnter={() => hover(step.key)}
               onMouseLeave={() => hover(null)}
               onFocus={() => hover(step.key)}

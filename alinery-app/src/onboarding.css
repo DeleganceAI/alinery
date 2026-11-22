@@ -623,7 +623,6 @@
   gap: 12px;
 }
 
-
 /* The setup screen: a tab per kind of place, then the host and the folder, left-aligned under the centred heading. */
 .setup-focus .remote-field,
 .setup-focus .setup-connect,
@@ -679,7 +678,6 @@
   user-select: all;
 }
 
-
 .onboarding-archetype-list {
   display: flex;
   flex-direction: column;
@@ -710,6 +708,19 @@
   background: var(--surface-subtle);
 }
 
+/* Not one of the examples: it opens the form that builds a new playbook. */
+.onboarding-build-card {
+  margin-top: 8px;
+  border-style: dashed;
+  border-color: var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+}
+.onboarding-build-card .onboarding-archetype-top {
+  justify-content: flex-start;
+  min-height: 40px;
+}
+
 .onboarding-archetype-card.selected {
   border-color: var(--accent);
   background: var(--accent-subtle);
@@ -725,67 +736,11 @@
 }
 
 .onboarding-archetype-top strong {
+  flex: 1;
+  min-width: 0;
   color: var(--text-strong);
   font-size: calc(13px * var(--ui-scale));
   font-weight: 600;
-}
-
-
-.onboarding-mechanics {
-  padding: 18px 4px 4px;
-  border-top: 1px solid var(--border);
-}
-
-.onboarding-mechanics summary {
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: calc(11px * var(--ui-scale));
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.onboarding-mechanics summary::marker {
-  color: var(--text-muted);
-}
-
-.onboarding-mechanics-list {
-  display: grid;
-  gap: 16px;
-  margin: 16px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.onboarding-mechanic-item {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  align-items: start;
-  gap: 10px;
-}
-
-.onboarding-mechanic-icon {
-  margin-top: 2px;
-  color: var(--text-muted);
-}
-
-.onboarding-mechanic-checkpoint {
-  color: var(--warning);
-}
-
-.onboarding-mechanic-item h4 {
-  margin: 0 0 3px;
-  color: var(--text-strong);
-  font-size: calc(12px * var(--ui-scale));
-  font-weight: 500;
-  line-height: 1.4;
-}
-
-.onboarding-mechanic-item p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: calc(11.5px * var(--ui-scale));
-  line-height: 1.5;
 }
 
 .onboarding-pill-accent {
@@ -815,6 +770,8 @@
   border-radius: var(--radius-md);
   background: var(--surface);
 }
+.onboarding-brand { white-space: nowrap; }
+.onboarding-sim-title { padding-right: 130px; }
 .onboarding-sim-bar {
   position: sticky;
   top: 0;
@@ -842,43 +799,6 @@
   line-height: 1.4;
   max-width: 68ch;
 }
-.onboarding-demo-progress {
-  display: flex;
-  gap: 5px;
-  height: 3px;
-}
-.onboarding-demo-progress > span {
-  flex: 1;
-  overflow: hidden;
-  border-radius: 2px;
-  background: var(--border);
-}
-.onboarding-demo-progress > [data-current] { background: var(--accent-subtle); }
-.onboarding-demo-progress-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  transform: scaleX(0);
-  transform-origin: left center;
-}
-.onboarding-demo-progress > [data-running] > .onboarding-demo-progress-fill {
-  animation-name: onboarding-progress-fill;
-  animation-timing-function: linear;
-  animation-fill-mode: both;
-}
-.onboarding-demo-progress > [data-complete] > .onboarding-demo-progress-fill {
-  background: var(--success);
-  transform: scaleX(1);
-}
-@keyframes onboarding-progress-fill {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
-}
-.onboarding-demo-progress[data-reduced-motion] > [data-running] > .onboarding-demo-progress-fill {
-  animation: none;
-  transform: scaleX(1);
-}
-.onboarding-demo-caption,
 .onboarding-step-kind {
   color: var(--text-faint);
   font-size: calc(11px * var(--ui-scale));
@@ -889,14 +809,13 @@
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
-  height: clamp(300px, 38vh, 420px);
+  height: clamp(340px, 46vh, 520px);
   padding: 16px;
 }
 .onboarding-demo-toggle {
   position: absolute;
-  z-index: 2;
-  inset-block-start: 40px;
-  inset-inline-end: 40px;
+  inset-block-start: 14px;
+  inset-inline-end: 14px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -920,11 +839,11 @@
   outline-offset: 2px;
 }
 .onboarding-demo-toggle:disabled { opacity: 0.45; cursor: not-allowed; }
-.onboarding-graph-frame .playbook-definition-graph {
+.onboarding-graph-frame .playbook-ring {
   flex: 1;
   min-height: 0;
+  margin: 0 auto;
 }
-.onboarding-graph-frame .playbook-definition-viewport { min-height: 0; }
 .onboarding-step-inspector {
   flex: 1 0 auto;
   min-height: 195px;
@@ -1124,9 +1043,6 @@
   font-size: calc(13px * var(--ui-scale));
   line-height: 1;
 }
-
-
-
 
 .onboarding-footer {
   flex: none;
@@ -1360,43 +1276,7 @@
   color: var(--text-muted);
 }
 .onboarding-step-count { white-space: nowrap; }
-.onboarding-mini-chain {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 0;
-  margin-top: 8px;
-}
-.onboarding-mini-step {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  color: var(--text-muted);
-  font-size: calc(12px * var(--ui-scale));
-}
-.onboarding-mini-step:not(:last-child)::after {
-  content: "";
-  width: 8px;
-  height: 1px;
-  margin: 0 3px;
-  background: var(--border-strong);
-}
-.onboarding-mini-number {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  color: var(--text);
-  font-size: calc(10px * var(--ui-scale));
-  font-variant-numeric: tabular-nums;
-}
-.onboarding-mini-number[data-checkpoint] {
-  color: var(--warning);
-  border-color: var(--warning);
-  background: var(--warning-subtle);
-}
+
 .onboarding-card-detail {
   position: absolute;
   z-index: 3;
@@ -1424,19 +1304,225 @@
   transform: translateY(0);
   transition-delay: 0s;
 }
-.onboarding-mini-number[data-active] {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
+
 @media (prefers-reduced-motion: reduce) {
   .onboarding-card-detail,
   .onboarding-demo-toggle,
   .onboarding-archetype-card { transition: none; }
-  .onboarding-demo-progress > [data-running] > .onboarding-demo-progress-fill {
-    animation: none;
-    transform: scaleX(1);
-  }
   .onboarding-card-detail { transform: none; }
   .onboarding-step-inspector[data-animated] .onboarding-step-content { animation: none; }
+}
+
+/* Building blocks and Agents: the two lessons before the playbook picker (views/PlaybookLessons.tsx). */
+/* The three lesson pages share one frame: copy and figure centred in a column of the same width. */
+.onboarding-body-overview,
+.onboarding-body-learn,
+.onboarding-body-agents {
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
+  padding: 40px 48px;
+  gap: 48px;
+  align-content: center;
+  align-items: center;
+  box-sizing: border-box;
+}
+.onboarding-lesson-copy { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.onboarding-lesson-copy h2 { font-size: calc(26px * var(--ui-scale)); line-height: 1.2; }
+.onboarding-lesson-copy .onboarding-lede { font-size: calc(14.5px * var(--ui-scale)); }
+/* Components is one centred column: the claim, the four tiles, the link. */
+.onboarding-body-learn {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  gap: 28px;
+}
+.onboarding-body-learn .onboarding-lesson-copy { align-items: center; text-align: center; }
+/* Overview: what a playbook is, beside one real playbook's ring and how to read it. */
+.onboarding-points {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.onboarding-points li { position: relative; padding-left: 18px; }
+.onboarding-points li::before {
+  content: "";
+  position: absolute;
+  top: 0.6em;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.onboarding-points strong { color: var(--text-strong); font-weight: 600; }
+.onboarding-figure {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.onboarding-figure > .playbook-ring { width: 100%; padding: 12px 16px 4px; box-sizing: border-box; }
+.onboarding-figure > p { margin: 24px; color: var(--text-muted); }
+/* On this page the ring is the lesson, so its handoff lines are drawn at full strength. */
+.onboarding-figure .playbook-ring .ring-chord { opacity: 1; }
+.onboarding-legend {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  list-style: none;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.4;
+}
+.onboarding-legend li { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.onboarding-legend svg,
+.onboarding-legend .legend-hand { flex: none; width: 22px; height: 22px; }
+.onboarding-legend strong { display: block; color: var(--text-strong); font-weight: 600; }
+.onboarding-legend .legend-node { fill: var(--surface); stroke: var(--border-strong); }
+.onboarding-legend .legend-num { fill: var(--text); font-family: var(--font-mono); font-size: 10px; }
+.onboarding-legend .legend-line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.onboarding-legend .legend-hand {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid var(--warning);
+  border-radius: 50%;
+  color: var(--warning);
+}
+/* Components: four small tiles of one size, drawn by handoffTiles.ts with these classes and tokens. */
+.onboarding-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+.onboarding-tile {
+  --tile-surface: var(--surface);
+  --tile-line: var(--border-strong);
+  --tile-accent: var(--accent);
+  --tile-ok: var(--success);
+  --tile-muted: var(--text-muted);
+  --tile-strong: var(--text-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 18px 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.onboarding-tile svg { display: block; width: 100%; height: 112px; overflow: visible; }
+/* The tiles are captioned in the page, so the running commentary inside each drawing is left out. */
+.onboarding-tile svg > text.st { display: none; }
+.onboarding-tile figcaption { color: var(--text-strong); font-size: calc(13px * var(--ui-scale)); font-weight: 600; text-align: center; }
+.onboarding-learn-link { display: inline-flex; align-items: center; gap: 6px; align-self: center; color: var(--accent); font-size: calc(13px * var(--ui-scale)); text-decoration: none; }
+.onboarding-learn-link:hover { text-decoration: underline; }
+.onboarding-tile .st { font-family: var(--font-mono); font-size: 11px; fill: var(--tile-muted); }
+.onboarding-tile .st.hi { fill: var(--tile-strong); }
+.onboarding-tile .nl { font-size: 13px; fill: var(--tile-muted); }
+.onboarding-tile [data-tile="branch"] .nl { font-size: 24px; }
+.onboarding-tile .seg { fill: none; stroke: var(--tile-line); stroke-width: 1.25; }
+.onboarding-tile .seg.back { stroke: var(--tile-ok); stroke-dasharray: 4 3; }
+.onboarding-tile .nd { fill: var(--tile-surface); stroke: var(--tile-line); stroke-width: 1.25; }
+.onboarding-tile .nd.cp { stroke: var(--warning); }
+.onboarding-tile .nd.on { stroke: var(--tile-accent); stroke-width: 2; }
+.onboarding-tile .nd.done { stroke: var(--tile-ok); }
+.onboarding-tile .dot { fill: var(--tile-accent); }
+.onboarding-tile .dot.work { fill: var(--tile-ok); }
+.onboarding-tile .dot.wait { fill: var(--warning); }
+.onboarding-tile .hand { fill: var(--tile-surface); stroke: var(--warning); }
+.onboarding-tile .tap { fill: none; stroke: var(--warning); stroke-width: 1.5; }
+.onboarding-body-agents { grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr); }
+.onboarding-agent-copy .playbook-ring { width: 100%; max-width: 340px; margin: 16px auto 0; }
+.onboarding-agent-stage {
+  display: flex;
+  flex-direction: column;
+  align-self: start;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+.onboarding-agent-stage > p,
+.onboarding-agent-stage > .btn { margin: 16px; align-self: flex-start; }
+.onboarding-agent-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.onboarding-agent-stage h3 { margin: 0; color: var(--text-strong); font-size: calc(16px * var(--ui-scale)); font-weight: 600; }
+/* The prompt, a paragraph per row, with a comment beside each part the lesson points at. */
+.onboarding-prompt { display: flex; flex-direction: column; gap: 4px; padding: 14px; }
+.onboarding-prompt-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 190px;
+  gap: 14px;
+  align-items: start;
+  padding: 6px 4px 6px 10px;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: background 240ms ease, opacity 240ms ease;
+}
+.onboarding-prompt-block p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+  color: var(--text-muted);
+  /* Two lines of each part, so the whole prompt fits without scrolling. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.onboarding-prompt-block[data-tone] { --note: var(--accent); --note-subtle: var(--accent-subtle); border-left-color: var(--note); }
+.onboarding-prompt-block[data-tone="success"] { --note: var(--success); --note-subtle: var(--success-subtle); }
+.onboarding-prompt-block[data-tone="warning"] { --note: var(--warning); --note-subtle: var(--warning-subtle); }
+.onboarding-prompt-block[data-active] { background: var(--note-subtle); }
+.onboarding-prompt-block[data-active] p { color: var(--text); }
+.onboarding-prompt-note {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px 10px 10px 2px;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 240ms ease, border-color 240ms ease;
+}
+.onboarding-prompt-note strong { color: var(--note); font-weight: 600; }
+.onboarding-prompt-note:hover,
+.onboarding-prompt-block[data-active] .onboarding-prompt-note { opacity: 1; border-color: var(--note); color: var(--text); }
+.onboarding-prompt-note:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 860px) {
+  .onboarding-body-agents { grid-template-columns: minmax(0, 1fr); }
+  .onboarding-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

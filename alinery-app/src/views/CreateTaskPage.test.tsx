@@ -2444,6 +2444,23 @@ describe("clipboard task attachments", () => {
 });
 
 describe("page layout", () => {
+  it("scrolls the picker to the playbook that is already selected", async () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+      await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+      const card = scrolled[scrolled.length - 1] as HTMLElement;
+      expect(card.classList.contains("selected")).toBe(true);
+      expect(within(card).getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    } finally {
+      // biome-ignore lint/performance/noDelete: jsdom has no scrollIntoView, so removing the stub restores it
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
   it("draws a playbook's ring in the picker, keeps the three sections open, and pins only the buttons", async () => {
     const withSteps = structuredClone(catalog);
     withSteps.candidates[0].steps = structuredClone(sources[0].definition.step);

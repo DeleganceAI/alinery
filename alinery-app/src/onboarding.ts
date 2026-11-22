@@ -5,11 +5,14 @@ import type { AppConfig, PlaybookRef } from "./types";
 export const ONBOARDING_STEP_KEY = "alinery.onboardingStep.v1";
 
 // The repository is chosen on the setup screen before onboarding opens, so the wizard starts at Models.
-export type OnboardingStepId = "playbooks" | "models";
+export type OnboardingStepId = "models" | "overview" | "learn" | "agents" | "playbooks";
 
-export const ONBOARDING_STEPS: { id: OnboardingStepId; number: string; label: string; title: string }[] = [
-  { id: "models", number: "01", label: "Models", title: "Verify your agent & model provider" },
-  { id: "playbooks", number: "02", label: "Playbooks", title: "How playbooks coordinate agents" },
+export const ONBOARDING_STEPS: { id: OnboardingStepId; number: string; label: string }[] = [
+  { id: "models", number: "01", label: "Models" },
+  { id: "overview", number: "02", label: "Playbooks: Overview" },
+  { id: "learn", number: "03", label: "Playbooks: Components" },
+  { id: "agents", number: "04", label: "Playbooks: Expertise" },
+  { id: "playbooks", number: "05", label: "Playbooks: Library" },
 ];
 
 /** Where an older install kept its single "onboarded" flag. Read once, by `migrateLegacyOnboarding`. */
