@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-it("bundles the Apache license, copyright notice, and third-party license texts", () => {
+it("bundles the Alinery license, copyright notice, and third-party license texts", () => {
   const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")) as {
     bundle: { licenseFile: string; resources: Record<string, string> };
   };
@@ -15,7 +15,7 @@ it("bundles the Apache license, copyright notice, and third-party license texts"
       .map(([source, destination]) => [destination, readFileSync(new URL(source, resourceRoot), "utf8")]),
   );
 
-  expect(bundled.LICENSE).toContain("Version 2.0, January 2004");
+  expect(bundled.LICENSE).toContain("Alinery Source Available License v1.0");
   expect(bundled.LICENSE).toBe(readFileSync(new URL(config.bundle.licenseFile, resourceRoot), "utf8"));
   expect(bundled.NOTICE).toContain("Copyright 2026 Delegance Inc.");
   expect(bundled["THIRD-PARTY-NOTICES.md"]).toContain("Copyright (c) 2025 Mario Zechner");

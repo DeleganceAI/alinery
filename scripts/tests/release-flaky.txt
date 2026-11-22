@@ -1,0 +1,11 @@
+# Tests the release gate skips (`check.sh --release`, which alinery-deploy's release check runs).
+# The dev gate (`check.sh`, `check.sh --quick`) still runs every one of them: a test leaves this list
+# when it is fixed, never by being deleted.
+#
+# One per line: <suite> <test name>  # why it flakes (two spaces before the #)
+# suite: cargo (full test path, passed to --skip), vitest or daemon (the vinculum-daemon bun suite; full name, "describe test").
+
+cargo tests::daemon::takeover_reconfirms_changed_names_and_presented_version  # waits on a fake peer process with a deadline; "observation deadline" under a loaded parallel run
+cargo daemon_launch::tests::daemon_command_passes_the_rpc_secret_file_after_the_lane_and_only_when_given  # expected args built from this machine's user and host name; differed once under the parallel run
+vitest onboarding gate offers a configured install the guide once at Models, then lands on the task list after Skip  # the onboarding dialog is sometimes not rendered before the query
+daemon the watcher makes an outside edit of any of the three directories a row change  # waits on the filesystem watcher; the change sometimes lands after the deadline under load

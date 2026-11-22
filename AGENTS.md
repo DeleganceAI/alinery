@@ -204,7 +204,10 @@ Edit **all six** of these, to the same `X.Y.Z`:
 ```bash
 ./scripts/check.sh            # everything
 ./scripts/check.sh --quick    # skips the slow behavioural suites
+./scripts/check.sh --release  # everything minus scripts/tests/release-flaky.txt (what the release runs)
 ```
+
+A test that flakes goes in `scripts/tests/release-flaky.txt` with its reason, so a release does not wait on it; the dev gate still runs it, and it leaves the list when it is fixed.
 
 It covers biome, both typecheck passes, vitest, `bun test` for `proto/`, the daemon and `playbook-engine/`, `cargo fmt`/`clippy`/`test --workspace`, and the product shell gates. `cargo check -p alinery-app` is the fast inner-loop gate while editing; `check.sh` is the one that must pass before you call a change done.
 
