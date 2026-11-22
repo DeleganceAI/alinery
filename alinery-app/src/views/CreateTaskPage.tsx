@@ -214,16 +214,6 @@ export function CreateTaskPage({
   const [catalogRevision, setCatalogRevision] = useState(0);
   const resetAutoAdvance = useRef(!initialDraft);
   const [autoAdvance, setAutoAdvance] = useState<string[]>(initialDraft?.auto_advance ?? []);
-  const [contextOpen, setContextOpen] = useState(false);
-  // Additional context opens itself when something lands in it (a drop, a paste, an import, an error)
-  // and otherwise stays as the person left it.
-  const contextItems =
-    attachments.length + images.length + linearImages.length + linearImageErrors.length + pasteErrors.length + (draftAttachmentsError ? 1 : 0) + (evidence ? 1 : 0);
-  const contextItemsSeen = useRef(0);
-  useEffect(() => {
-    if (contextItems > contextItemsSeen.current) setContextOpen(true);
-    contextItemsSeen.current = contextItems;
-  }, [contextItems]);
   // The result sits at the end of the form while the buttons stay pinned, so bring it into view.
   const resultRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -1156,8 +1146,8 @@ export function CreateTaskPage({
                 placeholder="Describe the feature / ticket — the original impetus every phase session reads (optional)…"
               />
             </label>
-            <details className="create-disclosure" open={contextOpen} onToggle={(event) => setContextOpen(event.currentTarget.open)}>
-              <summary>Additional context</summary>
+            <section className="create-disclosure">
+              <h3>Additional context</h3>
               <div className="create-disclosure-body">
                 <label className="create-field">
                   <span>Evidence / pointers</span>
@@ -1291,7 +1281,7 @@ export function CreateTaskPage({
                   </div>
                 </div>
               </div>
-            </details>
+            </section>
             <label className="create-field task-default-model">
               <span>Task Default Model</span>
               <ModelInput
@@ -1309,14 +1299,14 @@ export function CreateTaskPage({
               {modelNeedsReselection && <InlineStatus tone="error">Select a model available in this repository.</InlineStatus>}
             </label>
             {!!selectedSource?.definition.step.length && (
-              <details className="create-disclosure">
-                <summary>
-                  Step settings
+              <section className="create-disclosure">
+                <h3>
+                  Steering settings
                   <small>
                     {selectedSource.definition.step.length} {selectedSource.definition.step.length === 1 ? "step" : "steps"} ·{" "}
                     {selectedSource.definition.step.filter((step) => autoAdvance.includes(step.key)).length} continue automatically
                   </small>
-                </summary>
+                </h3>
                 <div className="step-model-list">
                   <div className="step-model-head">
                     <span>Step</span>
@@ -1383,7 +1373,7 @@ export function CreateTaskPage({
                     );
                   })}
                 </div>
-              </details>
+              </section>
             )}
             {picking && (
               <ProviderSetupDialog
@@ -1403,8 +1393,8 @@ export function CreateTaskPage({
                 onClose={() => setPicking(null)}
               />
             )}
-            <details className="create-disclosure">
-              <summary>Advanced settings</summary>
+            <section className="create-disclosure">
+              <h3>Workspace settings</h3>
               <div className="create-disclosure-body">
                 <label className="create-field">
                   <span>Task slug</span>
@@ -1463,8 +1453,9 @@ export function CreateTaskPage({
                     }}
                   />
                 </label>
+                <Checkbox checked={start} onChange={setStart} label="Start eligible sessions after creation" />
               </div>
-            </details>
+            </section>
             {created && (
               <section aria-label="Creation result" ref={resultRef}>
                 <InlineStatus tone={created.creation === "partial" || created.start === "failed" ? "warning" : "info"}>
@@ -1603,7 +1594,6 @@ export function CreateTaskPage({
         </aside>
       </div>
       <footer className="create-footer">
-        <Checkbox checked={start} onChange={setStart} label="Start eligible sessions after creation" />
         <div className="create-footer-status">
           {creating && <InlineStatus tone="info">Creating New Task… You can keep using Alinery while the worktree is set up.</InlineStatus>}
           {pageError && (

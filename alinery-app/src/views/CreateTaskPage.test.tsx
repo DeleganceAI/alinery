@@ -969,7 +969,7 @@ describe("per-step default model", () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByLabelText("Build model");
     const taskModel = screen.getByLabelText("Task Default Model");
-    const permission = screen.getByText("Step settings");
+    const permission = screen.getByText("Steering settings");
     expect(taskModel.compareDocumentPosition(permission) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(screen.queryByLabelText("Model")).toBeNull();
   });
@@ -2437,7 +2437,7 @@ describe("clipboard task attachments", () => {
 });
 
 describe("page layout", () => {
-  it("draws a playbook's ring in the picker, pins the launch controls, and opens Additional context when something lands in it", async () => {
+  it("draws a playbook's ring in the picker, keeps the three sections open, and pins only the buttons", async () => {
     const withSteps = structuredClone(catalog);
     withSteps.candidates[0].steps = structuredClone(sources[0].definition.step);
     vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(withSteps);
@@ -2447,12 +2447,9 @@ describe("page layout", () => {
     expect(container.querySelectorAll(".playbook-option .playbook-ring-mark")).toHaveLength(1);
     const footer = container.querySelector("footer") as HTMLElement;
     expect(footer.querySelector(".create-actions")?.textContent).toContain("Create task");
-    expect(footer.textContent).toContain("Start eligible sessions after creation");
-    const context = screen.getByText("Additional context").closest("details") as HTMLDetailsElement;
-    expect(context.open).toBe(false);
-    const entry = screen.getByPlaceholderText(/Paste file paths/);
-    fireEvent.change(entry, { target: { value: "/new.png" } });
-    fireEvent.keyDown(entry, { key: "Enter" });
-    await waitFor(() => expect(context.open).toBe(true));
+    expect(footer.textContent).not.toContain("Start eligible sessions after creation");
+    for (const title of ["Additional context", "Steering settings", "Workspace settings"]) expect(screen.getByRole("heading", { name: new RegExp(`^${title}`) })).toBeTruthy();
+    const workspace = screen.getByRole("heading", { name: "Workspace settings" }).parentElement as HTMLElement;
+    expect(within(workspace).getByRole("checkbox", { name: "Start eligible sessions after creation" })).toBeTruthy();
   });
 });

@@ -1866,31 +1866,32 @@ main {
 .create-footer {
   flex: none;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
-  gap: 8px 16px;
-  padding: 12px max(32px, calc((100% - 1256px) / 2)) 12px 32px;
+  gap: 8px;
+  padding: 12px 32px;
   border-top: 1px solid var(--border);
   background: var(--surface);
 }
 .create-footer-status {
-  flex: 1;
-  min-width: 0;
+  max-width: 100%;
+  text-align: center;
 }
-.create-footer .create-actions {
-  margin-left: auto;
+.create-footer-status:empty {
+  display: none;
 }
 .create-disclosure {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
-.create-disclosure > summary {
+.create-disclosure > h3 {
+  margin: 0;
   padding: 10px 12px;
   color: var(--text);
+  font-size: inherit;
   font-weight: 500;
-  cursor: pointer;
 }
-.create-disclosure > summary small {
+.create-disclosure > h3 small {
   margin-left: 8px;
   color: var(--text-muted);
   font-weight: 400;
