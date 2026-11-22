@@ -896,7 +896,9 @@ const rawTurns: TurnControl = {
     if (!text.trim()) throw new DomainError("invalid_argument", "empty-prompt");
     const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
     if (!resolved) throw new DomainError("failed_precondition", "no model is configured");
-    await ensureModel(conversation, resolved, context);
+    // A team model is registered from the pot token, which the shell writes just before this call. Reconfigure so a
+    // switch that happened before the token existed picks the team's key up.
+    await ensureModel(conversation, resolved, context, resolved.provider.startsWith("alinery:"));
     // Images ride in the same user message; a model that reads none gets Pi's placeholder in their place.
     const content = images.length > 0 ? [{ type: "text" as const, text }, ...images] : text;
     await conversation.submit({ type: "input", content, whenBusy: "followUp" }, context);

@@ -4,6 +4,7 @@ import { costBand } from "../chat/costBand";
 import { BUILTIN_MODEL_ROLES, type ModelRolesMap } from "../chat/modelRoles";
 import {
   type AdvancedProviderRow,
+  formatHostedModel,
   HOSTED_PROVIDER,
   type HostedPot,
   hostedPrice,
@@ -16,7 +17,7 @@ import type { ProvidersDialogTab } from "../chat/slash";
 import type { ChatModelOption } from "../chatTranscript";
 import * as ipc from "../ipc";
 import { Dialog } from "../shared";
-import type { HostedCatalogView } from "../types";
+import type { HostedCatalogView, TeamPot } from "../types";
 
 export type ChatProvidersDialogProps = {
   tab: ProvidersDialogTab;
@@ -168,8 +169,7 @@ export function ChatModelDialog({
   onClose,
 }: ChatProvidersDialogProps) {
   const [query, setQuery] = useState(preselect ?? "");
-  const [pots, setPots] = useState<HostedPot[]>([]);
-  const [showPersonal, setShowPersonal] = useState(true);
+  const [accountPots, setAccountPots] = useState<TeamPot[] | null>(null);
   // Opened straight onto Accounts for one provider (an onboarding card): start filtered to it.
   const [providerQuery, setProviderQuery] = useState(tab === "accounts" ? (preselect ?? "") : "");
   const [advancedOpen, setAdvancedOpen] = useState(defaultAdvancedOpen);
@@ -186,12 +186,14 @@ export function ChatModelDialog({
   useEffect(() => {
     ipc
       .accountTeams()
-      .then((teams) => {
-        setPots(teams.pots.flatMap((pot) => (pot.teamId ? [{ teamId: pot.teamId, name: pot.name }] : [])));
-        if (teams.pots.length > 0) setShowPersonal(teams.pots.some((pot) => pot.teamId == null));
-      })
-      .catch(() => {});
+      .then((teams) => setAccountPots(teams.pots))
+      .catch(() => setAccountPots([]));
   }, []);
+
+  // A null teamId is the personal pot. A teams-plan owner has none: their Alinery card is the team pot.
+  const pots: HostedPot[] = (accountPots ?? []).flatMap((pot) => (pot.teamId ? [{ teamId: pot.teamId, name: pot.name }] : []));
+  const showPersonal = accountPots == null || accountPots.length === 0 || accountPots.some((pot) => pot.teamId == null);
+  const teamAccountRows = (accountPots ?? []).filter((pot) => pot.teamId && (showPersonal || pot.role !== "owner"));
 
   // Search shortcuts stay inside this modal, including when focus has moved to a row or tab.
   useEffect(() => {
@@ -247,10 +249,11 @@ export function ChatModelDialog({
 
   const providerNeedle = providerQuery.trim().toLowerCase();
   const shownHosted = hosted && (!providerNeedle || providerMatches({ id: HOSTED_PROVIDER, name: "Alinery" }, providerNeedle)) ? hosted : null;
+  const shownTeamAccounts = providerNeedle ? teamAccountRows.filter((pot) => `alinery ${pot.name}`.toLowerCase().includes(providerNeedle)) : teamAccountRows;
   const shownLogin = providerNeedle ? chatLogin.filter((p) => providerMatches(p, providerNeedle)) : chatLogin;
   // A search reaches Advanced rows too, so an env-only provider is findable without knowing where it lives.
   const shownAdvanced = providerNeedle ? advanced.filter((row) => providerMatches(row, providerNeedle)) : advancedOpen ? advanced : [];
-  const noProviderMatch = providerNeedle !== "" && !shownHosted && shownLogin.length === 0 && shownAdvanced.length === 0;
+  const noProviderMatch = providerNeedle !== "" && !shownHosted && shownTeamAccounts.length === 0 && shownLogin.length === 0 && shownAdvanced.length === 0;
 
   const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const last = DIALOG_TABS.length - 1;
@@ -332,6 +335,14 @@ export function ChatModelDialog({
             <>
               <ul className="chat-model-list chat-provider-cards">
                 {shownHosted ? <AlineryAccountRow hosted={shownHosted} onSignIn={onSignIn} onSubscribe={onSubscribe} onBuyCredits={onBuyCredits} /> : null}
+                {shownTeamAccounts.map((pot) => (
+                  <li key={pot.teamId}>
+                    <button type="button" className="chat-model-item" disabled>
+                      <span>Alinery · {pot.name}</span>
+                      <span className="chat-provider-status">{formatCreditUsd(pot.balanceCents)}</span>
+                    </button>
+                  </li>
+                ))}
                 {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
                 {catalogueStatus === "ready" && !providerNeedle && chatLogin.length === 0 && !hosted ? <li className="dim">No Chat-capable providers yet.</li> : null}
                 {catalogueStatus !== "connecting" && noProviderMatch ? <li className="dim">No providers match “{providerQuery.trim()}”</li> : null}
@@ -375,7 +386,7 @@ export function ChatModelDialog({
             </>
           ) : (
             <>
-              <p className="dim">{current ? `Current model: ${current}` : "Choose a model."}</p>
+              <p className="dim">{current ? `Current model: ${formatHostedModel(current, pots)}` : "Choose a model."}</p>
               <ul className="chat-model-list">
                 {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
                 {catalogueStatus === "ready" && filtered.length === 0 && !customRef ? (

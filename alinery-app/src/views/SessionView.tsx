@@ -784,7 +784,7 @@ export function SessionView({
     try {
       if (transport === "rpc") {
         const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
-        await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
+        await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images, chatRef.current.sessionMeta.model);
         const next = appendOptimisticUser(chatRef.current, caption, busy ? "follow_up" : "prompt");
         chatRef.current = next;
         setChat(next);
@@ -818,7 +818,7 @@ export function SessionView({
     try {
       const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
       await abortSession(repoPath, id);
-      await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
+      await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images, chatRef.current.sessionMeta.model);
       const rowAttachments = draftToRowAttachments(attachments);
       updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
       const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);

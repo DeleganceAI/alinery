@@ -194,7 +194,8 @@ export async function resumeChatThread(repo: string, threadId: string): Promise<
 
 // ---- the turn controls ---------------------------------------------------------------------------------------
 
-export async function promptChatThread(repo: string, threadId: string, text: string, images?: ImageContent[]): Promise<void> {
+export async function promptChatThread(repo: string, threadId: string, text: string, images?: ImageContent[], model?: string): Promise<void> {
+  if (model) await ipc.prepareHostedInference(model);
   await call(() => chatApi.chat(repo).promptChatThread({ meta: newMutationMeta(), threadId, text, images: promptImages(images) }));
 }
 
@@ -203,6 +204,7 @@ export async function abortChatThread(repo: string, threadId: string): Promise<v
 }
 
 export async function setChatModel(repo: string, threadId: string, model: string): Promise<SessionControls> {
+  await ipc.prepareHostedInference(model);
   return controlsOf((await call(() => chatApi.chat(repo).setChatModel({ meta: newMutationMeta(), threadId, model }))).controls);
 }
 

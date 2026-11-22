@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { HOSTED_PROVIDER, type LoginProvider, mergeGrokModels, mergeHostedModels, needsProviderSetup, partitionProviders, shouldOfferProviderSetup } from "./providers";
+import {
+  formatHostedModel,
+  HOSTED_PROVIDER,
+  type LoginProvider,
+  mergeGrokModels,
+  mergeHostedModels,
+  needsProviderSetup,
+  partitionProviders,
+  shouldOfferProviderSetup,
+} from "./providers";
 
 const providers = (rows: Partial<LoginProvider>[]): LoginProvider[] =>
   rows.map((r, i) => ({
@@ -182,6 +191,8 @@ describe("mergeHostedModels", () => {
       upsell: null,
       source: "live",
     };
+    expect(formatHostedModel("alinery:team-1/GLM-5.3", [{ teamId: "team-1", name: "SuperTech1" }])).toBe("alinery:SuperTech1-GLM-5.3");
+    expect(formatHostedModel("alinery/GLM-5.3", [{ teamId: "team-1", name: "SuperTech1" }])).toBe("alinery/GLM-5.3");
     expect(mergeHostedModels([], hosted, [{ teamId: "team-1", name: "Design" }])).toEqual([
       { provider: HOSTED_PROVIDER, id: "Qwen3.6-35B-A3B" },
       { provider: "alinery:team-1", id: "Qwen3.6-35B-A3B", label: "Design · Qwen" },

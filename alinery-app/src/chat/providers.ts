@@ -159,6 +159,14 @@ export function mergeGrokModels(models: ChatModelOption[], enabled: boolean): Ch
 
 export type HostedPot = { teamId: string; name: string };
 
+/** What a person sees. The stored value stays `alinery:<team id>/<model>` so the request still spends that pot. */
+export function formatHostedModel(model: string, pots: HostedPot[]): string {
+  const slash = model.indexOf("/");
+  if (slash <= 0 || !model.startsWith("alinery:")) return model;
+  const name = pots.find((pot) => pot.teamId === model.slice("alinery:".length, slash))?.name;
+  return name ? `alinery:${name}-${model.slice(slash + 1)}` : model;
+}
+
 /** Catalog rows first, once per pot. `alinery/<id>` is personal. `alinery:<team>/<id>` spends that team. */
 export function mergeHostedModels(models: ChatModelOption[], hosted: HostedCatalogView | null | undefined, pots: HostedPot[] = []): ChatModelOption[] {
   if (!hosted) return models;

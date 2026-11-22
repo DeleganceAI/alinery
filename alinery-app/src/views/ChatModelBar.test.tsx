@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
     throw new Error("no catalog");
   }),
 }));
-vi.mock("../ipc", () => ({ readModelFavorites: mocks.readModelFavorites }));
+vi.mock("../ipc", () => ({ readModelFavorites: mocks.readModelFavorites, accountTeams: async () => ({ pots: [], pendingInvites: [] }) }));
 // The catalog is the host daemon's ProviderService (sync/providers), not ipc.
 vi.mock("../sync/providers", () => ({ providerCatalog: mocks.providerCatalog }));
 
