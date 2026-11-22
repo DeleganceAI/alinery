@@ -88,8 +88,8 @@ vi.mock("../ipc", () =>
     getCurrentWebview: mocks.getCurrentWebview as never,
   }),
 );
-function chat(visibility: ChatPrefs = DEFAULT_CHAT_VISIBILITY) {
-  return <ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={visibility} />;
+function chat(visibility: ChatPrefs = DEFAULT_CHAT_VISIBILITY, onFocusedCwdChange?: (cwd: string) => void) {
+  return <ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={visibility} onFocusedCwdChange={onFocusedCwdChange} />;
 }
 
 function meta(id: string, extra: Partial<SessionMeta> = {}): SessionMeta {
@@ -540,6 +540,19 @@ describe("ChatView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Archive" }));
     await waitFor(() => expect(confirmDanger).toHaveBeenCalledWith("Archive chat", expect.stringContaining("still running, and archiving stops it"), "Stop and archive"));
     expect(mocks.archiveChatThread).not.toHaveBeenCalled();
+  });
+
+  it("reports the focused thread's directory for the terminal drawer, and clears it with no thread open", async () => {
+    const onFocusedCwdChange = vi.fn();
+    const worktree = "/repo/.alinery/chat-worktrees/s-wt";
+    fakeChat.set([thread("s-wt", { checkout: false, session: meta("s-wt", { worktree }) }), thread("s-checkout")]);
+    render(chat(DEFAULT_CHAT_VISIBILITY, onFocusedCwdChange));
+    await waitFor(() => expect(onFocusedCwdChange).toHaveBeenLastCalledWith(""));
+    fireEvent.click(await within(rail()).findByRole("button", { name: threadRow("s-wt") }));
+    await waitFor(() => expect(onFocusedCwdChange).toHaveBeenLastCalledWith(worktree));
+    // A thread without a worktree runs in the checkout, and that is the directory to land in.
+    fireEvent.click(within(rail()).getByRole("button", { name: threadRow("s-checko") }));
+    await waitFor(() => expect(onFocusedCwdChange).toHaveBeenLastCalledWith("/repo"));
   });
 
   it("will not remove a running thread's worktree on its own", async () => {
