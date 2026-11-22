@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/share.proto.
  */
 export const file_alinery_v1_share: GenFile = /*@__PURE__*/
-  fileDesc("ChZhbGluZXJ5L3YxL3NoYXJlLnByb3RvEgphbGluZXJ5LnYxIn0KD1NldFNoYXJlUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESDwoHdGVhbV9pZBgCIAEoCRIMCgRuYW1lGAMgASgJEg0KBXRva2VuGAQgASgJEhQKDGFjY291bnRzX3VybBgFIAEoCSISChBTZXRTaGFyZVJlc3BvbnNlIjsKEUNsZWFyU2hhcmVSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YSIUChJDbGVhclNoYXJlUmVzcG9uc2UyogEKDFNoYXJlU2VydmljZRJFCghTZXRTaGFyZRIbLmFsaW5lcnkudjEuU2V0U2hhcmVSZXF1ZXN0GhwuYWxpbmVyeS52MS5TZXRTaGFyZVJlc3BvbnNlEksKCkNsZWFyU2hhcmUSHS5hbGluZXJ5LnYxLkNsZWFyU2hhcmVSZXF1ZXN0Gh4uYWxpbmVyeS52MS5DbGVhclNoYXJlUmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common]);
+  fileDesc("ChZhbGluZXJ5L3YxL3NoYXJlLnByb3RvEgphbGluZXJ5LnYxIn0KD1NldFNoYXJlUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESDwoHdGVhbV9pZBgCIAEoCRIMCgRuYW1lGAMgASgJEg0KBXRva2VuGAQgASgJEhQKDGFjY291bnRzX3VybBgFIAEoCSISChBTZXRTaGFyZVJlc3BvbnNlIjsKEUNsZWFyU2hhcmVSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YSIUChJDbGVhclNoYXJlUmVzcG9uc2UiFQoTUHVsbENvbW1lbnRzUmVxdWVzdCI1ChRQdWxsQ29tbWVudHNSZXNwb25zZRIOCgZzaGFyZWQYASABKAgSDQoFc2F2ZWQYAiABKAUy9QEKDFNoYXJlU2VydmljZRJFCghTZXRTaGFyZRIbLmFsaW5lcnkudjEuU2V0U2hhcmVSZXF1ZXN0GhwuYWxpbmVyeS52MS5TZXRTaGFyZVJlc3BvbnNlEksKCkNsZWFyU2hhcmUSHS5hbGluZXJ5LnYxLkNsZWFyU2hhcmVSZXF1ZXN0Gh4uYWxpbmVyeS52MS5DbGVhclNoYXJlUmVzcG9uc2USUQoMUHVsbENvbW1lbnRzEh8uYWxpbmVyeS52MS5QdWxsQ29tbWVudHNSZXF1ZXN0GiAuYWxpbmVyeS52MS5QdWxsQ29tbWVudHNSZXNwb25zZWIGcHJvdG8z", [file_alinery_v1_common]);
 
 /**
  * @generated from message alinery.v1.SetShareRequest
@@ -97,6 +97,45 @@ export const ClearShareResponseSchema: GenMessage<ClearShareResponse> = /*@__PUR
   messageDesc(file_alinery_v1_share, 3);
 
 /**
+ * @generated from message alinery.v1.PullCommentsRequest
+ */
+export type PullCommentsRequest = Message<"alinery.v1.PullCommentsRequest"> & {
+};
+
+/**
+ * Describes the message alinery.v1.PullCommentsRequest.
+ * Use `create(PullCommentsRequestSchema)` to create a new message.
+ */
+export const PullCommentsRequestSchema: GenMessage<PullCommentsRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_share, 4);
+
+/**
+ * @generated from message alinery.v1.PullCommentsResponse
+ */
+export type PullCommentsResponse = Message<"alinery.v1.PullCommentsResponse"> & {
+  /**
+   * false when this daemon is not shared with a team, so there was nothing to fetch
+   *
+   * @generated from field: bool shared = 1;
+   */
+  shared: boolean;
+
+  /**
+   * comments written to this daemon's artifacts
+   *
+   * @generated from field: int32 saved = 2;
+   */
+  saved: number;
+};
+
+/**
+ * Describes the message alinery.v1.PullCommentsResponse.
+ * Use `create(PullCommentsResponseSchema)` to create a new message.
+ */
+export const PullCommentsResponseSchema: GenMessage<PullCommentsResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_share, 5);
+
+/**
  * Sharing one daemon with one team. The shell mints the sync credential and delivers it here.
  * The daemon pushes to the accounts service. It never opens a Supabase socket.
  *
@@ -122,6 +161,18 @@ export const ShareService: GenService<{
     methodKind: "unary";
     input: typeof ClearShareRequestSchema;
     output: typeof ClearShareResponseSchema;
+  },
+  /**
+   * Fetch teammates' new comments now instead of waiting for the next heartbeat. Idempotent: the cursor moves on.
+   *
+   * ACT
+   *
+   * @generated from rpc alinery.v1.ShareService.PullComments
+   */
+  pullComments: {
+    methodKind: "unary";
+    input: typeof PullCommentsRequestSchema;
+    output: typeof PullCommentsResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_share, 0);

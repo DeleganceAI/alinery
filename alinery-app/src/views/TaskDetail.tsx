@@ -18,6 +18,7 @@ import { MainTabs, useOpenTabs } from "../MainTabs";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PaneResizer } from "../PaneResizer";
 import { PlaybookGraph } from "../PlaybookGraph";
+import { PullCommentsButton } from "../PullCommentsButton";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import { RepoFileTree } from "../RepoFileTree";
 import { relatedRepoKey, relatedStoredPath, sameMachine } from "../remoteRepo";
@@ -76,6 +77,7 @@ import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { type GitDiffTarget, pushAndCompareUrlForRepo } from "../sync/git";
 import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
 import { abortSession, archiveSession, markSessionNotificationRead, renameSession } from "../sync/sessions";
+import { pullTeamComments } from "../sync/share";
 import { discardSubtask as discardSubtaskForRepo, subtaskState as fetchSubtaskState, startSubtaskManager } from "../sync/subtasks";
 import { renameTask, restoreTaskForRepo, setAutoApproveAllForRepo, setRelatedTasksForRepo, worktreeExists } from "../sync/tasks";
 import { TaskRunGraph } from "../TaskRunGraph";
@@ -1310,6 +1312,7 @@ export function TaskDetail({
                     Attachments
                   </button>
                 </div>
+                <PullCommentsButton onPull={() => pullTeamComments(repoPath)} />
                 <span className="pill">
                   {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
                 </span>

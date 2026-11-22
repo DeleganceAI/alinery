@@ -46,6 +46,7 @@ import * as ipc from "../ipc";
 import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PaneResizer } from "../PaneResizer";
+import { PullCommentsButton } from "../PullCommentsButton";
 import { revealPath } from "../revealPath";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
@@ -95,6 +96,7 @@ import {
   setSessionThinkingLevel,
   startSession,
 } from "../sync/sessions";
+import { pullTeamComments } from "../sync/share";
 import { addTaskAttachment, copyTaskAttachments } from "../sync/tasks";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
@@ -1324,9 +1326,12 @@ export function SessionView({
                     )}
                   </div>
                   {showInfo ? null : (
-                    <span className="pill">
-                      {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
-                    </span>
+                    <>
+                      <PullCommentsButton onPull={() => pullTeamComments(repoPath)} />
+                      <span className="pill">
+                        {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
+                      </span>
+                    </>
                   )}
                 </div>
                 {artifactErr && (

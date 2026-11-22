@@ -6,6 +6,7 @@ import { CopyArtifactButton } from "../chat/CopyMessage";
 import { ListToolbar } from "../ListToolbar";
 import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
 import { PaneResizer } from "../PaneResizer";
+import { PullCommentsButton } from "../PullCommentsButton";
 import { EmptyState, formatAbsolute, formatAge, InlineStatus, useMinuteNow } from "../shared";
 import { type SharedTask, sharedArtifactComments } from "../sharedTask";
 import type { AppearancePrefs, TeamCommentAnchor, TeamShare, TeamShareDetail } from "../types";
@@ -33,12 +34,14 @@ export function SharedTaskList({
   loaded,
   onBack,
   onOpen,
+  onRefresh,
 }: {
   share: TeamShare;
   tasks: SharedTask[];
   loaded: boolean;
   onBack: () => void;
   onOpen: (task: SharedTask) => void;
+  onRefresh: () => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState("");
@@ -54,6 +57,7 @@ export function SharedTaskList({
       </button>
       <h1 className="view-title">{share.name}</h1>
       <ShareStatus share={share} />
+      <PullCommentsButton onPull={() => onRefresh().then(() => undefined)} title="Pull the latest tasks, artifacts and comments" />
     </>
   );
   return (
@@ -156,6 +160,7 @@ export function SharedTaskView({
   onAppearanceChange,
   onBack,
   onComment,
+  onRefresh,
 }: {
   share: TeamShare;
   task: SharedTask;
@@ -164,6 +169,7 @@ export function SharedTaskView({
   onAppearanceChange: (next: AppearancePrefs) => void;
   onBack: () => void;
   onComment: (filename: string, body: string, anchor: TeamCommentAnchor) => Promise<void>;
+  onRefresh: () => Promise<void>;
 }) {
   const tabs = useOpenTabs<OpenTab>(`${share.id}\0${task.slug}`);
   const [width, resizerProps, collapse] = useArtifactPaneWidth(appearance, onAppearanceChange, "left");
@@ -243,6 +249,7 @@ export function SharedTaskView({
                 Playbook
               </button>
             </div>
+            <PullCommentsButton onPull={() => onRefresh().then(() => undefined)} title="Pull the latest tasks, artifacts and comments" />
             <span className="pill">{task.artifacts.length}</span>
           </div>
           <div className="artifactlist">

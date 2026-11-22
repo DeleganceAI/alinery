@@ -9,6 +9,8 @@ import "alinery/v1/common.proto";
 service ShareService {
   rpc SetShare(SetShareRequest) returns (SetShareResponse);      // ACT
   rpc ClearShare(ClearShareRequest) returns (ClearShareResponse);  // ACT
+  // Fetch teammates' new comments now instead of waiting for the next heartbeat. Idempotent: the cursor moves on.
+  rpc PullComments(PullCommentsRequest) returns (PullCommentsResponse);  // ACT
 }
 
 message SetShareRequest {
@@ -24,3 +26,9 @@ message ClearShareRequest {
   MutationMeta meta = 1;
 }
 message ClearShareResponse {}
+
+message PullCommentsRequest {}
+message PullCommentsResponse {
+  bool shared = 1;  // false when this daemon is not shared with a team, so there was nothing to fetch
+  int32 saved = 2;  // comments written to this daemon's artifacts
+}

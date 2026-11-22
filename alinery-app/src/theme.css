@@ -296,11 +296,13 @@ select:focus-visible {
   color: var(--danger);
   background: var(--danger-subtle);
 }
-.terminal-drawer-spin {
+.terminal-drawer-spin,
+.pull-comments-spin {
   animation: toast-spin 1s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .terminal-drawer-spin {
+  .terminal-drawer-spin,
+  .pull-comments-spin {
     animation: none;
   }
 }

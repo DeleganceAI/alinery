@@ -1,7 +1,7 @@
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { ShareService } from "alinery-proto/alinery/v1/share_pb";
-import { armTeamShare, clearTeamShare, writeShareFile } from "../domain/teamShare.ts";
+import { armTeamShare, clearTeamShare, pullTeamComments, writeShareFile } from "../domain/teamShare.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import { requireCapability } from "./auth.ts";
 import { domain, fail, metaOf } from "./errors.ts";
@@ -29,6 +29,10 @@ export function shareService(repo: string, dedupe: Dedupe): ServiceImpl<typeof S
     clearShare: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return dedupe.once(metaOf(req.meta), () => domain(() => clearTeamShare(repo)));
+    },
+    pullComments: (_req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return domain(() => pullTeamComments(repo));
     },
   };
 }

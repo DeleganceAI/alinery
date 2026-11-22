@@ -27,19 +27,19 @@ export function TeamView({ active, appearance, onAppearanceChange }: { active: b
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const loadShares = () => {
+  const loadShares = () =>
     ipc
       .accountTeamShares()
       .then((page) => setShares(page.shares ?? []))
       .catch((e) => setError(String(e)));
-  };
 
-  const loadDetail = (id: string) => {
+  const loadDetail = (id: string) =>
     ipc
       .accountTeamShare(id)
       .then((next) => setDetail(next))
       .catch((e) => setError(String(e)));
-  };
+
+  const refresh = (id: string) => Promise.all([loadDetail(id), loadShares()]).then(() => undefined);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: loads once each time the tab becomes active
   useEffect(() => {
@@ -132,6 +132,7 @@ export function TeamView({ active, appearance, onAppearanceChange }: { active: b
         appearance={appearance}
         onAppearanceChange={onAppearanceChange}
         onBack={() => setTaskSlug(null)}
+        onRefresh={() => refresh(share.id)}
         onComment={(filename, body, anchor) =>
           ipc.accountTeamComment(share.id, task.slug, filename, body, anchor).then(() => {
             loadDetail(share.id);
@@ -142,7 +143,16 @@ export function TeamView({ active, appearance, onAppearanceChange }: { active: b
   }
 
   if (share) {
-    return <SharedTaskList share={share} tasks={tasks} loaded={detail !== null} onBack={() => setShareId(null)} onOpen={(next) => setTaskSlug(next.slug)} />;
+    return (
+      <SharedTaskList
+        share={share}
+        tasks={tasks}
+        loaded={detail !== null}
+        onBack={() => setShareId(null)}
+        onOpen={(next) => setTaskSlug(next.slug)}
+        onRefresh={() => refresh(share.id)}
+      />
+    );
   }
 
   const teamPots = teams?.pots.filter((pot) => pot.teamId) ?? [];

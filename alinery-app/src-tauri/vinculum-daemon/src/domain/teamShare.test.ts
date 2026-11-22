@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadComments } from "./artifactComments.ts";
-import { changedKeys, isShareRel, readCommentCursor, revisionOf, saveTeamComments, snapshotShare, type TeamComment } from "./teamShare.ts";
+import { changedKeys, isShareRel, pullTeamComments, readCommentCursor, revisionOf, saveTeamComments, snapshotShare, type TeamComment, writeShareFile } from "./teamShare.ts";
 
 describe("team share", () => {
   test("task.md and every artifact markdown are share paths, including a step folder", () => {
@@ -74,5 +74,24 @@ describe("team share", () => {
       expect.objectContaining({ author: "bo@example.com", anchor_id: "p:3-3:abc", line_start: 3, body: "tighten this", created_at_ms: Date.parse(row.created_at) }),
     ]);
     expect(readFileSync(join(artifacts, "01-plan.comments.md"), "utf8")).toContain("- Author: bo@example.com\n");
+  });
+
+  test("a pull on request answers not shared without a share, and fetches now with one", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "team-pull-"));
+    expect(await pullTeamComments(repo)).toEqual({ shared: false, saved: 0 });
+
+    const artifacts = join(repo, ".alinery", "tasks", "alpha", "artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    writeFileSync(join(artifacts, "01-plan.md"), "# Plan\n\nShip it.\n");
+    const comment = { task_slug: "alpha", filename: "01-plan.md", body: "now", created_at: "2026-11-21T19:05:00.000+00:00", author_email: "bo@example.com" };
+    const server = Bun.serve({ port: 0, fetch: () => Response.json({ comments: [comment], more: false }) });
+    try {
+      writeShareFile(repo, { team_id: "t", name: "r", token: "sync_x", accounts_url: `http://127.0.0.1:${server.port}` });
+      expect(await pullTeamComments(repo)).toEqual({ shared: true, saved: 1 });
+      expect(await pullTeamComments(repo)).toEqual({ shared: true, saved: 0 });
+      expect(loadComments(repo, "alpha", "01-plan.md")).toEqual([expect.objectContaining({ author: "bo@example.com", body: "now" })]);
+    } finally {
+      server.stop(true);
+    }
   });
 });

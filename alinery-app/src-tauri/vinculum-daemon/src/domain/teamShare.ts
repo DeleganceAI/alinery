@@ -267,16 +267,33 @@ async function post(file: ShareFile, path: string, body: unknown): Promise<Recor
   }
 }
 
-async function pull(repo: string, gen: number) {
+async function pull(repo: string, gen: number): Promise<number> {
+  let saved = 0;
   for (let page = 0; page < 50; page++) {
     const file = readShareFile(repo);
-    if (!file || gen !== generation) return;
+    if (!file || gen !== generation) return saved;
     const reply = await post(file, "/api/daemon/comments", { comments_since: readCommentCursor(repo) });
-    if (gen !== generation) return;
+    if (gen !== generation) return saved;
     const rows = Array.isArray(reply.comments) ? (reply.comments as TeamComment[]) : [];
-    saveTeamComments(repo, rows);
-    if (reply.more !== true || rows.length === 0) return;
+    saved += saveTeamComments(repo, rows);
+    if (reply.more !== true || rows.length === 0) return saved;
   }
+  return saved;
+}
+
+/** A pull the user asked for. It runs in the push queue, so it never races a heartbeat's pull over the cursor. */
+export function pullTeamComments(repo: string): Promise<{ shared: boolean; saved: number }> {
+  if (!readShareFile(repo)) return Promise.resolve({ shared: false, saved: 0 });
+  const gen = generation;
+  return new Promise((resolve, reject) => {
+    enqueue(async () => {
+      try {
+        resolve({ shared: true, saved: await pull(repo, gen) });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
 }
 
 async function push(repo: string, gen: number) {
@@ -322,11 +339,13 @@ async function heartbeat(repo: string, gen: number) {
   try {
     const reply = await post(file, "/api/daemon/heartbeat", { ...(lastError ? { error: lastError } : {}), comments_since: readCommentCursor(repo) });
     if (reply.comment_updates === true && gen === generation) {
-      enqueue(() =>
-        pull(repo, gen).catch((error) => {
+      enqueue(async () => {
+        try {
+          await pull(repo, gen);
+        } catch (error) {
           console.error(`team comments: ${(error as Error).message}`);
-        }),
-      );
+        }
+      });
     }
   } catch {
     /* the next beat tries again; a dead accounts host must not stop the daemon */

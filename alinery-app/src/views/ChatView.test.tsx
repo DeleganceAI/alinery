@@ -316,7 +316,7 @@ describe("ChatView", () => {
     expect(screen.queryByRole("button", { name: "Open in Terminal" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "hello" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalledWith("/repo", "s-new", "hello", undefined));
+    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalledWith("/repo", "s-new", "hello", undefined, undefined));
   });
 
   it("sends a pasted image to the model with the prompt, not only as a file the prompt names", async () => {
