@@ -18,7 +18,7 @@ import { openProviderRuntime } from "./runtime.ts";
 import { writeAtomic } from "./platform/fs.ts";
 import { agentShellEnv, libreOfficeDir, runtimePart, writeShims } from "./agentShell.ts";
 import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
-import { stopOwningHarness } from "./runtime/sessionStop.ts";
+import { closeFailedOpen, stopOwningHarness } from "./runtime/sessionStop.ts";
 import { latestFailedTurn, retryFailedTurn, committedTurnMessages } from "./runtime/failedTurn.ts";
 import { answeredReviewFollowUp, hasSettledAnswer } from "./runtime/reviewFollowUp.ts";
 import { steerWrapUp } from "./runtime/nudge.ts";
@@ -512,6 +512,23 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
   const turn = Promise.withResolvers();
   setImmediate(turn.resolve);
   await turn.promise;
+  try {
+    return await openHarness(row, path, exists, model, prompt);
+  } catch (error) {
+    // A failed open ran no work once its harness is closed, so the row is an exited session and Kill
+    // and Archive can confirm it. A close that fails leaves it unconfirmed, as stopOwningHarness would.
+    if (live.get(id) === row && (await closeFailedOpen(row.harness, context))) {
+      row.harness = null;
+      writeMeta(taskSlug, id, { ended_at: Math.floor(Date.now() / 1000), exit_code: 1 });
+      row.process = "exited";
+      commitSession(taskSlug, id);
+    }
+    throw error;
+  }
+}
+
+async function openHarness(row: Live, path: string, exists: boolean, model: string, prompt: string) {
+  const { id, taskSlug } = row;
   const storage = await openNodeSqliteStorage(path);
   const harness = await Harness.open(
     storage,

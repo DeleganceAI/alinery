@@ -19,3 +19,13 @@ export async function stopOwningHarness(
   await beforeClose?.(conversation);
   await owner.harness.close(context);
 }
+
+/** Whether a session whose open threw is known to run nothing: it never got a harness, or that harness closed. */
+export async function closeFailedOpen(harness: Pick<Harness, "close"> | null, context: Context): Promise<boolean> {
+  try {
+    await harness?.close(context);
+    return true;
+  } catch {
+    return false;
+  }
+}
