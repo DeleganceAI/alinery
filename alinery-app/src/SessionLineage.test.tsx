@@ -129,8 +129,7 @@ it("shows actual fan-out separately from the newest task session and preserves a
   expect(screen.getByRole("button", { name: /Session Navigator/ }).textContent).toBe(collapsedLabel);
   fireEvent.click(within(neighborhood).getByRole("button", { name: "left" }));
   expect(openSession).toHaveBeenLastCalledWith(sessions[1]);
-  fireEvent.click(screen.getByRole("button", { name: /Jump to newest · unrelated/ }));
-  expect(openSession).toHaveBeenLastCalledWith(sessions[3]);
+  expect(screen.queryByRole("button", { name: /Jump to newest|Open session ·/ })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "result.md" }));
   expect(openArtifact).toHaveBeenLastCalledWith("nested/result.md");
 });

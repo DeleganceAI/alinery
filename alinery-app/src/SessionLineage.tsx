@@ -143,9 +143,6 @@ export function SessionLineage({
   }, [sessions, owners]);
   const fileBefore = fileLinks?.producers.length ? fileLinks.producers : (fileLinks?.assigned ?? []);
   const fileAfter = fileLinks?.consumers ?? [];
-  const visibleSteps = selectedFile ? [...fileBefore, ...fileAfter] : [execution, ...parents, ...successors];
-  const sourceLink = selectedFile && viewedSession && !visibleSteps.some((record) => record?.owner_session_id === id) ? viewedSession : undefined;
-  const showNewest = newest && newest.id !== sourceLink?.id && !(showSession && newest.id === id) && !visibleSteps.some((record) => record?.owner_session_id === newest.id);
   const assignedPaths =
     showSession && expanded && selectedOwner && execution
       ? artifactPaths.filter((path) => hasPendingOutput(execution, path) && !published.some((item) => item.relative_path === path))
@@ -320,19 +317,9 @@ export function SessionLineage({
             </div>
           </LineageFlow>
         )}
-        {expanded && (id || selectedFile) && (stale || sourceLink || showNewest) && (
-          <div className="lineage-footer">
-            {stale && <span role="status">Showing last known relationships.</span>}
-            {sourceLink && (
-              <button type="button" className="btn ghost small" title={sourceLink.id} disabled={!onOpenSession} onClick={() => onOpenSession?.(sourceLink)}>
-                Open session · {sessionName(sourceLink)}
-              </button>
-            )}
-            {newest && showNewest && (
-              <button type="button" className="btn ghost small" title={newest.id} disabled={!onOpenSession} onClick={() => onOpenSession?.(newest)}>
-                Jump to newest · {sessionName(newest)}
-              </button>
-            )}
+        {expanded && (id || selectedFile) && stale && (
+          <div className="lineage-footer" role="status">
+            Showing last known relationships.
           </div>
         )}
       </div>
