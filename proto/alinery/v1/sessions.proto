@@ -220,7 +220,8 @@ message SessionControls {
 }
 
 // One message of the pane, as `formatTranscript` builds it (transcript.ts). Pi stores thinking, text and
-// tool calls as parts on the assistant message, and a tool result as its own message.
+// tool calls as parts on the assistant message, a prompt's images as parts on the user message, and a tool
+// result as its own message.
 message TranscriptItem {
   string id = 1;
   string role = 2;  // user, assistant or toolResult
@@ -241,7 +242,14 @@ message TranscriptPart {
     string thinking = 2;
     RedactedThinking redacted_thinking = 3;  // only the marker: the signature is for the provider, not the pane
     ToolCallPart tool_call = 4;
+    TranscriptImage image = 5;
   }
+}
+// An image the person attached to a prompt: the part the model reads, named so the pane can read the same
+// copy back through BlobService instead of carrying its megabytes in every frame.
+message TranscriptImage {
+  string mime_type = 1;
+  string name = 2;  // the file in the session's attachment directory; empty when the send named none
 }
 message RedactedThinking {}
 message ToolCallPart {

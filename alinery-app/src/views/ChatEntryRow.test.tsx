@@ -72,7 +72,7 @@ describe("ChatEntryRow", () => {
       attachments,
     };
     const { container: promptNode } = render(<ChatEntryRow entry={prompt as ChatEntry} />);
-    const promptImg = promptNode.querySelector(".chat-entry-thumbs img");
+    const promptImg = promptNode.querySelector(".chat-prompt-image img");
     expect(promptImg?.getAttribute("alt")).toBe("shot.png");
     expect(promptImg?.getAttribute("src")).toBe("data:image/png;base64,aa");
     expect(promptNode.querySelector(".chat-entry-chips")?.textContent).toContain("notes.pdf");
@@ -87,7 +87,7 @@ describe("ChatEntryRow", () => {
     };
     const { container: followNode } = render(<ChatEntryRow entry={followUp as ChatEntry} showActorLabels={false} />);
     expect(followNode.querySelector(".chat-text-body")).toBeNull();
-    expect(followNode.querySelector(".chat-entry-thumbs img")?.getAttribute("alt")).toBe("shot.png");
+    expect(followNode.querySelector(".chat-prompt-image img")?.getAttribute("alt")).toBe("shot.png");
     expect(followNode.querySelector(".chat-entry-chips")?.textContent).toContain("notes.pdf");
     expect(followNode.textContent).toContain("queued · after this turn");
   });

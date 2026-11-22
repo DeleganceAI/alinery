@@ -649,7 +649,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
             await writeSend(
               prepared?.message ?? claimed.text,
               sendCommand(prepared?.message ?? claimed.text, false),
-              (current) => applyPlainSend(current, claimed.text, false, prepared ? draftToRowAttachments(claimed.attachments) : undefined),
+              (current) => applyPlainSend(current, claimed.text, false, prepared ? draftToRowAttachments(prepared.copied) : undefined),
               claimed.attachments,
             );
           } catch (cause) {
@@ -797,7 +797,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
         const prepared = await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments);
         wire = prepared.message;
         images = prepared.images;
-        row = draftToRowAttachments(attachments);
+        row = draftToRowAttachments(prepared.copied);
       }
       const command =
         dispatch.kind === "compact"
@@ -830,7 +830,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     registry.setError("");
     try {
       const prepared = attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments) : null;
-      const row = prepared ? draftToRowAttachments(attachments) : undefined;
+      const row = prepared ? draftToRowAttachments(prepared.copied) : undefined;
       await abortChatThread(repo, id).catch(() => undefined);
       await writeSend(
         prepared?.message ?? text,

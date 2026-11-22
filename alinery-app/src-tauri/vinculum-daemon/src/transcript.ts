@@ -30,7 +30,8 @@ export type TranscriptPart =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
   | { type: "redactedThinking" }
-  | { type: "toolCall"; id?: string; name?: string; arguments?: unknown };
+  | { type: "toolCall"; id?: string; name?: string; arguments?: unknown }
+  | { type: "image"; mimeType: string; name?: string };
 
 export type TranscriptReply = {
   id: string;
@@ -125,6 +126,31 @@ function textParts(content: unknown): Array<{ type: "text"; text: string }> {
   return parts;
 }
 
+/**
+ * A prompt's own parts: its text, and the images the person attached. An image is named, never carried: the
+ * pane reads the same file back through BlobService, so a prompt with megabytes of image costs the wire
+ * nothing. An image-only prompt is a row of its own (textParts alone would drop the whole message).
+ */
+function promptParts(content: unknown): TranscriptPart[] {
+  if (typeof content === "string") return textParts(content);
+  if (!Array.isArray(content)) return [];
+  const parts: TranscriptPart[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    const record = part as { type?: unknown; text?: unknown; mimeType?: unknown; name?: unknown };
+    if (record.type === "image") {
+      parts.push({
+        type: "image",
+        mimeType: typeof record.mimeType === "string" ? record.mimeType : "",
+        ...(typeof record.name === "string" && record.name.length > 0 ? { name: record.name } : {}),
+      });
+      continue;
+    }
+    if (record.type === "text" && typeof record.text === "string" && record.text.trim().length > 0) parts.push({ type: "text", text: record.text });
+  }
+  return parts;
+}
+
 function assistantParts(content: unknown, streaming: boolean): TranscriptPart[] {
   if (!Array.isArray(content)) return [];
   const parts: TranscriptPart[] = [];
@@ -184,7 +210,7 @@ export function formatTranscript(messages: readonly TranscriptSource[], tools: r
 
   for (const message of messages) {
     if (message.role === "user") {
-      const content = textParts(message.content).filter((part) => part.text.trim().length > 0);
+      const content = promptParts(message.content);
       if (content.length === 0) continue;
       out.push({ id: message.id, role: "user", content, ...(message.nudgeDeliveryId ? { nudgeDeliveryId: message.nudgeDeliveryId } : {}), ...stamp(message) });
       continue;

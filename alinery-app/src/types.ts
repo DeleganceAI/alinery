@@ -701,7 +701,7 @@ export type ChatPart =
   | { type: "text"; text: string; streaming?: boolean }
   | { type: "toolCall"; id?: string; name?: string; args?: unknown; streaming?: boolean }
   | { type: "toolResult"; body?: string }
-  | { type: "image"; mimeType: string; data?: string };
+  | { type: "image"; mimeType: string; data?: string; name?: string };
 
 export type ChatMessage = {
   role: "user" | "assistant" | "toolResult";

@@ -38,6 +38,8 @@ function part(p: TranscriptPart): NonNullable<Item["content"]>[number] {
           value: { id: p.id, name: p.name, ...(p.arguments === undefined ? {} : { arguments: fromJson(ValueSchema, p.arguments as JsonValue) }) },
         },
       };
+    case "image":
+      return { kind: { case: "image", value: { mimeType: p.mimeType, name: p.name ?? "" } } };
   }
 }
 
@@ -66,8 +68,12 @@ export function toResponse(frame: TranscriptFrame): MessageInitShape<typeof Watc
   };
 }
 
-/** An image part of a user message, as Pi takes it. */
-export type PromptImage = { type: "image"; data: string; mimeType: string };
+/**
+ * An image part of a user message, as Pi takes it. `name` is the copy in the session's attachment directory,
+ * which the pane reads the image back from: Pi keeps the part as it was submitted, so the name rides along
+ * and `formatTranscript` reports it instead of the megabytes.
+ */
+export type PromptImage = { type: "image"; data: string; mimeType: string; name?: string };
 
 const PROMPT_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 // The composer's own limits (MAX_CHAT_IMAGES, MAX_CHAT_IMAGE_BYTES); an image past them never left a composer.
@@ -80,7 +86,7 @@ export function promptImages(images: readonly DraftImage[]): PromptImage[] {
   return images.map((image) => {
     if (!PROMPT_IMAGE_TYPES.has(image.mimeType)) throw new DomainError("invalid_argument", `${image.name || "image"}: not a png, jpeg, gif or webp image`);
     if (image.bytes.length === 0 || image.bytes.length > MAX_PROMPT_IMAGE_BYTES) throw new DomainError("invalid_argument", `${image.name || "image"}: empty or larger than 5 MB`);
-    return { type: "image", data: Buffer.from(image.bytes).toString("base64"), mimeType: image.mimeType };
+    return { type: "image", data: Buffer.from(image.bytes).toString("base64"), mimeType: image.mimeType, ...(image.name ? { name: image.name } : {}) };
   });
 }
 

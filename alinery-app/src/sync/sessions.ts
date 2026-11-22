@@ -161,7 +161,7 @@ export const controlsOf = (c: SessionControlsMessage | undefined): SessionContro
 /** A message to the harness of a live session. */
 /** A prompt's images as the wire carries them: bytes, not the base64 the composer holds. */
 export const promptImages = (images: ImageContent[] = []) =>
-  images.map((image) => ({ name: "", mimeType: image.mimeType, bytes: Uint8Array.from(atob(image.data), (c) => c.charCodeAt(0)) }));
+  images.map((image) => ({ name: image.name ?? "", mimeType: image.mimeType, bytes: Uint8Array.from(atob(image.data), (c) => c.charCodeAt(0)) }));
 
 /** `images` go to the model with the text, in the same user message. */
 export async function promptSession(repo: string, id: string, text: string, images?: ImageContent[]): Promise<void> {

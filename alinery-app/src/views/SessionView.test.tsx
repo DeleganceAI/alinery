@@ -129,6 +129,16 @@ vi.mock("../sync/git", async (actual) => ({
 }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => ({ ...(await import("../test/executionFeed")).executionHooks(await actual()), nudgeExecution }));
+// A task session's attachment copies are the same shell command a chat thread's are.
+vi.mock("../sync/tasks", async (actual) => ({
+  ...(await actual<typeof import("../sync/tasks")>()),
+  copyTaskAttachments: copyChatAttachments,
+}));
+// A task session's image reads are the daemon's BlobService.
+vi.mock("../sync/chat", async (actual) => ({
+  ...(await actual<typeof import("../sync/chat")>()),
+  readChatImage,
+}));
 // The session writes and reads are the daemon's SessionService, not ipc.
 vi.mock("../sync/sessions", async (actual) => ({
   ...(await actual<typeof import("../sync/sessions")>()),
@@ -1406,6 +1416,23 @@ describe("Vinculum session chat", () => {
     renderSession({ intent: "attach", messageDraft: { body: "hello", pendingActions: [], attachments: [] }, onMessageDraftChange });
     fireEvent.click(await screen.findByRole("button", { name: "Send" }));
     await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("/repo", "session", "hello", undefined));
+  });
+
+  it("keeps the sent images in the prompt row, under the name the copy went to", async () => {
+    copyChatAttachments.mockResolvedValueOnce({ copied: ["shot.png"], failures: [] });
+    const messageDraft = {
+      body: "see this",
+      pendingActions: [],
+      attachments: [{ id: "img-1", kind: "image" as const, name: "shot.png", mimeType: "image/png", bytes: 12, sourcePath: "/tmp/shot.png" }],
+    } as SessionMessageDraft;
+    renderSession({ intent: "attach", messageDraft, onMessageDraftChange: vi.fn() });
+    fireEvent.click(await screen.findByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sessionPrompt).toHaveBeenCalled());
+    // The row shows the image the model was given, read back from the session's attachment directory by
+    // the name the copy went under — which is what the send wrote to disk and what the model received.
+    const tile = await screen.findByRole("button", { name: "Open shot.png" });
+    await waitFor(() => expect(tile.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,aa"));
+    expect(readChatImage).toHaveBeenCalledWith("/repo", "task", "shot.png");
   });
 
   it("stops a session stuck waiting for completion permission", async () => {

@@ -19,6 +19,7 @@ import {
   archiveChatThread,
   createChatThread,
   enableCanvas,
+  readChatThreadImage,
   removeChatWorktree,
   resumeChatThread,
   setChatModel,
@@ -212,6 +213,14 @@ function ChatViewBody({
   });
   const { transcript, observation, connection, activity } = chat;
   const error = chat.error;
+  // A prompt's images are the thread's own copies: read back by name, so they survive a reload of the pane.
+  // The scope names the thread, so a cached read from one thread is never served to another.
+  const threadRepo = selected?.repo_path ?? "";
+  const threadId = selected?.session.id ?? "";
+  const readThreadImages = useMemo(
+    () => ({ scope: `thread:${threadRepo}/${threadId}`, read: (name: string) => readChatThreadImage(threadRepo, threadId, name) }),
+    [threadRepo, threadId],
+  );
   const setError = chat.setError;
   const body = chat.draft;
   const sending = chat.sending;
@@ -611,7 +620,14 @@ function ChatViewBody({
             />
           </div>
         ) : selected ? (
-          <ChatPane entries={transcript.entries} status={activity.status} visibility={visibility} atStart={transcript.fileStart === 0} turnRetry={chat.turnRetry} />
+          <ChatPane
+            entries={transcript.entries}
+            status={activity.status}
+            visibility={visibility}
+            atStart={transcript.fileStart === 0}
+            turnRetry={chat.turnRetry}
+            readImage={readThreadImages}
+          />
         ) : (
           <div className="chat-blank">
             <MessageSquare size={28} aria-hidden="true" />
