@@ -1782,6 +1782,46 @@ main {
   width: min(880px, 100%);
   gap: 16px;
 }
+.create-continuation-label {
+  overflow-wrap: anywhere;
+}
+.create-continuation-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.create-continuation-choices button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--control-h);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.create-continuation-choices button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.create-continuation-choices button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.create-continuation-choices button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.create-continuation-check {
+  width: 1em;
+}
+.create-continuation-complete {
+  color: var(--text-muted);
+}
 .create-repository-source {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
@@ -2195,9 +2235,9 @@ main {
   font-size: calc(12px * var(--ui-scale));
   font-weight: 500;
 }
-/* Step models are a right-hand column: one title over the fields, checkbox copy
-   stays on the left. Source text hangs off the field as a subscript badge. */
+/* Keep each step's continuation and model together; wrap within the form panel. */
 .step-model-list {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2205,27 +2245,52 @@ main {
 .step-model-head,
 .step-model-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(10rem, 16rem) 7.5rem;
-  column-gap: 8px;
+  grid-template-columns: minmax(5rem, 1fr) minmax(0, 2fr) minmax(9rem, 1.5fr);
+  gap: 8px 12px;
   align-items: center;
 }
-.step-model-title {
-  grid-column: 2;
-  justify-self: end;
+.step-model-head {
   color: var(--text-faint);
   font-size: calc(10px * var(--ui-scale));
   font-weight: 600;
-  line-height: 1;
+  padding-bottom: 6px;
 }
-.step-model-row .opt {
+.step-model-row {
+  padding: 6px 0;
+}
+.step-model-control {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   min-width: 0;
-  gap: 8px;
-  padding: 2px 0;
 }
-.step-model-row .opt-copy {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.step-continuation-control::before,
+.step-model-control::before {
+  display: none;
+  content: attr(data-label);
+  color: var(--text-faint);
+  font-size: calc(10px * var(--ui-scale));
+}
+@container (max-width: 580px) {
+  .step-model-head {
+    display: none;
+  }
+  .step-model-row {
+    grid-template-columns: minmax(0, 1fr) minmax(9rem, 1fr);
+  }
+  .create-continuation-label {
+    grid-column: 1 / -1;
+  }
+  .step-continuation-control::before,
+  .step-model-control::before {
+    display: block;
+    margin-bottom: 4px;
+  }
+}
+@container (max-width: 340px) {
+  .step-model-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .step-model-row .model-select {
   min-width: 0;
@@ -6505,8 +6570,45 @@ header:has(~ main .task-info-panel) nav.tabs {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
 }
-.chat-composer-footer.has-center > .chat-composer-context {
+.chat-composer-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: end;
+  gap: 6px;
   justify-self: end;
+}
+.step-continuation-mode {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.step-continuation-mode > .btn {
+  width: var(--control-h);
+  padding-inline: 0;
+}
+/* Let whole controls wrap when a split session pane is too narrow for the centered model picker. */
+@container (max-width: 56rem) {
+  .chat-composer-footer.has-center {
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .chat-composer-footer.has-center .chat-composer-start {
+    flex: 1 0 max-content;
+  }
+  .chat-composer-center,
+  .chat-composer-center .chat-model-bar,
+  .chat-composer-center .btn-group {
+    max-width: 100%;
+  }
+  .chat-composer-center .chat-model-btn {
+    min-width: 0;
+    flex-shrink: 1;
+  }
+  .chat-composer-footer.has-center .chat-composer-end {
+    margin-inline-start: auto;
+  }
 }
 .chat-session-controls {
   display: flex;
@@ -6654,6 +6756,13 @@ header:has(~ main .task-info-panel) nav.tabs {
 .chat-composer-icon {
   width: 14px;
   height: 14px;
+}
+.chat-composer-row .reviewed-completion {
+  max-width: min(42%, 22rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
 }
 .chat-composer-send,
 .chat-composer-abort {

@@ -431,7 +431,13 @@ export function QuickChat({
                 <p>This thread is open in the terminal.</p>
               </div>
             ) : (
-              <ChatPane entries={chat.transcript.entries} status={chat.activity.status} visibility={paneVisibility} atStart={chat.transcript.fileStart === 0} />
+              <ChatPane
+                entries={chat.transcript.entries}
+                status={chat.activity.status}
+                visibility={paneVisibility}
+                atStart={chat.transcript.fileStart === 0}
+                turnRetry={chat.turnRetry}
+              />
             )}
             {chat.disconnected !== null ? (
               <div className="chat-banner" role="alert">

@@ -26,6 +26,7 @@ import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, JoinRequestsBanner, RepoBusyBanner, restartRemoteDaemon } from "./DaemonConflictBanner";
+import { useSessionFollow } from "./FollowNextSession";
 import { DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
@@ -179,6 +180,7 @@ function drawerAfterClose(handle: DrawerHandle, id: string): DrawerHandle | null
 }
 export default function App() {
   const [view, setView] = useState<View>({ kind: "list" });
+  const sessionFollow = useSessionFollow();
   const [navInstant, setNavInstant] = useState(true);
   const playbooksReturnView = useRef<View | null>(null);
   const [playbooksVisited, setPlaybooksVisited] = useState(false);
@@ -698,11 +700,9 @@ export default function App() {
       if (repoPath !== appConfig.active_repo) {
         setAppConfig(await switchActiveRepo(repoPath));
       }
-      try {
-        await markSessionNotificationRead(repoPath, taskSlug, session.id);
-      } catch (error) {
-        setRepoErr(String(error));
-      }
+      const acknowledged = markSessionNotificationRead(repoPath, taskSlug, session.id).catch((error) => setRepoErr(String(error)));
+      // A handoff inside the open session must not redirect a later manual selection when its acknowledgment returns.
+      if (view.kind !== "session") await acknowledged;
       setView({
         kind: "session",
         id: session.id,
@@ -1015,11 +1015,18 @@ export default function App() {
     repoPath: string,
     s: Pick<Extract<View, { kind: "session" }>, "id" | "cwd" | "taskSlug" | "phase" | "harness" | "model" | "playbook" | "intent" | "resumeToken">,
     from: View,
-    nav: { onBack: () => void; embedded?: boolean; onOpenPath?: (target: string, keep?: boolean) => void },
+    nav: {
+      onBack: () => void;
+      embedded?: boolean;
+      active?: boolean;
+      onOpenPath?: (target: string, keep?: boolean) => void;
+      onOpenSession?: (session: SessionMeta, intent?: "history" | "attach") => void;
+    },
   ) => {
     const draftKey = sessionMessageDraftKey(repoPath, s.taskSlug, s.id);
     return (
       <SessionView
+        key={JSON.stringify([repoPath, s.taskSlug, s.id])}
         id={s.id}
         cwd={s.cwd}
         taskSlug={s.taskSlug}
@@ -1046,6 +1053,11 @@ export default function App() {
         onNameCommitted={onNameCommitted}
         onBack={nav.onBack}
         embedded={nav.embedded}
+        active={nav.active}
+        follow={sessionFollow}
+        onOpenSession={
+          nav.onOpenSession ?? ((session, intent) => void openTaskSession({ repoPath, taskSlug: s.taskSlug, session, intent, from: from.kind === "session" ? from.from : from }))
+        }
         onOpenPath={nav.onOpenPath}
         onStartFresh={() => {
           setView({ kind: "createSession", from, initialTask: { repo_path: repoPath, slug: s.taskSlug } });
@@ -1682,9 +1694,15 @@ export default function App() {
                   onSessionSortChange={onTaskSessionSortChange}
                   onNameCommitted={onNameCommitted}
                   onBack={goBack}
-                  renderSession={(target, { onClose, onOpenPath }) => (
+                  renderSession={(target, { onClose, onOpenPath, active, onOpenSession }) => (
                     <Suspense fallback={<LoadingState label="Opening session…" />}>
-                      {sessionViewFor(view.repoPath || appConfig.active_repo, target, view, { onBack: onClose, embedded: true, onOpenPath })}
+                      {sessionViewFor(view.repoPath || appConfig.active_repo, target, view, {
+                        onBack: onClose,
+                        embedded: true,
+                        active,
+                        onOpenPath: target.taskSlug === view.slug ? onOpenPath : undefined,
+                        onOpenSession,
+                      })}
                     </Suspense>
                   )}
                   onNewSession={() =>

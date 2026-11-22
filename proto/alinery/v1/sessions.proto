@@ -26,6 +26,7 @@ service SessionService {
   rpc ArtifactReady(ArtifactReadyRequest) returns (ArtifactReadyResponse);                // VIEW
   // The turn controls of a live harness session (they replaced the JSON-lines prompt, abort, set_model and set_thinking_level ops).
   rpc PromptSession(PromptSessionRequest) returns (PromptSessionResponse);                // ACT
+  rpc RetryTurn(RetryTurnRequest) returns (RetryTurnResponse);                           // ACT
   rpc AbortSession(AbortSessionRequest) returns (AbortSessionResponse);                   // ACT
   rpc SetSessionModel(SetSessionModelRequest) returns (SetSessionModelResponse);          // ACT
   rpc SetSessionThinkingLevel(SetSessionThinkingLevelRequest) returns (SetSessionThinkingLevelResponse);  // ACT
@@ -41,6 +42,13 @@ message PromptSessionRequest {
   repeated DraftImage images = 4;
 }
 message PromptSessionResponse {}
+// Resume the failed turn once in this conversation. An id for an older failure cannot start new work.
+message RetryTurnRequest {
+  MutationMeta meta = 1;
+  string session_id = 2;
+  string failed_entry_id = 3;
+}
+message RetryTurnResponse {}
 message AbortSessionRequest { string session_id = 1; }
 message AbortSessionResponse {}
 message SetSessionModelRequest {
@@ -223,6 +231,8 @@ message TranscriptItem {
   bool is_error = 7;
   repeated string running_tool_ids = 8;
   int64 at = 9;  // ms since the epoch when the message was complete (a reply's start plus its duration); 0 when unknown
+  string turn_error = 10;  // Final provider failure on this assistant entry after automatic retries have stopped.
+  string nudge_delivery_id = 11;  // The original click's mutation_id when this prompt is a placed wrap-up nudge.
 }
 
 message TranscriptPart {

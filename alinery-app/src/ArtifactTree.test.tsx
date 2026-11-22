@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { ArtifactTree, isDirectOwnedArtifactNode, treeArtifactImages } from "./ArtifactTree";
+import { ArtifactTree, artifactTabPath, isDirectOwnedArtifactNode, treeArtifactImages } from "./ArtifactTree";
 import type { ArtifactTreeNode } from "./types";
 
 const ipcMocks = vi.hoisted(() => ({
@@ -74,6 +74,17 @@ describe("ArtifactTree", () => {
     expect(isDirectOwnedArtifactNode(nodes[2])).toBe(true);
     expect(isDirectOwnedArtifactNode(nodes[0].children[0])).toBe(false);
     expect(isDirectOwnedArtifactNode(nodes[1].children[0])).toBe(false);
+  });
+
+  it("opens the exact nested artifact when several tree rows have the same leaf label", () => {
+    const rounds = ["round-1", "round-2"].map((round) => ({
+      ...nodes[2],
+      id: round,
+      kind: "subtask_folder" as const,
+      label: round,
+      children: [{ ...nodes[2], id: `roll-${round}`, label: "roll.md" }],
+    }));
+    expect(artifactTabPath(rounds, rounds[1].children[0], "roll.md")).toBe("round-2/roll.md");
   });
 
   it("derives a tree artifact's image path and attachment ids from its namespace root", () => {

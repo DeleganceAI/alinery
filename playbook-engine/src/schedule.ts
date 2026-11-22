@@ -92,8 +92,23 @@ interface Cand {
 
 type Pick = { kind: 'one'; cand: Cand } | { kind: 'none' } | { kind: 'many'; cands: Cand[] };
 
-export function schedule(pb: Playbook, state: State, cache = new SchedulerCache()): Schedule {
+/**
+ * During a dry run, distinguish a real endpoint from a publication waiting for another contributor.
+ * Only holds involving the proposed occurrences affect the assessment.
+ */
+export interface RoutingTrace {
+  contributed: Set<string>;
+  waiting: boolean;
+  ambiguous: boolean;
+}
+
+export function schedule(pb: Playbook, state: State, cache = new SchedulerCache(), trace?: RoutingTrace): Schedule {
   const out: Schedule = { reservations: [], ambiguities: [], blocked: [] };
+  const held = (ids: string[], ambiguous = false) => {
+    if (!trace || !ids.some((id) => trace.contributed.has(id))) return;
+    trace.waiting = true;
+    if (ambiguous) trace.ambiguous = true;
+  };
   const occs = available(state);
   const byId = new Map(occurrences(state).map((o) => [o.id, o]));
   const exec = (id: string | null) => (id === null ? undefined : state.executions.get(id));
@@ -218,7 +233,12 @@ export function schedule(pb: Playbook, state: State, cache = new SchedulerCache(
     const triggerSlots = collection ? [collection] : step.inputs;
     for (const slot of triggerSlots) {
       const others = step.inputs.filter((i) => i !== slot);
-      for (const trigger of candidatesFor(step, slot)) {
+      const triggers = candidatesFor(step, slot);
+      // A new companion may arrive before the collection that would trigger its step.
+      if (trace && collection && !triggers.length) {
+        for (const companion of others) for (const candidate of candidatesFor(step, companion)) held(candidate.ids);
+      }
+      for (const trigger of triggers) {
         if (isBoundTrigger(step, slot, trigger.key)) continue; // final: see "Cost" above
         if (others.some((k) => candidatesFor(step, k).some((c) => isDownstream(c, trigger)))) continue; // not the most downstream element
 
@@ -234,12 +254,14 @@ export function schedule(pb: Playbook, state: State, cache = new SchedulerCache(
             }
           }
           if (p.kind !== 'one') {
+            if (trace) held([...Object.values(inputs).flat(), ...(p.kind === 'many' ? p.cands.flatMap((c) => c.ids) : [])], p.kind === 'many');
             complete = false;
             break;
           }
           if (!isUpstreamOrSibling(p.cand, trigger)) {
             const back = pick(step, slot, p.cand);
             if (back.kind !== 'one' || back.cand.key !== trigger.key) {
+              if (trace) held([...Object.values(inputs).flat(), ...p.cand.ids], true);
               complete = false;
               break;
             }
@@ -295,6 +317,7 @@ export function schedule(pb: Playbook, state: State, cache = new SchedulerCache(
         const workers = [...state.executions.values()].filter((e) => e.origin === origin && producingSteps.some((s) => s.key === e.step));
         const pending = workers.filter((w) => !isDone(w));
         if (pending.length) {
+          if (trace) held(cand.ids);
           out.blocked.push({ step: step.key, selector: slot.path, reason: `waiting for ${pending.map((w) => `${w.step} ${w.id} (${w.status})`).join(', ')}` });
           continue;
         }
@@ -305,6 +328,7 @@ export function schedule(pb: Playbook, state: State, cache = new SchedulerCache(
         const sources = rootReceipt.filter((m) => feeders.some((s) => matches(collectionInput(s)!.path, m.role)));
         const uncovered = sources.filter((src) => !workers.some((w) => readWithin(w.id, origin).has(src.id)));
         if (uncovered.length) {
+          if (trace) held(cand.ids);
           out.blocked.push({ step: step.key, selector: slot.path, reason: `no ${producingSteps.map((s) => s.key).join('/')} execution represents ${uncovered.map((s) => s.role).join(', ')}` });
           continue;
         }

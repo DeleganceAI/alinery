@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
@@ -9,6 +9,7 @@ import { BlobService } from "alinery-proto/alinery/v1/blobs_pb";
 import { DraftService, TaskService } from "alinery-proto/alinery/v1/tasks_pb";
 import { BlobStore } from "../domain/blobs.ts";
 import { JobRunner } from "../jobs/runner.ts";
+import * as storage from "../platform/fs.ts";
 import type { TelemetryEvent } from "../platform/telemetry.ts";
 import { Feed } from "../sync/feed.ts";
 import { taskKey } from "../sync/parsers/task.ts";
@@ -207,6 +208,35 @@ test("SetAutoApproveAll writes task.md and execution.json together and needs APP
   const res = await c.tasks.setAutoApproveAll({ meta: meta(), slug, enabled: true });
   expect(res.task?.autoApproveAll).toBe(true);
   expect(JSON.parse(readFileSync(join(c.alinery, "tasks", slug, "execution.json"), "utf8")).auto_approve_all).toBe(true);
+});
+
+test.each([[true, false], [false, false], [true, true], [false, true]])("SetAutoApproveAll(%s) keeps both files consistent on a write error (rename completed: %s)", async (enabled, renamed) => {
+  const c = await start();
+  const slug = (await c.tasks.createTask(createRequest("Auto"))).created!.task!.slug;
+  const set = (value: boolean) => c.tasks.setAutoApproveAll({ meta: meta(), slug, enabled: value });
+  await set(!enabled);
+  const dir = join(c.alinery, "tasks", slug);
+  const execution = join(dir, "execution.json");
+  const readState = () => JSON.parse(readFileSync(execution, "utf8"));
+  const initialRevision = readState().revision;
+  const write = storage.writeDurable;
+  const fault = spyOn(storage, "writeDurable").mockImplementation(async (path, data, mode) => {
+    if (path !== execution) return write(path, data, mode);
+    if (renamed) await write(path, data, mode);
+    // execution.json is a regular file, so creating a temp file underneath it fails.
+    return write(join(path, "unwritable"), data, mode);
+  });
+  try {
+    const failure = await set(enabled).then(() => null, (error) => ConnectError.from(error));
+    expect(failure).toBeInstanceOf(ConnectError);
+  } finally {
+    fault.mockRestore();
+  }
+  const saved = renamed ? enabled : !enabled;
+  expect(readState().auto_approve_all).toBe(saved);
+  expect(readFileSync(join(dir, "task.md"), "utf8")).toContain(`auto_approve_all = ${saved}`);
+  expect((await set(enabled)).task?.autoApproveAll).toBe(enabled);
+  expect(readState()).toMatchObject({ auto_approve_all: enabled, revision: initialRevision + 1 });
 });
 
 test("DuplicateTask keeps the ticket, attachments and playbook, and counts its generation", async () => {

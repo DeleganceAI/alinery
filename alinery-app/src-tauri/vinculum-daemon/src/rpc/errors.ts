@@ -15,6 +15,7 @@ export function metaOf(meta: MutationMeta | undefined) {
 }
 
 const CODES: Record<string, Code> = {
+  aborted: Code.Aborted,
   invalid_argument: Code.InvalidArgument,
   not_found: Code.NotFound,
   permission_denied: Code.PermissionDenied,

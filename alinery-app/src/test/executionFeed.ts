@@ -1,7 +1,7 @@
 // The execution feed of src/sync/execution.ts, for view tests whose subject is the view, not the stream. The
 // replies come from the `getTaskExecution` stub the test gave `mockIpc` (which hands it over), so a test states the execution the way
 // it always has. `fakeExecution.refresh()` stands for a delta arriving: every mounted `useTaskExecution` reads
-// the stub again. An approval calls `fakeExecution.allow` and then refreshes, as the real one resolves once the
+// the stub again. An approval calls `fakeExecution.continueReviewed` and then refreshes, as the real one resolves once the
 // replica has the change. The stream itself is tested in sync/execution.test.tsx.
 //
 //     vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
@@ -17,14 +17,16 @@ const listeners = new Set<() => void>();
 export const fakeExecution = {
   /** Set by `mockIpc`: the test's `getTaskExecution`. */
   source: undefined as Stub | undefined,
-  /** The approval a view made: (repo, slug, executionId, expectedRevision). */
-  allow: vi.fn(async (_repo: string, _slug: string, _executionId: string, _revision?: bigint): Promise<void> => {}),
+  /** The approval a view made: (repo, slug, executionId, sessionId, workRevision). */
+  continueReviewed: vi.fn(async (_repo: string, _slug: string, _executionId: string, _sessionId: string, _workRevision: number): Promise<void> => {}),
+  setStepContinuation: vi.fn(async (_repo: string, _slug: string, _stepKey: string, _automatic: boolean, _revision: bigint): Promise<void> => {}),
   /** A delta arrived: every mounted feed reads again. */
   refresh() {
     for (const l of [...listeners]) l();
   },
   reset() {
-    fakeExecution.allow.mockReset().mockResolvedValue(undefined);
+    fakeExecution.setStepContinuation.mockReset().mockResolvedValue(undefined);
+    fakeExecution.continueReviewed.mockReset().mockResolvedValue(undefined);
   },
 };
 
@@ -66,8 +68,12 @@ export function executionHooks(actual: typeof Execution): typeof Execution {
       }, [repo, slug]);
       return value;
     },
-    async allowExecutionCompletion(repo, slug, executionId, revision) {
-      await fakeExecution.allow(repo, slug, executionId, revision);
+    async setStepContinuation(repo, slug, step, automatic, revision) {
+      await fakeExecution.setStepContinuation(repo, slug, step, automatic, revision);
+      fakeExecution.refresh();
+    },
+    async continueReviewed(repo, slug, executionId, sessionId, revision) {
+      await fakeExecution.continueReviewed(repo, slug, executionId, sessionId, revision);
       fakeExecution.refresh();
     },
   };

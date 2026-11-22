@@ -145,7 +145,7 @@ describe("an unreadable saved execution state", () => {
 describe("saved execution state without live access", () => {
   it("keeps sessions, retained history and artifacts available for a foreign owner", async () => {
     const fixture = task();
-    const retained = executionReply([executionRecord({ owner_session_id: "s1" })]);
+    const retained = executionReply([executionRecord({ owner_session_id: "s1", ready: { revision: 1, endpoint: true, destinations: [], roles: ["draft.md"] } })]);
     retained.live = { status: "foreign_owner", detail: "Owner configuration differs from this app" };
     fakeBoard.set({ anyRepoTasks: [fixture] as never });
     mocks.getTaskExecution.mockResolvedValue(retained);
@@ -159,7 +159,7 @@ describe("saved execution state without live access", () => {
     expect((screen.getByText(retained.live.detail).closest("details") as HTMLDetailsElement).open).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByRole("article", { name: "Execution execution-a" })).toBeDefined();
-    expect((screen.getByRole("button", { name: "Allow this session to complete · s1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Finish step" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Files", pressed: false }));
     expect(await screen.findByText("00-ticket.md")).toBeDefined();
     expect(screen.queryByRole("alert")).toBeNull();

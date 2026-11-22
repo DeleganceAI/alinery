@@ -264,11 +264,15 @@ const taskScope = (slug: string) => create(ScopeSchema, { kind: { case: "task", 
 
 /** A task's session rows as `list_sessions` answered, oldest first; null before the stream's first snapshot. */
 export function useTaskSessions(repo: string | undefined, slug: string): SessionDisplayMeta[] | null {
-  const [state, setState] = useState<{ replica: Replica } | null>(null);
+  return useTaskSessionRows(repo, slug).sessions;
+}
+
+function useTaskSessionRows(repo: string | undefined, slug: string) {
+  const [state, setState] = useState<{ repo: string; slug: string; replica: Replica } | null>(null);
   useEffect(() => {
     if (!repo || !slug) return setState(null);
     const mine = acquireScope(repo, taskScope(slug));
-    setState({ replica: mine.replica });
+    setState({ repo, slug, replica: mine.replica });
     return () => {
       mine.release();
       setState(null);
@@ -276,21 +280,26 @@ export function useTaskSessions(repo: string | undefined, slug: string): Session
   }, [repo, slug]);
   const replicas = useMemo(() => (state ? [state.replica] : []), [state]);
   const version = useChanges(replicas);
+  const replica = state?.repo === repo && state?.slug === slug ? state.replica : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: version stands for the replica's contents
-  return useMemo(() => (state?.replica.ready ? sessionsOf(state.replica, slug) : null), [state, version, slug]);
+  const sessions = useMemo(() => (replica?.ready ? sessionsOf(replica, slug) : null), [replica, version, slug]);
+  return { sessions, sessionsCurrent: Boolean(replica?.ready && !replica.stale) };
 }
 
 /** One session as `get_session_display` answered: the row plus its task's and subtask's names; null until both streams have a snapshot, undefined-free. */
-export function useSessionDisplay(
-  repo: string | undefined,
-  taskSlug: string,
-  id: string,
-): { session: SessionDisplayMeta | null; taskName: string; subtaskName: string | null; loaded: boolean } {
-  const sessions = useTaskSessions(repo, taskSlug);
+export function useSessionDisplay(repo: string | undefined, taskSlug: string, id: string) {
+  const { sessions, sessionsCurrent } = useTaskSessionRows(repo, taskSlug);
   const task = useBoardTask(repo, taskSlug);
   const session = sessions?.find((s) => s.id === id) ?? null;
   const subtask = useBoardTask(repo, session?.subtask_slug ?? "");
-  return { session, taskName: task?.name ?? "", subtaskName: session?.subtask_slug ? (subtask?.name ?? null) : null, loaded: sessions !== null && task !== undefined };
+  return {
+    session,
+    sessions,
+    sessionsCurrent,
+    taskName: task?.name ?? "",
+    subtaskName: session?.subtask_slug ? (subtask?.name ?? null) : null,
+    loaded: sessions !== null && task !== undefined,
+  };
 }
 
 /**

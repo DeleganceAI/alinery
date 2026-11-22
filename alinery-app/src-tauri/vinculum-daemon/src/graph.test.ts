@@ -1,10 +1,10 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { stateHasStart } from "./domain/executionStore.ts";
 import type { SessionHooks } from "./graph.ts";
-import { completeSession, engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, taskShouldHold, tickGraphs } from "./graph.ts";
+import { completeSession, continueReviewed, engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, nudgeExecution, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, submitSessionWork, taskShouldHold, tickGraphs } from "./graph.ts";
 
 describe("execution model", () => {
   test("uses the task default when the playbook leaves the model blank", () => {
@@ -53,8 +53,11 @@ describe("task record", () => {
 
   test("a failed row is failed, and waiting is not", () => {
     expect(sessionHarnessStatus(undefined)).toEqual({ kind: "unknown" });
-    expect(sessionHarnessStatus({ process: "alive", playbook: { state: "failed" }, agent: { state: "idle" }, liveRun: false })).toEqual({ kind: "failed", reason: "session failed" });
-    expect(sessionHarnessStatus({ process: "alive", playbook: { state: "in_progress" }, agent: { state: "waiting_for_approval" }, liveRun: false })).toEqual({ kind: "idle" });
+    expect(sessionHarnessStatus({ process: "alive", playbook: { state: "failed" }, agent: { state: "idle" }, liveRun: false })).toEqual({ kind: "unknown" });
+    expect(sessionHarnessStatus({ process: "exited", playbook: { state: "failed" }, agent: { state: "idle" }, liveRun: false })).toEqual({ kind: "failed", reason: "session failed" });
+    for (const state of ["waiting_for_approval", "waiting_for_input", "errored"]) {
+      expect(sessionHarnessStatus({ process: "alive", playbook: { state: "in_progress" }, agent: { state }, liveRun: false })).toEqual({ kind: "waiting" });
+    }
     expect(sessionHarnessStatus({ process: "alive", playbook: { state: "in_progress" }, agent: { state: "idle" }, liveRun: false })).toEqual({ kind: "idle" });
   });
 });
@@ -70,7 +73,7 @@ function taskFixture(repo: string, slug: string, options: { start?: boolean; cap
   const prompt = options.prompt ?? "Do the step.\n";
   const sections = (options.keys ?? ["work"]).map((key) => `<!-- alinery:step ${key} -->\n${prompt}`).join("\n");
   writeFileSync(join(dir, "playbook.md"), `+++\nversion = 2\nkey = "fixture"\ntitle = "Fixture"\ndescription = ""\ndefault_model = ""\ndefault_harness = "vinculum"\n\n${steps}\n+++\n${sections}\n`);
-  writeFileSync(join(dir, "task.md"), `name = "Fixture"\nworktree = ${JSON.stringify(repo)}\nhas_worktree = true\n\n[launch_defaults]\nmodel = ${JSON.stringify(options.model ?? "")}\n`);
+  writeFileSync(join(dir, "task.md"), `name = "Fixture"\nslug = "${slug}"\nbranch = "fixture"\ncreated = 1\nengine_version = 2\nworktree = ${JSON.stringify(repo)}\nhas_worktree = true\n\n[launch_defaults]\nharness = "vinculum"\nmodel = ${JSON.stringify(options.model ?? "")}\n`);
   writeFileSync(
     join(dir, "execution.json"),
     JSON.stringify({
@@ -100,6 +103,124 @@ function recordingHooks(): SessionHooks & { opened: Array<{ id: string; model: s
 }
 
 describe("playbook host", () => {
+  test("the next discovery opens a repaired task playbook", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-playbook-repair-"));
+    const hooks = recordingHooks();
+    resetGraphs();
+    prepareGraphs(repo, hooks);
+    taskFixture(repo, "repair", {});
+    const path = join(repo, ".alinery", "tasks", "repair", "playbook.md");
+    const original = readFileSync(path, "utf8");
+    writeFileSync(path, "invalid playbook");
+    await tickGraphs();
+    expect(hooks.opened).toHaveLength(0);
+    writeFileSync(path, original);
+    await tickGraphs();
+    expect(hooks.opened).toHaveLength(1);
+  });
+
+  test("invalid publications leave the work with the agent and real waits still block review", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-invalid-outputs-"));
+    const hooks = recordingHooks();
+    resetGraphs();
+    prepareGraphs(repo, hooks);
+    taskFixture(repo, "work", {});
+    await tickGraphs();
+    const session = hooks.opened[0].id;
+    const invalid = await completeSession(session);
+    expect(invalid?.outcome).toBe("invalid_outputs");
+    expect(invalid?.diagnostics).not.toEqual([]);
+    expect(invalid?.correlation_id).toBeUndefined();
+    const execution = engineExecutions("work")[0];
+    writeFileSync(join(execution.outDir, "out.md"), "corrected");
+    hooks.reviewBlocker = async () => "A tool approval is pending.";
+    expect(await completeSession(session)).toMatchObject({ outcome: "pending_work", reason: "A tool approval is pending." });
+    hooks.reviewBlocker = async () => undefined;
+    expect(await completeSession(session)).toMatchObject({ outcome: "ready_for_review" });
+  });
+
+  test("an idle reminder reaches the unreviewed session and rechecks the task at delivery", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-idle-reminder-"));
+    const hooks = recordingHooks();
+    resetGraphs();
+    prepareGraphs(repo, hooks);
+    taskFixture(repo, "work", {});
+    await tickGraphs();
+    const execution = engineExecutions("work")[0];
+    writeFileSync(join(execution.outDir, "out.md"), "done");
+    const messages: string[] = [];
+    const eligibility: boolean[] = [];
+    hooks.send = async (id, text, onlyIfIdle) => {
+      expect(id).toBe(execution.sessionId!);
+      if (messages.length) {
+        const path = join(repo, ".alinery", "tasks", "work", "task.md");
+        writeFileSync(path, `archived = true\n${readFileSync(path, "utf8")}`);
+      }
+      const allowed = onlyIfIdle?.() ?? false;
+      eligibility.push(allowed);
+      if (!allowed) throw new Error("task is no longer available");
+      messages.push(text);
+    };
+    let now = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      await tickGraphs();
+      now += 30_000;
+      await tickGraphs();
+      now += 30_000;
+      await tickGraphs();
+    } finally {
+      clock.mockRestore();
+    }
+    expect(messages).toHaveLength(1);
+    expect(eligibility).toEqual([true, false]);
+  });
+
+  test("a nudge requires the working owner and keeps reviewed readiness and accepted handoff intact", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-nudge-review-"));
+    const hooks = recordingHooks();
+    resetGraphs();
+    prepareGraphs(repo, hooks);
+    taskFixture(repo, "work", {});
+    await tickGraphs();
+    const execution = engineExecutions("work")[0];
+    const session = hooks.opened[0].id;
+    let sent = 0;
+    hooks.nudge = async (_id, _run, _delivery, checkOwner) => {
+      checkOwner(execution.id);
+      sent++;
+    };
+    await expect(nudgeExecution("work", execution.id, "stale-owner", "101", "click")).rejects.toThrow("owning execution");
+    expect(await nudgeExecution("work", execution.id, session, "101", "click")).toBe("click");
+    writeFileSync(join(execution.outDir, "out.md"), "ready");
+    const ready = await completeSession(session);
+    expect(ready?.outcome).toBe("ready_for_review");
+    const revision = Number(ready?.work_revision);
+    const nudge = () => nudgeExecution("work", execution.id, session, "102", "late-click");
+    await expect(nudge()).rejects.toThrow("no longer working");
+    await continueReviewed("work", execution.id, session, revision);
+    await expect(nudge()).rejects.toThrow("no longer working");
+    expect(sent).toBe(1);
+  });
+
+  test("a replayed Retry preserves a review and an accepted handoff prevents delivery", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-retry-review-"));
+    const hooks = recordingHooks();
+    resetGraphs();
+    prepareGraphs(repo, hooks);
+    taskFixture(repo, "review", { approve: true });
+    await tickGraphs();
+    const execution = engineExecutions("review")[0];
+    const sessionId = hooks.opened[0].id;
+    writeFileSync(join(execution.outDir, "out.md"), "ready");
+    const review = await completeSession(sessionId);
+    expect(review?.outcome).toBe("ready_for_review");
+    const unexpectedDelivery = async () => { throw new Error("unexpected delivery"); };
+    await submitSessionWork("review", sessionId, unexpectedDelivery, async () => false);
+    await continueReviewed("review", execution.id, sessionId, Number(review?.work_revision));
+    await expect(submitSessionWork("review", sessionId, unexpectedDelivery, async () => true)).rejects.toThrow("no longer accepts work");
+  });
+
   test("create without starting does not launch, and an old log that already started is converted once", async () => {
     const repo = mkdtempSync(join(tmpdir(), "vinculum-hold-"));
     const hooks = recordingHooks();
@@ -281,7 +402,8 @@ describe("a coding step records its worktree", () => {
       const execution = engineExecutions(slug)[0];
       writeFileSync(join(execution.outDir, "out.md"), "done");
       const reply = await completeSession(hooks.opened[0].id);
-      expect(reply?.outcome).toBe("accepted");
+      expect(reply?.outcome).toBe("ready_for_review");
+      await continueReviewed(slug, execution.id, hooks.opened[0].id, Number(reply?.work_revision));
       return engineExecutions(slug)[0];
     };
 
