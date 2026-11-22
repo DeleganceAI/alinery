@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Conversation, Harness } from "@earendil-works/pi-durable";
-import { stopOwningHarness } from "./sessionStop.ts";
+import { closeFailedOpen, stopOwningHarness } from "./sessionStop.ts";
 
 const ctx = BACKGROUND_CONTEXT;
 const owner = (abort: Conversation["abort"], close: Harness["close"]) => ({
@@ -42,4 +42,12 @@ test("a refused abort or failed close propagates without confirming shutdown", a
   await expect(stopOwningHarness(owner(async () => { throw new Error("abort failed"); }, async () => { closed = true; }), false, ctx)).rejects.toThrow("abort failed");
   expect(closed).toBe(false);
   await expect(stopOwningHarness(owner(async () => {}, async () => { throw new Error("close failed"); }), false, ctx)).rejects.toThrow("close failed");
+});
+
+test("a failed open counts as exited only when it has no harness or the harness closed", async () => {
+  expect(await closeFailedOpen(null, ctx)).toBe(true);
+  let closed = false;
+  expect(await closeFailedOpen({ close: async () => { closed = true; } }, ctx)).toBe(true);
+  expect(closed).toBe(true);
+  expect(await closeFailedOpen({ close: async () => { throw new Error("close failed"); } }, ctx)).toBe(false);
 });
