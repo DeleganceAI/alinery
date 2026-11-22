@@ -2096,6 +2096,7 @@ main {
 }
 .playbook-option-meta {
   display: flex;
+  align-items: center;
   gap: 8px;
   color: var(--text-muted);
   font-size: calc(11px * var(--ui-scale));
@@ -2137,17 +2138,45 @@ main {
   border: 5px solid var(--accent);
   background: var(--surface);
 }
+/* The expander is only an arrow, tucked under the selection circle so a closed card stays two lines tall. */
 .playbook-card-details {
-  margin: -8px 16px 12px;
+  position: relative;
+  margin: 10px 16px 0;
+}
+.playbook-card-details[open] {
+  padding-bottom: 14px;
 }
 .playbook-card-details > summary {
-  width: fit-content;
+  position: absolute;
+  top: -24px;
+  right: -4px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
   color: var(--text-muted);
-  font-size: calc(12px * var(--ui-scale));
+  list-style: none;
   cursor: pointer;
 }
+.playbook-card-details > summary::-webkit-details-marker {
+  display: none;
+}
+.playbook-card-details > summary:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.playbook-card-details > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.playbook-card-details[open] > summary svg {
+  transform: rotate(180deg);
+}
 .playbook-card-details > .playbook-option-description {
-  margin: 8px 0 0;
+  margin: 4px 0 0;
 }
 .playbook-card-overview {
   margin-top: 12px;

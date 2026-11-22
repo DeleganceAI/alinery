@@ -1,4 +1,4 @@
-import { Star } from "lucide-react";
+import { ChevronDown, Star } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { afterPaint } from "../afterPaint";
@@ -1530,7 +1530,7 @@ export function CreateTaskPage({
                         {item.steps && <PlaybookRingMark steps={item.steps} />}
                         <span className="playbook-option-content">
                           <span className="playbook-option-meta">
-                            <span>{item.source.reference.scope}</span>
+                            <span className="pill">{item.source.reference.scope}</span>
                             {starred && samePlaybookRef(item.source.reference, RECOMMENDED_PLAYBOOK) && <span>Recommended</span>}
                             {selected && <span className="playbook-option-selected">Selected</span>}
                           </span>
@@ -1556,7 +1556,9 @@ export function CreateTaskPage({
                         <Star size={16} strokeWidth={1.5} fill={starred ? "currentColor" : "none"} aria-hidden="true" />
                       </button>
                       <details className="playbook-card-details">
-                        <summary>Details</summary>
+                        <summary aria-label={`${item.title ?? item.source.reference.key} details`} title="Details">
+                          <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />
+                        </summary>
                         <p className="playbook-option-description" id={`create-playbook-description-${identity}`}>
                           {item.description}
                         </p>
