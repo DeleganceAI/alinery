@@ -104,6 +104,7 @@ export function needsProviderSetup(providers: LoginProvider[], currentModel?: st
   const slash = currentModel.indexOf("/");
   if (slash <= 0) return false;
   const providerId = currentModel.slice(0, slash);
+  if (providerId === HOSTED_PROVIDER || providerId.startsWith("alinery:")) return false;
   const row = providers.find((p) => p.id === providerId);
   return row !== undefined && row.authenticated === false;
 }
@@ -123,7 +124,7 @@ export function partitionProviders(input: { loginProviders: LoginProvider[]; mod
   const advanced = new Map<string, AdvancedProviderRow>();
 
   for (const [id, count] of modelProviders) {
-    if (id === HOSTED_PROVIDER) continue;
+    if (id === HOSTED_PROVIDER || id.startsWith("alinery:")) continue;
     if (loginIds.has(id) || configured.has(id)) continue;
     advanced.set(id, {
       id,
@@ -156,16 +157,28 @@ export function mergeGrokModels(models: ChatModelOption[], enabled: boolean): Ch
   return extra.length > 0 ? [...models, ...extra] : models;
 }
 
-/** Catalog rows first; drop Vinculum duplicates of the same `alinery/<id>`. */
-export function mergeHostedModels(models: ChatModelOption[], hosted: HostedCatalogView | null | undefined): ChatModelOption[] {
+export type HostedPot = { teamId: string; name: string };
+
+/** What a person sees. The stored value stays `alinery:<team id>/<model>` so the request still spends that pot. */
+export function formatHostedModel(model: string, pots: HostedPot[]): string {
+  const slash = model.indexOf("/");
+  if (slash <= 0 || !model.startsWith("alinery:")) return model;
+  const name = pots.find((pot) => pot.teamId === model.slice("alinery:".length, slash))?.name;
+  return name ? `alinery:${name}-${model.slice(slash + 1)}` : model;
+}
+
+/** Catalog rows first, once per pot. `alinery/<id>` is personal. `alinery:<team>/<id>` spends that team. */
+export function mergeHostedModels(models: ChatModelOption[], hosted: HostedCatalogView | null | undefined, pots: HostedPot[] = []): ChatModelOption[] {
   if (!hosted) return models;
-  const hostedRows = hosted.models.map((m) => ({ provider: HOSTED_PROVIDER, id: m.id }));
+  const personal = hosted.models.map((m) => ({ provider: HOSTED_PROVIDER, id: m.id }));
+  const teamRows = pots.flatMap((pot) => hosted.models.map((m) => ({ provider: `alinery:${pot.teamId}`, id: m.id, label: `${pot.name} · ${m.name}` })));
+  const hostedRows = [...personal, ...teamRows];
   const seen = new Set(hostedRows.map((m) => `${m.provider}/${m.id}`));
   return [...hostedRows, ...models.filter((m) => !seen.has(`${m.provider}/${m.id}`))];
 }
 
 export function hostedPrice(hosted: HostedCatalogView | null | undefined, provider: string, id: string): number | undefined {
-  if (provider !== HOSTED_PROVIDER || !hosted) return undefined;
+  if ((!provider.startsWith("alinery:") && provider !== HOSTED_PROVIDER) || !hosted) return undefined;
   const row = hosted.models.find((m) => m.id === id);
   return row?.price ?? undefined;
 }

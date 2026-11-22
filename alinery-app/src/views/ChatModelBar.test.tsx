@@ -4,7 +4,7 @@ import { mockIpc } from "../test/mockIpc";
 import { ChatModelBar, ComposerStats } from "./ChatModelBar";
 
 const mocks = vi.hoisted(() => ({ readModelFavorites: vi.fn(), providerCatalog: vi.fn() }));
-vi.mock("../ipc", () => mockIpc({ readModelFavorites: mocks.readModelFavorites }));
+vi.mock("../ipc", () => mockIpc({ readModelFavorites: mocks.readModelFavorites, accountTeams: async () => ({ pots: [], pendingInvites: [] }) }));
 // The catalog is the host daemon's ProviderService (sync/providers), not ipc.
 vi.mock("../sync/providers", () => ({ providerCatalog: mocks.providerCatalog }));
 

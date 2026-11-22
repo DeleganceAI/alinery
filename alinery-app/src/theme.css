@@ -296,11 +296,13 @@ select:focus-visible {
   color: var(--danger);
   background: var(--danger-subtle);
 }
-.terminal-drawer-spin {
+.terminal-drawer-spin,
+.pull-comments-spin {
   animation: toast-spin 1s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .terminal-drawer-spin {
+  .terminal-drawer-spin,
+  .pull-comments-spin {
     animation: none;
   }
 }
@@ -847,6 +849,85 @@ nav.tabs .tab:hover:not(.on) {
 .account-chip-list > button:disabled {
   opacity: 0.6;
   cursor: default;
+}
+.team-sales-dialog {
+  width: min(420px, 94vw);
+}
+.team-sales-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.team-sales-card h3 {
+  margin: 0 0 6px;
+  color: var(--text-strong);
+  font-size: calc(15px * var(--ui-scale));
+}
+.team-sales-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.45;
+}
+.team-sales-price {
+  color: var(--text-strong);
+  font-size: calc(28px * var(--ui-scale));
+  font-weight: 600;
+  line-height: 1;
+  text-align: right;
+  white-space: nowrap;
+}
+.team-sales-price small {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 400;
+}
+.team-page {
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-bottom: 24px;
+}
+.team-page section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.team-page h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: calc(16px * var(--ui-scale));
+  font-weight: 600;
+}
+.team-page .field {
+  margin-top: 0;
+  max-width: 280px;
+}
+.team-page .team-list {
+  flex: none;
+  max-height: 280px;
+}
+.team-list .row {
+  cursor: default;
+}
+.team-list .row[role="button"] {
+  cursor: pointer;
+}
+.team-list .rtt,
+.team-list .rts {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* Identity may grow for email + plan; action rows share one min-height so the
    gap under identity matches the gaps between Settings / Sign out / Sign in. */
@@ -1845,11 +1926,68 @@ main {
   overflow-wrap: anywhere;
 }
 .createpage-with-preview {
-  /* Keep the form and preview centered; the left gutter belongs to the scroller. */
-  padding: 0 max(32px, calc((100% - 1256px) / 2)) 0 0;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0;
   height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+.create-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  /* Keep the form and preview centered; the left gutter belongs to the scroller. */
+  padding: 0 max(32px, calc((100% - 1256px) / 2)) 0 0;
+  overflow: hidden;
+}
+/* The launch controls stay in view however long the form grows. */
+.create-footer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 32px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.create-footer-status {
+  max-width: 100%;
+  text-align: center;
+}
+.create-footer-status:empty {
+  display: none;
+}
+.create-disclosure {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.create-disclosure > h3 {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: inherit;
+  font-weight: 500;
+}
+.create-disclosure > h3 small {
+  margin-left: 8px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.create-disclosure-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 12px 12px;
+}
+.create-disclosure > .step-model-list {
+  padding: 4px 12px 12px;
+}
+.playbook-option .playbook-ring-mark {
+  align-self: center;
 }
 .create-form-panel {
   flex: 1;
@@ -1952,16 +2090,15 @@ main {
 }
 .playbook-picker-card {
   position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: 4px;
   min-width: 0;
+  padding-right: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
-}
-.playbook-picker-card > .playbook-star-button {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 1;
 }
 .playbook-star-button {
   display: grid;
@@ -1990,7 +2127,6 @@ main {
   opacity: 0.45;
 }
 .playbook-option .playbook-option-meta {
-  padding-right: 28px;
   flex-wrap: wrap;
 }
 .playbook-picker-card.selected {
@@ -2012,10 +2148,10 @@ main {
 .playbook-option {
   position: relative;
   display: flex;
-  align-items: stretch;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
-  padding: 16px;
+  padding: 12px 6px 12px 14px;
   border-radius: var(--radius-md);
   color: var(--text);
   cursor: pointer;
@@ -2036,22 +2172,14 @@ main {
   display: grid;
   flex: 1;
   min-width: 0;
-  gap: 8px;
+  gap: 4px;
 }
 .playbook-option-meta {
   display: flex;
+  align-items: center;
   gap: 8px;
   color: var(--text-muted);
   font-size: calc(11px * var(--ui-scale));
-}
-.playbook-option-selected {
-  color: var(--accent);
-}
-.playbook-option-topline {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
 }
 .playbook-option-title {
   color: var(--text-strong);
@@ -2081,9 +2209,45 @@ main {
   border: 5px solid var(--accent);
   background: var(--surface);
 }
+/* The expander is only an arrow, in the same row as the star and the selection circle. */
+.playbook-details-toggle {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.playbook-details-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.playbook-details-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.playbook-details-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.playbook-card-details {
+  grid-column: 1 / -1;
+  margin-left: 14px;
+  padding: 12px 4px 14px 0;
+  border-top: 1px solid var(--border);
+}
+.playbook-card-details:not([data-open]) {
+  display: none;
+}
+.playbook-card-details > .playbook-option-description {
+  margin: 0;
+}
 .playbook-card-overview {
-  margin: 0 16px 16px;
-  padding-top: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px solid var(--border);
 }
 .playbook-process-list {
@@ -2114,13 +2278,9 @@ main {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.playbook-process-parallel,
-.playbook-process-more {
+.playbook-process-parallel {
   color: var(--text-muted);
   font-size: calc(11px * var(--ui-scale));
-}
-.playbook-process-more {
-  margin: 10px 0 0 18px;
 }
 .playbook-card-process {
   display: flex;
@@ -2195,13 +2355,33 @@ main {
   min-height: 180px;
   resize: vertical;
 }
-.worktree-row {
+/* Workspace settings: the three names share a row, then the session cap and the start choice share one. */
+.create-workspace-names {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.create-workspace-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 28px;
+}
+.create-field.create-field-inline {
+  flex-direction: row;
   align-items: center;
   gap: 10px;
-  margin: 12px 0;
 }
-.worktree-row .opt {
-  flex: 0 0 auto;
+.create-field-inline .field-input {
+  width: 88px;
+}
+.create-disclosure .task-default-model {
+  max-width: 440px;
+}
+@media (max-width: 900px) {
+  .create-workspace-names {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .createform-page .field-input.worktree-input {
   flex: 1 1 0;
@@ -2378,10 +2558,13 @@ main {
   }
 }
 @media (max-width: 760px) {
-  .createpage-with-preview {
+  .create-body {
     flex-direction: column;
     align-items: stretch;
     padding: 0;
+  }
+  .create-footer {
+    padding: 12px 16px;
   }
   .create-form-panel {
     padding: 24px 16px 16px;
@@ -8817,7 +9000,8 @@ button.chat-prompt-image:focus-visible {
   color: var(--text);
   text-align: left;
 }
-.artifact-tree-row.selected {
+.artifact-tree-row.selected,
+.artifactitem.selected {
   background: var(--accent-subtle);
   box-shadow: inset 2px 0 0 var(--accent);
 }

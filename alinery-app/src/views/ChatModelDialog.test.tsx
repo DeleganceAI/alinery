@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
@@ -255,6 +255,46 @@ describe("ChatModelDialog", () => {
     expect(balanced).toContain("$13.00");
     const models = renderToStaticMarkup(<ChatModelDialog {...base} hosted={hosted} />);
     expect(models).toContain("alinery/Qwen3.6-35B-A3B");
+  });
+
+  it("shows a member each team Alinery beside their personal one, and leaves an owner's single card", async () => {
+    const hosted = {
+      provider: "alinery",
+      defaultModel: "alinery/Qwen3.6-35B-A3B",
+      baseUrl: "https://inference.alinery.ai/v1",
+      plansUrl: "https://accounts.alinery.ai/plans",
+      models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
+      ready: true,
+      upsell: null,
+      source: "live" as const,
+      balanceCents: 500,
+    };
+    const ipc = await import("../ipc");
+    vi.mocked(ipc.accountTeams).mockResolvedValue({
+      pots: [
+        { teamId: null, name: "Personal", role: "personal", balanceCents: 500 },
+        { teamId: "team-1", name: "SuperTech1", role: "admin", balanceCents: 2669 },
+      ],
+      pendingInvites: [],
+    });
+    render(<ChatModelDialog {...base} tab="accounts" hosted={hosted} />);
+    expect(await screen.findByText("Alinery · SuperTech1")).toBeTruthy();
+    expect(screen.getByText("$5.00")).toBeTruthy();
+    expect(screen.getByText("$26.69")).toBeTruthy();
+    cleanup();
+
+    let resolvePots: (value: Awaited<ReturnType<typeof ipc.accountTeams>>) => void = () => {};
+    vi.mocked(ipc.accountTeams).mockReturnValue(
+      new Promise((resolve) => {
+        resolvePots = resolve;
+      }),
+    );
+    render(<ChatModelDialog {...base} tab="accounts" hosted={{ ...hosted, balanceCents: 2669 }} />);
+    await act(async () => {
+      resolvePots({ pots: [{ teamId: "team-1", name: "SuperTech1", role: "owner", balanceCents: 2669 }], pendingInvites: [] });
+    });
+    expect(screen.queryByText("Alinery · SuperTech1")).toBeNull();
+    expect(screen.getByText("$26.69")).toBeTruthy();
   });
 
   it("keeps unpaid hosted model clicks in the dialog instead of opening billing", () => {

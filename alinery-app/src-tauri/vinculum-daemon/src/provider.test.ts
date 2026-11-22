@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { inputForHosted, resolveModel, thinkingForHosted } from "./provider.ts";
+import { inputForHosted, installAlineryProvider, refreshHostedProviders, resolveModel, thinkingForHosted } from "./provider.ts";
 import { vinculumAuthContext } from "./runtime.ts";
 
 test("an old alinery grok id is xAI and a real provider prefix is kept", () => {
@@ -60,4 +60,18 @@ test("a hosted model reads images only when the catalog says so", () => {
   expect(inputForHosted(undefined)).toEqual(["text"]);
   expect(inputForHosted(["text"])).toEqual(["text"]);
   expect(inputForHosted("image")).toEqual(["text"]);
+});
+
+test("a team's models appear once its key lands, without a daemon restart", () => {
+  const dir = join(tmpdir(), `alinery-pots-${crypto.randomUUID()}`);
+  mkdirSync(join(dir, "instances", "one"), { recursive: true });
+  const catalog = { base_url: "https://inference.example/v1", models: [{ id: "DeepSeek-V4.1-Flash", name: "DeepSeek", context_window: 1, max_tokens: 1 }] };
+  const inference = join(dir, "inference.json");
+  writeFileSync(inference, JSON.stringify({ token: "", expires_at: 1, catalog }));
+  const registered = new Set<string>();
+  installAlineryProvider({ setProvider: (provider) => void registered.add(provider.id) }, join(dir, "instances", "one", "config.toml"));
+  expect([...registered]).toEqual(["alinery"]);
+  writeFileSync(inference, JSON.stringify({ token: "", expires_at: 1, catalog, pots: { "team-1": { token: "inf_team", expires_at: 2 } } }));
+  refreshHostedProviders();
+  expect(registered.has("alinery:team-1")).toBe(true);
 });

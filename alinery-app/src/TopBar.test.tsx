@@ -77,6 +77,14 @@ describe("TopBar navigation", () => {
     expect(tabLabels()).toContain("Chat");
   });
 
+  it("hides the Team tab unless the account belongs to a team", () => {
+    const { unmount } = render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} {...callbacks} />);
+    expect(tabLabels()).not.toContain("Team");
+    unmount();
+    render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} showTeam {...callbacks} />);
+    expect(tabLabels()).toContain("Team");
+  });
+
   it("opens Notifications and Settings from the account menu", () => {
     render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} {...callbacks} />);
     fireEvent.click(screen.getByRole("button", { name: "Account menu notifications" }));

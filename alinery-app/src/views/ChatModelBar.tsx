@@ -1,6 +1,7 @@
 import { Brain, Check, ChevronUp, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { formatContextUsage, formatTokenCount } from "../chat/format";
+import { formatHostedModel, type HostedPot } from "../chat/providers";
 import * as ipc from "../ipc";
 import { favoriteAlive } from "../modelFavorites";
 import { providerCatalog } from "../sync/providers";
@@ -40,9 +41,19 @@ export function ChatModelBar({
 }) {
   const [open, setOpen] = useState<"model" | "thinking" | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
+  const [pots, setPots] = useState<HostedPot[]>([]);
   /** `provider/id` this machine can run; null while unknown, and unknown never blocks a pick. */
   const [runnable, setRunnable] = useState<Set<string> | null>(null);
   const box = useRef<HTMLDivElement>(null);
+  const label = formatHostedModel(model, pots);
+
+  useEffect(() => {
+    const load = ipc.accountTeams;
+    if (!load) return;
+    void load()
+      .then((teams) => setPots(teams.pots.flatMap((pot) => (pot.teamId ? [{ teamId: pot.teamId, name: pot.name }] : []))))
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -92,7 +103,7 @@ export function ChatModelBar({
           disabled={disabledReason !== null}
           onClick={() => toggle("model")}
         >
-          <span className="chat-model-label">{model}</span>
+          <span className="chat-model-label">{label}</span>
           <ChevronUp size={14} aria-hidden="true" />
         </button>
         {thinking ? (
@@ -133,7 +144,7 @@ export function ChatModelBar({
                 title={elsewhere ? `${row} is not signed in on this machine` : undefined}
                 onClick={pick(() => onPickModel(row))}
               >
-                <span className="chat-model-label">{row}</span>
+                <span className="chat-model-label">{formatHostedModel(row, pots)}</span>
                 {elsewhere ? <span className="chat-dropup-note">not signed in here</span> : null}
                 {row === model ? <Check size={14} aria-hidden="true" /> : null}
               </button>

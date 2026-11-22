@@ -2,11 +2,22 @@ import { Check, Search, Star, X } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { costBand } from "../chat/costBand";
 import { BUILTIN_MODEL_ROLES, type ModelRolesMap } from "../chat/modelRoles";
-import { type AdvancedProviderRow, HOSTED_PROVIDER, hostedPrice, type LoginProvider, mergeGrokModels, mergeHostedModels, partitionProviders } from "../chat/providers";
+import {
+  type AdvancedProviderRow,
+  formatHostedModel,
+  HOSTED_PROVIDER,
+  type HostedPot,
+  hostedPrice,
+  type LoginProvider,
+  mergeGrokModels,
+  mergeHostedModels,
+  partitionProviders,
+} from "../chat/providers";
 import type { ProvidersDialogTab } from "../chat/slash";
 import type { ChatModelOption } from "../chatTranscript";
+import * as ipc from "../ipc";
 import { Dialog } from "../shared";
-import type { HostedCatalogView } from "../types";
+import type { HostedCatalogView, TeamPot } from "../types";
 
 export type ChatProvidersDialogProps = {
   tab: ProvidersDialogTab;
@@ -158,6 +169,7 @@ export function ChatModelDialog({
   onClose,
 }: ChatProvidersDialogProps) {
   const [query, setQuery] = useState(preselect ?? "");
+  const [accountPots, setAccountPots] = useState<TeamPot[] | null>(null);
   // Opened straight onto Accounts for one provider (an onboarding card): start filtered to it.
   const [providerQuery, setProviderQuery] = useState(tab === "accounts" ? (preselect ?? "") : "");
   const [advancedOpen, setAdvancedOpen] = useState(defaultAdvancedOpen);
@@ -170,6 +182,18 @@ export function ChatModelDialog({
   useEffect(() => {
     setQuery(preselect ?? "");
   }, [preselect]);
+
+  useEffect(() => {
+    ipc
+      .accountTeams()
+      .then((teams) => setAccountPots(teams.pots))
+      .catch(() => setAccountPots([]));
+  }, []);
+
+  // A null teamId is the personal pot. A teams-plan owner has none: their Alinery card is the team pot.
+  const pots: HostedPot[] = (accountPots ?? []).flatMap((pot) => (pot.teamId ? [{ teamId: pot.teamId, name: pot.name }] : []));
+  const showPersonal = accountPots == null || accountPots.length === 0 || accountPots.some((pot) => pot.teamId == null);
+  const teamAccountRows = (accountPots ?? []).filter((pot) => pot.teamId && (showPersonal || pot.role !== "owner"));
 
   // Search shortcuts stay inside this modal, including when focus has moved to a row or tab.
   useEffect(() => {
@@ -194,7 +218,10 @@ export function ChatModelDialog({
     if (advancedOpen) advancedRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [advancedOpen]);
 
-  const listed = useMemo(() => mergeGrokModels(mergeHostedModels(models, hosted), grok), [models, hosted, grok]);
+  const listed = useMemo(() => {
+    const merged = mergeGrokModels(mergeHostedModels(models, hosted, pots), grok);
+    return showPersonal ? merged : merged.filter((model) => model.provider !== HOSTED_PROVIDER);
+  }, [models, hosted, grok, pots, showPersonal]);
   const { chatLogin, advanced } = useMemo(
     () => partitionProviders({ loginProviders, models: listed, livePromotedIds, configuredIds }),
     [loginProviders, listed, livePromotedIds, configuredIds],
@@ -202,7 +229,7 @@ export function ChatModelDialog({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const matched = q ? listed.filter((m) => `${m.provider}/${m.id}`.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)) : listed;
+    const matched = q ? listed.filter((m) => `${m.label ?? ""} ${m.provider}/${m.id}`.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)) : listed;
     // Starred first, order otherwise preserved -- same contract as `deriveModelRows`, which this
     // list replaces for every model-picking surface.
     const starred = new Set(favorites ?? []);
@@ -222,10 +249,11 @@ export function ChatModelDialog({
 
   const providerNeedle = providerQuery.trim().toLowerCase();
   const shownHosted = hosted && (!providerNeedle || providerMatches({ id: HOSTED_PROVIDER, name: "Alinery" }, providerNeedle)) ? hosted : null;
+  const shownTeamAccounts = providerNeedle ? teamAccountRows.filter((pot) => `alinery ${pot.name}`.toLowerCase().includes(providerNeedle)) : teamAccountRows;
   const shownLogin = providerNeedle ? chatLogin.filter((p) => providerMatches(p, providerNeedle)) : chatLogin;
   // A search reaches Advanced rows too, so an env-only provider is findable without knowing where it lives.
   const shownAdvanced = providerNeedle ? advanced.filter((row) => providerMatches(row, providerNeedle)) : advancedOpen ? advanced : [];
-  const noProviderMatch = providerNeedle !== "" && !shownHosted && shownLogin.length === 0 && shownAdvanced.length === 0;
+  const noProviderMatch = providerNeedle !== "" && !shownHosted && shownTeamAccounts.length === 0 && shownLogin.length === 0 && shownAdvanced.length === 0;
 
   const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const last = DIALOG_TABS.length - 1;
@@ -307,6 +335,14 @@ export function ChatModelDialog({
             <>
               <ul className="chat-model-list chat-provider-cards">
                 {shownHosted ? <AlineryAccountRow hosted={shownHosted} onSignIn={onSignIn} onSubscribe={onSubscribe} onBuyCredits={onBuyCredits} /> : null}
+                {shownTeamAccounts.map((pot) => (
+                  <li key={pot.teamId}>
+                    <button type="button" className="chat-model-item" disabled>
+                      <span>Alinery · {pot.name}</span>
+                      <span className="chat-provider-status">{formatCreditUsd(pot.balanceCents)}</span>
+                    </button>
+                  </li>
+                ))}
                 {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
                 {catalogueStatus === "ready" && !providerNeedle && chatLogin.length === 0 && !hosted ? <li className="dim">No Chat-capable providers yet.</li> : null}
                 {catalogueStatus !== "connecting" && noProviderMatch ? <li className="dim">No providers match “{providerQuery.trim()}”</li> : null}
@@ -350,7 +386,7 @@ export function ChatModelDialog({
             </>
           ) : (
             <>
-              <p className="dim">{current ? `Current model: ${current}` : "Choose a model."}</p>
+              <p className="dim">{current ? `Current model: ${formatHostedModel(current, pots)}` : "Choose a model."}</p>
               <ul className="chat-model-list">
                 {catalogueStatus === "connecting" ? <li className="dim">Connecting…</li> : null}
                 {catalogueStatus === "ready" && filtered.length === 0 && !customRef ? (
@@ -368,13 +404,14 @@ export function ChatModelDialog({
                   </li>
                 )}
                 {filtered.map((m) => {
-                  const label = `${m.provider}/${m.id}`;
-                  const active = selected ? `${selected.provider}/${selected.id}` === label : false;
-                  const isCurrent = current === label;
-                  const starred = (favorites ?? []).includes(label);
+                  const key = `${m.provider}/${m.id}`;
+                  const label = m.label ?? key;
+                  const active = selected ? `${selected.provider}/${selected.id}` === key : false;
+                  const isCurrent = current === key;
+                  const starred = (favorites ?? []).includes(key);
                   const band = costBand(hostedPrice(hosted, m.provider, m.id));
                   return (
-                    <li key={label} className="chat-model-row">
+                    <li key={key} className="chat-model-row">
                       <button type="button" className={`chat-model-item${active ? " active" : ""}`} onClick={() => applyOrUpsell(m.provider, m.id)}>
                         <span>{label}</span>
                         <span className="chat-model-item-side">
@@ -389,7 +426,7 @@ export function ChatModelDialog({
                           aria-pressed={starred}
                           aria-label={starred ? `Unstar ${label}` : `Star ${label}`}
                           title={starred ? "Remove from favourites" : "Add to favourites"}
-                          onClick={() => onToggleFavorite(label, !starred)}
+                          onClick={() => onToggleFavorite(key, !starred)}
                         >
                           <Star size={14} strokeWidth={1.5} fill={starred ? "currentColor" : "none"} aria-hidden="true" />
                         </button>
@@ -423,10 +460,10 @@ export function ChatModelDialog({
                             </option>
                           )}
                           {roleModels.map((model) => {
-                            const label = `${model.provider}/${model.id}`;
+                            const key = `${model.provider}/${model.id}`;
                             return (
-                              <option key={label} value={label}>
-                                {label}
+                              <option key={key} value={key}>
+                                {model.label ?? key}
                               </option>
                             );
                           })}

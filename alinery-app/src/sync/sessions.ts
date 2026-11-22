@@ -164,7 +164,8 @@ export const promptImages = (images: ImageContent[] = []) =>
   images.map((image) => ({ name: image.name ?? "", mimeType: image.mimeType, bytes: Uint8Array.from(atob(image.data), (c) => c.charCodeAt(0)) }));
 
 /** `images` go to the model with the text, in the same user message. */
-export async function promptSession(repo: string, id: string, text: string, images?: ImageContent[]): Promise<void> {
+export async function promptSession(repo: string, id: string, text: string, images?: ImageContent[], model?: string): Promise<void> {
+  if (model) await ipc.prepareHostedInference(model);
   await call(() => sessionApi.sessions(repo).promptSession({ meta: newMutationMeta(), sessionId: id, text, images: promptImages(images) }));
 }
 
@@ -179,6 +180,7 @@ export async function retryTurn(repo: string, sessionId: string, failedEntryId: 
 }
 
 export async function setSessionModel(repo: string, id: string, model: string): Promise<SessionControls> {
+  await ipc.prepareHostedInference(model);
   return controlsOf((await call(() => sessionApi.sessions(repo).setSessionModel({ meta: newMutationMeta(), sessionId: id, model }))).controls);
 }
 

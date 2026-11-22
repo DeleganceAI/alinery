@@ -26,6 +26,7 @@ import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
 import { removeBoxRecord, writeBoxRecord } from "./domain/boxRegistry.ts";
 import { commitJoinRequests, Members } from "./domain/members.ts";
+import { armTeamShare, commitTeamComments, noteShareChange, onTeamCommentsSaved } from "./domain/teamShare.ts";
 import type { TaskDeps } from "./rpc/tasks.ts";
 import { Feed } from "./sync/feed.ts";
 import { Reconciler } from "./sync/reconcile.ts";
@@ -73,7 +74,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 56;
+const PROTOCOL = 57;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -964,7 +965,9 @@ const rawTurns: TurnControl = {
     if (!text.trim()) throw new DomainError("invalid_argument", "empty-prompt");
     const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
     if (!resolved) throw new DomainError("failed_precondition", "no model is configured");
-    await ensureModel(conversation, resolved, context);
+    // A team model is registered from the pot token, which the shell writes just before this call. Reconfigure so a
+    // switch that happened before the token existed picks the team's key up.
+    await ensureModel(conversation, resolved, context, resolved.provider.startsWith("alinery:"));
     // Images ride in the same user message; a model that reads none gets Pi's placeholder in their place.
     const content = images.length > 0 ? [{ type: "text" as const, text }, ...images] : text;
     const requestId = randomUUID();
@@ -1179,9 +1182,15 @@ const taskExecution = (slug: string) => getTaskExecution(repo, slug, lane, ident
 const artifactProjector = new ArtifactProjector(store, repo, executionRecords(taskExecution));
 // Playbook library rows: the compiled-in set, the machine's and the repository's, once, then on each change the watcher reports and on the 30 s pass.
 const playbookProjector = new PlaybookProjector(store, { globalConfigDir: appConfigDirOf(appConfig), repoDir: repo });
+// Teammates' comments saved by a heartbeat reach the app as a counter it can watch; the row exists from the start so a page has a baseline.
+let teamComments = 0;
+onTeamCommentsSaved((saved) => commitTeamComments(store, (teamComments += saved)));
+commitTeamComments(store, teamComments);
+armTeamShare(repo);
 feed.onChanged = (rel) => {
   artifactProjector.changed(rel);
   playbookProjector.changed(rel);
+  noteShareChange(repo, rel);
 };
 await artifactProjector.pass();
 playbookProjector.refresh();

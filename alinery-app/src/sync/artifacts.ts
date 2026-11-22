@@ -116,6 +116,7 @@ const commentOf = (c: Comment): ArtifactComment => ({
   line_end: c.lineEnd,
   body: c.body,
   created_at_ms: Number(c.createdAtMs),
+  author: c.author || null,
 });
 
 const draftOf = (d: CommentDraft): ArtifactCommentDraft => ({

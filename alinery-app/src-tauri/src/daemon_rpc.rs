@@ -586,6 +586,33 @@ pub(crate) struct WriteHostedInferenceRequest {
 #[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct WriteHostedInferenceResponse {}
 
+/// proto/alinery/v1/share.proto `SetShare` (ACT). The sync token stays on this side of the webview.
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct SetShareRequest {
+    #[prost(message, optional, tag = "1")]
+    pub meta: Option<MutationMeta>,
+    #[prost(string, tag = "2")]
+    pub team_id: String,
+    #[prost(string, tag = "3")]
+    pub name: String,
+    #[prost(string, tag = "4")]
+    pub token: String,
+    #[prost(string, tag = "5")]
+    pub accounts_url: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct SetShareResponse {}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct ClearShareRequest {
+    #[prost(message, optional, tag = "1")]
+    pub meta: Option<MutationMeta>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct ClearShareResponse {}
+
 /// One unary call on the bridge's pooled connection to `socket`, with the messages typed.
 pub(crate) async fn unary<Req: prost::Message, Res: prost::Message + Default>(socket: &Path, token: &str, path: &str, request: &Req) -> Result<Res, String> {
     let reply = BRIDGE.unary(socket, token, path, &request.encode_to_vec()).await?;
@@ -707,6 +734,49 @@ pub(crate) fn write_hosted_inference_at(socket: &Path, committed_token: &Path, i
         )
         .await
         .map_err(|_| "WriteHostedInference timed out".to_string())??;
+        Ok(())
+    })
+}
+
+fn share_meta() -> Option<MutationMeta> {
+    Some(MutationMeta {
+        client_id: "alinery-shell".into(),
+        mutation_id: uuid::Uuid::new_v4().to_string(),
+    })
+}
+
+/// `ShareService.SetShare`: the daemon stores the sync credential and starts pushing.
+pub(crate) fn set_share_at(socket: &Path, committed_token: &Path, team_id: &str, name: &str, token: &str, accounts_url: &str) -> Result<(), String> {
+    tauri::async_runtime::block_on(async {
+        let rpc = rpc_token(socket, committed_token).await?;
+        let request = SetShareRequest {
+            meta: share_meta(),
+            team_id: team_id.into(),
+            name: name.into(),
+            token: token.into(),
+            accounts_url: accounts_url.into(),
+        };
+        tokio::time::timeout(
+            DAEMON_CONTROL_TIMEOUT,
+            unary::<_, SetShareResponse>(socket, &rpc, "/alinery.v1.ShareService/SetShare", &request),
+        )
+        .await
+        .map_err(|_| "SetShare timed out".to_string())??;
+        Ok(())
+    })
+}
+
+/// `ShareService.ClearShare`: the daemon revokes the share and deletes its credential.
+pub(crate) fn clear_share_at(socket: &Path, committed_token: &Path) -> Result<(), String> {
+    tauri::async_runtime::block_on(async {
+        let rpc = rpc_token(socket, committed_token).await?;
+        let request = ClearShareRequest { meta: share_meta() };
+        tokio::time::timeout(
+            DAEMON_CONTROL_TIMEOUT,
+            unary::<_, ClearShareResponse>(socket, &rpc, "/alinery.v1.ShareService/ClearShare", &request),
+        )
+        .await
+        .map_err(|_| "ClearShare timed out".to_string())??;
         Ok(())
     })
 }

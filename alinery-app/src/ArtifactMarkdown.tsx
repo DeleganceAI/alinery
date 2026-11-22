@@ -165,6 +165,8 @@ export type ArtifactComment = {
   line_end: number;
   body: string;
   created_at_ms: number;
+  /** Who wrote it, on a teammate's shared artifact. A local comment is always the user's own. */
+  author?: string | null;
 };
 
 export type ArtifactCommentAnchor = {
@@ -600,7 +602,9 @@ function CommentableMarkdownBlock({
         <span className="comment-popover" id={commentsId} role="note">
           {matchingComments.map((comment) => (
             <span className="comment-popover-item" key={comment.id}>
-              <span className="comment-popover-meta">Line {comment.line_start}</span>
+              <span className="comment-popover-meta">
+                {comment.author ? `${comment.author} · ` : ""}Line {comment.line_start}
+              </span>
               <span className="comment-popover-body">{comment.body}</span>
             </span>
           ))}
