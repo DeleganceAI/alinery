@@ -88,6 +88,7 @@ mod mcp;
 mod notify;
 mod paths;
 mod pi_durable;
+mod provider_callback;
 mod remote;
 mod session;
 mod settings;
@@ -111,6 +112,7 @@ use imports::*;
 use mcp::*;
 use notify::*;
 use paths::*;
+use provider_callback::*;
 use remote::*;
 use session::*;
 use settings::*;
@@ -226,6 +228,8 @@ pub fn run() {
             check_update,
             download_update,
             apply_update,
+            provider_callback_arm,
+            provider_callback_disarm,
             open_vinculum_agent_dir,
             pick_vinculum_skill_dialog,
         ])

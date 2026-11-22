@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as ipc from "../ipc";
+import { isRemoteRepo } from "../remoteRepo";
 import * as providers from "../sync/providers";
 import { type LoginProvider, loginProvidersFromCatalog, type ProviderCatalog, type ProviderLoginStatus } from "./providers";
 
@@ -13,7 +14,25 @@ function browsable(raw: string | undefined): string | null {
   }
 }
 
-export function useProviderAccess(enabled: boolean) {
+/**
+ * The loopback address a browser sign-in ends on, taken from the prompt the daemon asks with rather
+ * than a port this app assumes: it is the daemon's own redirect URI, so it follows that runtime.
+ * Only 127.0.0.1, which is what the app binds and what the daemon compares the origin against.
+ */
+export function loopbackTarget(placeholder: string | undefined): { port: number; path: string } | null {
+  const match = /^http:\/\/127\.0\.0\.1:(\d{1,5})(\/[^?#]*)?$/.exec(placeholder?.trim() ?? "");
+  if (!match) return null;
+  const port = Number(match[1]);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) return null;
+  return { port, path: match[2] ?? "/" };
+}
+
+/**
+ * The accounts of one machine: `repo` names the daemon that holds them, so a chat in a repository on
+ * this Mac signs in here even while the open repository is on another machine. Without it, the active
+ * repository's daemon answers, which is what Settings (a repository choice, not a session) wants.
+ */
+export function useProviderAccess(enabled: boolean, repo?: string) {
   const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
   const [settled, setSettled] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -24,13 +43,27 @@ export function useProviderAccess(enabled: boolean) {
   const loginId = useRef<string | null>(null);
   const loginHost = useRef<string | null>(null);
   const opened = useRef(new Set<string>());
+  /** The `port+path` this window is listening on for the browser's redirect; null when not armed. */
+  const armed = useRef<string | null>(null);
+  /** An address this sign-in already failed to bind, so a taken port is tried once, not every poll. */
+  const unbindable = useRef<string | null>(null);
+  /** The `port+path` an armed listener already gave up on: expiry arms nothing twice for one sign-in. */
+  const expired = useRef<string | null>(null);
+  const [callbackArmed, setCallbackArmed] = useState(false);
+
+  const disarm = useCallback(async () => {
+    if (!armed.current) return;
+    armed.current = null;
+    setCallbackArmed(false);
+    await ipc.providerCallbackDisarm().catch(() => undefined);
+  }, []);
 
   const reload = useCallback(async () => {
-    const next = await providers.providerCatalog();
+    const next = await providers.providerCatalog(repo);
     setCatalog(next);
     setSettled(true);
     return next;
-  }, []);
+  }, [repo]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -39,7 +72,7 @@ export function useProviderAccess(enabled: boolean) {
       let last = "daemon not connected";
       for (let attempt = 0; attempt < 8 && !cancelled; attempt += 1) {
         try {
-          const next = await providers.providerCatalog();
+          const next = await providers.providerCatalog(repo);
           if (cancelled) return;
           setCatalog(next);
           setError(null);
@@ -59,7 +92,7 @@ export function useProviderAccess(enabled: boolean) {
     return () => {
       cancelled = true;
     };
-  }, [enabled]);
+  }, [enabled, repo]);
 
   useEffect(() => {
     if (!busy || !loginId.current) return;
@@ -68,10 +101,32 @@ export function useProviderAccess(enabled: boolean) {
       const id = loginId.current;
       if (!id || cancelled) return;
       void providers.providerLoginPoll(id, loginHost.current ?? undefined).then(
-        (status) => {
+        async (status) => {
           if (cancelled || loginId.current !== id) return;
           // The daemon drains events on every poll; keep them, or a device code shows for one tick and vanishes.
           setLogin((prev) => (prev?.loginId === status.loginId ? { ...status, events: [...prev.events, ...status.events] } : status));
+          // A sign-in that runs on another machine ends on that machine's loopback, which this Mac's
+          // browser cannot reach: listen for the redirect here instead, before the page is opened, so
+          // the callback lands in this window rather than on an error page.
+          const target = status.prompt?.type === "manual_code" ? loopbackTarget(status.prompt.placeholder) : null;
+          const key = target ? `${target.port}${target.path}` : null;
+          if (target && key && armed.current !== key && unbindable.current !== key && expired.current !== key && isRemoteRepo(loginHost.current ?? "")) {
+            armed.current = key;
+            const ready = await ipc.providerCallbackArm(target.port, target.path).then(
+              () => true,
+              () => false,
+            );
+            if (cancelled || loginId.current !== id) {
+              void disarm();
+              return;
+            }
+            // The port was taken (a local sign-in, or the Codex CLI): the panel's paste fallback stands.
+            if (!ready) {
+              armed.current = null;
+              unbindable.current = key;
+            }
+            setCallbackArmed(ready);
+          }
           for (const event of status.events ?? []) {
             // A device-code flow (xAI) sends no auth_url: its verification page is the one to open.
             const raw = event.type === "auth_url" ? event.url : event.type === "device_code" ? event.verificationUri : undefined;
@@ -83,6 +138,7 @@ export function useProviderAccess(enabled: boolean) {
           if (status.status === "done" || status.status === "error" || status.status === "cancelled") {
             loginId.current = null;
             setBusy(null);
+            void disarm();
             if (status.status === "done") {
               setLogin(null);
               void reload().then(
@@ -102,23 +158,9 @@ export function useProviderAccess(enabled: boolean) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [busy, reload]);
+  }, [busy, reload, disarm]);
 
-  const start = useCallback(async (provider: string, method: "api_key" | "oauth") => {
-    setError(null);
-    setChoice(null);
-    setSignedIn(null);
-    try {
-      const { status, host } = await providers.providerLoginStart(provider, method);
-      loginHost.current = host;
-      loginId.current = status.loginId;
-      setLogin(status);
-      setBusy(provider);
-    } catch (cause) {
-      setError(String(cause));
-    }
-  }, []);
-
+  /** The browser came back to this window: reply the URL the daemon's prompt is waiting for. */
   const reply = useCallback(async (value: string) => {
     const id = loginId.current;
     if (!id) return;
@@ -129,28 +171,79 @@ export function useProviderAccess(enabled: boolean) {
     }
   }, []);
 
+  useEffect(
+    () =>
+      ipc.onProviderCallback((url) => {
+        armed.current = null;
+        setCallbackArmed(false);
+        void reply(url);
+      }),
+    [reply],
+  );
+
+  // The listener gives up after ten minutes. Left alone, the panel would keep promising a pickup
+  // that is no longer coming, so expiry puts the paste fallback back in the prompt's place — and a
+  // re-arm on the next poll would undo that, so the expired target is not tried again.
+  useEffect(
+    () =>
+      ipc.onProviderCallbackExpired(() => {
+        if (armed.current) expired.current = armed.current;
+        armed.current = null;
+        setCallbackArmed(false);
+      }),
+    [],
+  );
+
+  // A dialog torn down without Cancel must not leave the port held until the deadline.
+  useEffect(() => () => void disarm(), [disarm]);
+
+  const start = useCallback(
+    async (provider: string, method: "api_key" | "oauth") => {
+      setError(null);
+      setChoice(null);
+      setSignedIn(null);
+      try {
+        const { status, host } = await providers.providerLoginStart(provider, method, repo);
+        loginHost.current = host;
+        loginId.current = status.loginId;
+        unbindable.current = null;
+        expired.current = null;
+        setLogin(status);
+        setBusy(provider);
+      } catch (cause) {
+        setError(String(cause));
+      }
+    },
+    [repo],
+  );
+
   const cancel = useCallback(async () => {
     const id = loginId.current;
     loginId.current = null;
     setBusy(null);
     setLogin(null);
     setChoice(null);
+    // The port goes back with the sign-in, or the next attempt has to fall back to pasting.
+    void disarm();
     if (!id) return;
     try {
       await providers.providerLoginReply(id, "", true, loginHost.current ?? undefined);
     } catch {
       /* the dialog is already gone */
     }
-  }, []);
+  }, [disarm]);
 
-  const logout = useCallback(async (provider: string) => {
-    setError(null);
-    try {
-      setCatalog(await providers.providerLogout(provider));
-    } catch (cause) {
-      setError(String(cause));
-    }
-  }, []);
+  const logout = useCallback(
+    async (provider: string) => {
+      setError(null);
+      try {
+        setCatalog(await providers.providerLogout(provider, repo));
+      } catch (cause) {
+        setError(String(cause));
+      }
+    },
+    [repo],
+  );
 
   // Favorites for models a provider no longer serves linger in the app config, so the pickers keep offering them.
   // The store is the shell's, so the pruning happens here, in the background: the catalog is already updated.
@@ -169,7 +262,7 @@ export function useProviderAccess(enabled: boolean) {
   const saveCustom = useCallback(
     async (config: string, replaces?: string) => {
       const previous = catalog;
-      const next = await providers.customProviderSave(config, replaces);
+      const next = await providers.customProviderSave(config, replaces, repo);
       setCatalog(next);
       // What `previous` served that `next` does not loses its stars: endpoints gone entirely (including a rename)
       // prune to nothing kept, and an edit that dropped models prunes just those.
@@ -177,23 +270,23 @@ export function useProviderAccess(enabled: boolean) {
         pruneFavorites(row.id, new Set((next.custom.find((kept) => kept.id === row.id)?.models ?? []).map((model) => `${row.id}/${model}`)));
       }
     },
-    [catalog, pruneFavorites],
+    [catalog, pruneFavorites, repo],
   );
 
-  const checkCustom = useCallback((config: string, live: boolean) => providers.customProviderCheck(config, live), []);
+  const checkCustom = useCallback((config: string, live: boolean) => providers.customProviderCheck(config, live, repo), [repo]);
 
   const deleteCustom = useCallback(
     async (id: string) => {
       setError(null);
       try {
-        setCatalog(await providers.customProviderDelete(id));
+        setCatalog(await providers.customProviderDelete(id, repo));
         // The endpoint and every model it served are gone; nothing of it keeps a star.
         pruneFavorites(id, new Set());
       } catch (cause) {
         setError(String(cause));
       }
     },
-    [pruneFavorites],
+    [pruneFavorites, repo],
   );
 
   return {
@@ -207,6 +300,8 @@ export function useProviderAccess(enabled: boolean) {
     choice,
     login,
     signedIn,
+    /** True while this window is listening for the browser's redirect instead of asking for a paste. */
+    callbackArmed,
     start,
     choose: setChoice,
     reply,

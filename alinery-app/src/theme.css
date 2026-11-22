@@ -5226,6 +5226,14 @@ header:has(~ main .task-info-panel) nav.tabs {
   color: var(--text-muted);
   font-size: calc(12px * var(--ui-scale));
 }
+/* A starred model this machine cannot run: still listed, but not pickable until it is signed in here. */
+.chat-dropup-note {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  white-space: nowrap;
+}
 
 /* Square icon button: quiet until hovered, still reads as a button. */
 .chat-icon-btn {
@@ -6281,6 +6289,46 @@ header:has(~ main .task-info-panel) nav.tabs {
 .chat-sign-in-instructions .copy-value-button {
   color: inherit;
   vertical-align: middle;
+}
+/* The sign-in page keeps a way back to it: the tab it opened may already be gone. */
+.chat-sign-in-page {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+/* The browser's failed callback is the expected last step of a sign-in that runs on another machine. */
+.chat-sign-in-callback {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+}
+/* Armed: this window catches the redirect, so the sign-in finishes without the address bar. */
+.chat-sign-in-armed {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+}
+.chat-sign-in-fallback {
+  margin: 8px 0 0;
+}
+.chat-sign-in-fallback > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.chat-sign-in-fallback > summary:hover {
+  color: var(--text-strong);
+}
+.chat-sign-in-callback code {
+  color: var(--text-strong);
+}
+.chat-sign-in-callback strong {
+  color: var(--text-strong);
+  font-weight: 600;
 }
 .chat-msg-actions {
   display: flex;

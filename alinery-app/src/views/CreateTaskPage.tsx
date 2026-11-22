@@ -1368,6 +1368,7 @@ export function CreateTaskPage({
               mode="manual"
               initialTab="models"
               unsignedOpensAccounts
+              repo={repoPath}
               onPick={(next) => {
                 dirtyRef.current = true;
                 if (picking === "task") {

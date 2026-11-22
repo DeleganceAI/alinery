@@ -238,6 +238,10 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
     initPickedFolder: vi.fn(),
     accountStatus: vi.fn(async () => ({ signedIn: false, email: null, plan: null, paid: false, unavailable: false })),
     accountRefresh: vi.fn(async () => ({ signedIn: false, email: null, plan: null, paid: false, unavailable: false })),
+    // Event subscriptions return their unlisten; the proxy's default is a rejected promise, which a
+    // useEffect cleanup cannot be.
+    onProviderCallback: vi.fn(() => () => {}),
+    onProviderCallbackExpired: vi.fn(() => () => {}),
   };
   const cache: Record<string, unknown> = {};
   const ipcModule = new Proxy(ipcMocks, {

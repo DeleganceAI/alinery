@@ -635,6 +635,7 @@ function ChatViewBody({
         {inTerminal || !selected ? null : (
           <ChatModelBar
             model={modelLabel}
+            repoPath={selected.repo_path}
             title={activity.turnActive ? NEXT_TURN_MODEL_TITLE : undefined}
             thinkingTitle={activity.turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
             thinking={transcript.sessionMeta.thinking}
