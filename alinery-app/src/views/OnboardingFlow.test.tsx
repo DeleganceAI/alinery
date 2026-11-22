@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
@@ -9,6 +10,7 @@ import { fakeBoard } from "../test/boardHooks";
 import type { AppConfig, BoardTask, NormalizedPlaybook, NormalizedStep, PlaybookRef, RepoOverrides, ScopedPlaybook } from "../types";
 import { Grid } from "./Grid";
 import { OnboardingFlow } from "./OnboardingFlow";
+import { ANNOTATED_STEP, PROMPT_NOTES } from "./PlaybookLessons";
 
 const settingsMocks = vi.hoisted(() => ({ readEffectiveConfig: vi.fn(), readRepoSettings: vi.fn(), writeRepoOverrides: vi.fn() }));
 vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), ...settingsMocks }));
@@ -526,44 +528,62 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
   });
 
-  it("teaches the four building blocks, each as its own animated drawing", async () => {
-    render(<OnboardingFlow {...flowProps()} initialStep="learn" />);
-    await act(async () => {});
-    expect(screen.getByRole("heading", { name: "Learning how to use playbooks" })).toBeTruthy();
-    const blocks = screen.getAllByRole("figure");
-    expect(blocks.map((block) => block.querySelector("strong")?.textContent)).toEqual(["Fan out, then merge", "Parallel steps", "Loop back", "Human checkpoints"]);
-    // Every tile's drawing was built: it has nodes, and the loop and the hand appear only where they belong.
-    for (const block of blocks) expect(block.querySelectorAll("svg .nd").length).toBeGreaterThan(2);
-    expect(blocks.map((block) => block.querySelectorAll(".seg.back").length)).toEqual([0, 0, 1, 0]);
-    expect(blocks.map((block) => block.querySelectorAll(".hand").length)).toEqual([0, 0, 0, 1]);
+  it("teaches one building block at a time, moving on by itself until a tab is chosen", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      render(<OnboardingFlow {...flowProps()} initialStep="learn" />);
+      await act(async () => {});
+      expect(screen.getByRole("heading", { name: "Learning how to use playbooks" })).toBeTruthy();
+      expect(
+        within(screen.getByRole("tablist", { name: "Building blocks" }))
+          .getAllByRole("tab")
+          .map((tab) => tab.textContent),
+      ).toEqual(["Fan out, then merge", "Parallel steps", "Loop back", "Human checkpoints"]);
+      const panel = () => document.getElementById("onboarding-block-panel") as HTMLElement;
+      expect(within(panel()).getByRole("heading", { name: "Fan out, then merge" })).toBeTruthy();
+      expect(panel().querySelectorAll("svg[data-tile='branch'] .nd").length).toBeGreaterThan(2);
+      // One loop of the animation, then the next block.
+      act(() => void vi.advanceTimersByTime(7000));
+      expect(within(panel()).getByRole("heading", { name: "Parallel steps" })).toBeTruthy();
+      // Choosing a tab stays on it.
+      fireEvent.click(screen.getByRole("tab", { name: "Human checkpoints" }));
+      act(() => void vi.advanceTimersByTime(60000));
+      expect(within(panel()).getByRole("heading", { name: "Human checkpoints" })).toBeTruthy();
+      expect(panel().querySelectorAll(".hand")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("shows the prompt each step's agent follows on a real playbook", async () => {
+  it("opens the agents page on a real step's prompt, with a comment beside each part it points at", async () => {
+    // The comments are matched against the bundled prompt's own text, so this reads the real file.
+    const source = readFileSync("src-tauri/playbooks/academic-survey/playbook.md", "utf8");
+    const prompt = source.split(`<!-- alinery:step ${ANNOTATED_STEP} -->`)[1].split("<!-- alinery:step")[0];
+    for (const note of PROMPT_NOTES) expect(prompt).toContain(`\n\n${note.starts}`);
     playbookMock.readPlaybook.mockImplementation(async (reference) => {
-      const definition = previewDefinition(reference.key, "SuperDevelop");
-      return {
-        source: { reference, path: null },
-        definition: { ...definition, step: definition.step.map((step) => ({ ...step, prompt: `You are the ${step.title} agent.` })) },
-        source_text: "",
-        modified_at_ms: null,
-      };
+      const definition = previewDefinition(reference.key, "Academic Survey");
+      const steps = [...definition.step, { ...definition.step[0], key: ANNOTATED_STEP, title: "Read and Evaluate One Source", prompt: prompt.replace(/^\s*## .*\n+/, "") }];
+      return { source: { reference, path: null }, definition: { ...definition, step: steps }, source_text: "", modified_at_ms: null };
     });
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       render(<OnboardingFlow {...flowProps()} initialStep="agents" />);
-      expect(screen.getByRole("heading", { name: "Every step is its own agent" })).toBeTruthy();
-      const stage = await screen.findByRole("region", { name: "SuperDevelop step prompts" });
-      expect(within(stage).getByRole("heading", { name: "Agent 1 of 7: Clarify" })).toBeTruthy();
-      expect(within(stage).getByText("You are the Clarify agent.")).toBeTruthy();
-      // The ring walks to the next agent by itself.
-      act(() => void vi.advanceTimersByTime(3200));
-      expect(within(stage).getByRole("heading", { name: "Agent 2 of 7: Investigate" })).toBeTruthy();
-      // Choosing a step shows its prompt and ends the walk.
-      fireEvent.click(within(screen.getByRole("region", { name: "SuperDevelop ring" })).getByRole("button", { name: "Build" }));
-      expect(within(stage).getByText("You are the Build agent.")).toBeTruthy();
-      act(() => void vi.advanceTimersByTime(10000));
-      expect(within(stage).getByRole("heading", { name: "Agent 6 of 7: Build" })).toBeTruthy();
-      expect(within(stage).queryByText("You are the Clarify agent.")).toBeNull();
+      await act(async () => {});
+      const stage = screen.getByRole("region", { name: "Academic Survey step prompts" });
+      expect(within(stage).getByRole("heading", { name: "Agent 4 of 4: Read and Evaluate One Source" })).toBeTruthy();
+      const notes = within(stage).getAllByRole("button");
+      expect(notes.map((note) => note.querySelector("strong")?.textContent)).toEqual(PROMPT_NOTES.map((note) => note.label));
+      const pressed = () => notes.map((note) => note.getAttribute("aria-pressed") === "true");
+      expect(pressed()).toEqual([true, false, false, false, false]);
+      // The highlight moves to the next comment by itself, until the person chooses one.
+      act(() => void vi.advanceTimersByTime(3600));
+      expect(pressed()).toEqual([false, true, false, false, false]);
+      fireEvent.click(notes[4]);
+      act(() => void vi.advanceTimersByTime(60000));
+      expect(pressed()).toEqual([false, false, false, false, true]);
+      // Another step shows its own prompt.
+      fireEvent.click(within(screen.getByRole("region", { name: "Academic Survey ring" })).getByRole("button", { name: "Queries" }));
+      expect(within(stage).getByRole("heading", { name: "Agent 1 of 4: Queries" })).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

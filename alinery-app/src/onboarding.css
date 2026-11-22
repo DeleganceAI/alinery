@@ -1350,37 +1350,49 @@
   margin-inline: auto;
   box-sizing: border-box;
 }
-.onboarding-tiles {
+/* One building block at a time: what it is on the left, its animation on the right, tabs beneath. */
+.onboarding-block {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: minmax(0, 0.65fr) minmax(0, 1.35fr);
+  gap: 32px;
+  align-items: center;
   margin-top: 8px;
+  padding: 24px 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
 }
-/* Fan out is the widest drawing, so it takes the first row; the other three share the second. */
-.onboarding-tile:first-child { grid-column: 1 / -1; }
-.onboarding-tile:first-child svg { max-width: 680px; margin-inline: auto; }
-/* The tiles are drawn by handoffTiles.ts, which names its marks with these classes and tokens. */
+.onboarding-block-copy { animation: onboarding-agent-prompt-in 320ms ease-out; }
+.onboarding-block-copy h3 { margin: 0; color: var(--text-strong); font-size: calc(20px * var(--ui-scale)); font-weight: 600; }
+.onboarding-block-copy p { margin: 8px 0 0; color: var(--text-muted); line-height: 1.5; }
+.onboarding-block-copy .onboarding-block-headline { color: var(--text); font-weight: 500; }
+.onboarding-block-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.onboarding-block-tabs button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(13px * var(--ui-scale));
+  cursor: pointer;
+}
+.onboarding-block-tabs button:hover { border-color: var(--border-strong); color: var(--text); }
+.onboarding-block-tabs button[aria-selected="true"] { border-color: var(--accent); background: var(--accent-subtle); color: var(--text-strong); }
+.onboarding-block-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The tile is drawn by handoffTiles.ts, which names its marks with these classes and tokens. */
 .onboarding-tile {
-  justify-content: space-between;
   --tile-surface: var(--surface);
   --tile-line: var(--border-strong);
   --tile-accent: var(--accent);
   --tile-ok: var(--success);
   --tile-muted: var(--text-muted);
   --tile-strong: var(--text-strong);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 0;
-  padding: 16px 18px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
+  display: grid;
+  align-items: center;
+  height: 230px;
 }
-.onboarding-tile svg { display: block; width: 100%; height: auto; overflow: visible; }
-.onboarding-tile figcaption { display: flex; flex-direction: column; gap: 2px; text-align: center; }
-.onboarding-tile figcaption strong { color: var(--text-strong); font-size: calc(15px * var(--ui-scale)); font-weight: 600; }
-.onboarding-tile figcaption span { color: var(--text-muted); font-size: calc(13px * var(--ui-scale)); }
+.onboarding-tile svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .onboarding-tile .st { font-family: var(--font-mono); font-size: 11px; fill: var(--tile-muted); }
 .onboarding-tile .st.hi { fill: var(--tile-strong); }
 .onboarding-tile .nl { font-size: 11.5px; fill: var(--tile-muted); }
@@ -1418,27 +1430,61 @@
   font-size: calc(14px * var(--ui-scale));
   font-weight: 600;
 }
-.onboarding-agent-stage pre {
-  flex: 1;
-  min-height: 160px;
+/* The prompt, a paragraph per row, with a comment beside each part the lesson points at. */
+.onboarding-prompt { flex: 1; min-height: 160px; overflow: auto; padding: 12px 14px; }
+.onboarding-prompt-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 190px;
+  gap: 14px;
+  align-items: start;
+  padding: 6px 4px 6px 10px;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: background 240ms ease, opacity 240ms ease;
+}
+.onboarding-prompt-block p {
   margin: 0;
-  padding: 14px 18px;
-  overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: calc(12px * var(--ui-scale));
   line-height: 1.5;
-  color: var(--text);
-  animation: onboarding-agent-prompt-in 320ms ease-out;
+  color: var(--text-muted);
 }
+.onboarding-prompt-block[data-tone] { --note: var(--accent); --note-subtle: var(--accent-subtle); border-left-color: var(--note); }
+.onboarding-prompt-block[data-tone="success"] { --note: var(--success); --note-subtle: var(--success-subtle); }
+.onboarding-prompt-block[data-tone="warning"] { --note: var(--warning); --note-subtle: var(--warning-subtle); }
+.onboarding-prompt-block[data-active] { background: var(--note-subtle); }
+.onboarding-prompt-block[data-active] p { color: var(--text); }
+.onboarding-prompt-note {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px 10px 10px 2px;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 240ms ease, border-color 240ms ease;
+}
+.onboarding-prompt-note strong { color: var(--note); font-weight: 600; }
+.onboarding-prompt-note:hover,
+.onboarding-prompt-block[data-active] .onboarding-prompt-note { opacity: 1; border-color: var(--note); color: var(--text); }
+.onboarding-prompt-note:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @keyframes onboarding-agent-prompt-in {
   from { opacity: 0; transform: translateY(4px); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .onboarding-agent-stage pre { animation: none; }
+  .onboarding-block-copy { animation: none; }
 }
 @media (max-width: 860px) {
-  .onboarding-tiles,
+  .onboarding-block,
   .onboarding-body-agents { grid-template-columns: minmax(0, 1fr); }
 }

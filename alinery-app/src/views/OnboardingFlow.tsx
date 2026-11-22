@@ -552,7 +552,11 @@ export function OnboardingFlow({
 
         {step === "agents" && (
           <div className="onboarding-body onboarding-body-agents" data-dir={direction} data-testid="onboarding-step-agents">
-            <StepAgentsLesson playbook={liveDefinitions.superdevelop ?? null} error={definitionErrors.superdevelop} onRetry={() => setDefinitionRefresh((value) => value + 1)} />
+            <StepAgentsLesson
+              playbook={liveDefinitions["academic-survey"] ?? null}
+              error={definitionErrors["academic-survey"]}
+              onRetry={() => setDefinitionRefresh((value) => value + 1)}
+            />
           </div>
         )}
 
