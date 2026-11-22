@@ -124,7 +124,7 @@ afterEach(() => {
 describe("onboarding step persistence", () => {
   it("persists the step and rejects prototype keys", () => {
     expect(readSavedOnboardingStep()).toBe("models");
-    expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual(["models", "learn", "agents", "playbooks"]);
+    expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual(["models", "overview", "learn", "agents", "playbooks"]);
 
     writeSavedOnboardingStep("playbooks");
     expect(readSavedOnboardingStep()).toBe("playbooks");
@@ -387,17 +387,25 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
   });
 
-  it("continues through its four steps and opens task creation without executing a task", async () => {
+  it("continues through its five steps and opens task creation without executing a task", async () => {
     const props = flowProps();
     const createTask = vi.spyOn(tasks, "createTaskForRepo");
     const createSession = vi.spyOn(sessions, "createSession");
     render(<OnboardingFlow {...props} />);
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["01Models", "02Building blocks", "03Agents", "04Playbooks"]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "01Models",
+      "02Playbooks: Overview",
+      "03Playbooks: Components",
+      "04Playbooks: Expertise",
+      "05Playbooks: Library",
+    ]);
     expect(screen.queryByText("First task")).toBeNull();
     expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Change repository" }));
     expect(props.onChangeRepo).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByTestId("onboarding-step-overview")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByTestId("onboarding-step-learn")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -507,7 +515,7 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: /Models/ }));
     await advanceDemo(4000);
-    fireEvent.click(screen.getByRole("tab", { name: /Playbooks/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Playbooks: Library/ }));
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
     view.unmount();
     await advanceDemo(0);
@@ -528,31 +536,27 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
   });
 
-  it("teaches one building block at a time, moving on by itself until a tab is chosen", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    try {
-      render(<OnboardingFlow {...flowProps()} initialStep="learn" />);
-      await act(async () => {});
-      expect(screen.getByRole("heading", { name: "Learning how to use playbooks" })).toBeTruthy();
-      expect(
-        within(screen.getByRole("tablist", { name: "Building blocks" }))
-          .getAllByRole("tab")
-          .map((tab) => tab.textContent),
-      ).toEqual(["Fan out, then merge", "Parallel steps", "Loop back", "Human checkpoints"]);
-      const panel = () => document.getElementById("onboarding-block-panel") as HTMLElement;
-      expect(within(panel()).getByRole("heading", { name: "Fan out, then merge" })).toBeTruthy();
-      expect(panel().querySelectorAll("svg[data-tile='branch'] .nd").length).toBeGreaterThan(2);
-      // One loop of the animation, then the next block.
-      act(() => void vi.advanceTimersByTime(7000));
-      expect(within(panel()).getByRole("heading", { name: "Parallel steps" })).toBeTruthy();
-      // Choosing a tab stays on it.
-      fireEvent.click(screen.getByRole("tab", { name: "Human checkpoints" }));
-      act(() => void vi.advanceTimersByTime(60000));
-      expect(within(panel()).getByRole("heading", { name: "Human checkpoints" })).toBeTruthy();
-      expect(panel().querySelectorAll(".hand")).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
+  it("explains what a playbook is beside the Academic Survey ring", async () => {
+    render(<OnboardingFlow {...flowProps()} initialStep="overview" />);
+    const body = screen.getByTestId("onboarding-step-overview");
+    expect(within(body).getByRole("heading", { name: "A playbook is an expert's process, written down for agents" })).toBeTruthy();
+    expect(within(body).getAllByRole("listitem")).toHaveLength(4);
+    expect(await within(body).findByRole("region", { name: "Academic Survey ring" })).toBeTruthy();
+  });
+
+  it("shows the four components as four small drawings, with a link to the Learn page", async () => {
+    render(<OnboardingFlow {...flowProps()} initialStep="learn" />);
+    await act(async () => {});
+    const body = screen.getByTestId("onboarding-step-learn");
+    const blocks = within(body).getAllByRole("figure");
+    expect(blocks.map((block) => block.querySelector("figcaption")?.textContent)).toEqual(["Fan out, then merge", "Parallel steps", "Loop back", "Human checkpoints"]);
+    for (const block of blocks) expect(block.querySelectorAll("svg .nd").length).toBeGreaterThan(2);
+    expect(blocks.map((block) => block.querySelectorAll(".hand").length)).toEqual([0, 0, 0, 1]);
+    expect(
+      within(body)
+        .getByRole("link", { name: /alinery\.ai\/learn/ })
+        .getAttribute("href"),
+    ).toBe("https://alinery.ai/learn");
   });
 
   it("opens the agents page on a real step's prompt, with a comment beside each part it points at", async () => {

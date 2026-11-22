@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { ExternalLink } from "lucide-react";
+import { useEffect, useState } from "react";
+import * as ipc from "../ipc";
 import { PlaybookRing, RingReadout, stepOwnPrompt } from "../PlaybookRing";
 import { InlineStatus } from "../shared";
+import { toast } from "../toast";
 import type { NormalizedPlaybook } from "../types";
 import { useTiles } from "./handoffTiles";
 
@@ -28,80 +31,74 @@ function useAutoAdvance(count: number, dwellMs: (index: number) => number): [num
   ];
 }
 
-/** The four moves every playbook is built from. `tile` names its animation in handoffTiles.ts; `dwellMs` is one loop of it. */
-export const BUILDING_BLOCKS = [
-  {
-    tile: "branch",
-    viewBox: "0 0 600 180",
-    dwellMs: 7000,
-    title: "Fan out, then merge",
-    headline: "One agent per file. The next step waits for every one.",
-    body: "A step can run once for each file the step before it wrote, in parallel. The step after it gets the whole collection, and starts when the last one is done.",
-  },
-  {
-    tile: "parallel",
-    viewBox: "0 0 300 170",
-    dwellMs: 5600,
-    title: "Parallel steps",
-    headline: "Independent steps run at the same time.",
-    body: "Two steps that need the same input but not each other both start at once. The step that joins them waits for both.",
-  },
-  {
-    tile: "loop",
-    viewBox: "0 0 300 150",
-    dwellMs: 7500,
-    title: "Loop back",
-    headline: "Another pass, or a closing report.",
-    body: "The last step decides. A fresh request sends the work back around with everything learned so far.",
-  },
-  {
-    tile: "human",
-    viewBox: "0 0 300 150",
-    dwellMs: 5200,
-    title: "Human checkpoints",
-    headline: "The agent finishes its work and holds.",
-    body: "Nothing moves on until you review it and say so.",
-  },
-] as const;
+const LEARN_URL = "https://alinery.ai/learn";
 
-const blockDwell = (index: number) => BUILDING_BLOCKS[index].dwellMs;
-const noteDwell = () => NOTE_DWELL_MS;
-
-function BlockTile({ tile, viewBox }: { tile: string; viewBox: string }) {
-  const root = useTiles();
-  return (
-    <div className="onboarding-tile" ref={root}>
-      <svg viewBox={viewBox} data-tile={tile} aria-hidden="true" />
-    </div>
-  );
-}
-
-/** Onboarding's "Learning how to use playbooks" page: one building block at a time, described on the left and animated on the right. */
-export function LearnPlaybooks() {
-  const [index, choose] = useAutoAdvance(BUILDING_BLOCKS.length, blockDwell);
-  const block = BUILDING_BLOCKS[index];
+/** Onboarding's "Playbooks: Overview" page: what a playbook is and why the process matters, beside one real playbook's ring. */
+export function PlaybookOverview({ playbook }: { playbook: NormalizedPlaybook | null }) {
   return (
     <>
-      <h2>Learning how to use playbooks</h2>
-      <p className="onboarding-lede">Every playbook is built from four moves.</p>
-      <div className="onboarding-block" id="onboarding-block-panel" role="tabpanel" aria-label={block.title}>
-        <div className="onboarding-block-copy" key={block.tile}>
-          <h3>{block.title}</h3>
-          <p className="onboarding-block-headline">{block.headline}</p>
-          <p>{block.body}</p>
-        </div>
-        <BlockTile key={block.tile} tile={block.tile} viewBox={block.viewBox} />
+      <div className="onboarding-overview-copy">
+        <h2>A playbook is an expert's process, written down for agents</h2>
+        <ul>
+          <li>A playbook encodes how a human expert does a kind of work: the steps, their order, and what each one hands to the next.</li>
+          <li>You launch it and you steer it. Agents do the steps, and you step in where the playbook waits for you.</li>
+          <li>A playbook guarantees the agents follow that process. Each step runs in order, and its handoff is checked before the next one starts.</li>
+          <li>Much of the work agents do can't be verified from the output alone. You can rely on the result only if you can rely on the process that produced it.</li>
+        </ul>
       </div>
-      <div className="onboarding-block-tabs" role="tablist" aria-label="Building blocks">
-        {BUILDING_BLOCKS.map((item, itemIndex) => (
-          <button key={item.tile} type="button" role="tab" aria-selected={itemIndex === index} aria-controls="onboarding-block-panel" onClick={() => choose(itemIndex)}>
-            {item.title}
-          </button>
-        ))}
+      <div className="onboarding-overview-ring">
+        {playbook ? (
+          <PlaybookRing steps={playbook.step} label={`${playbook.title} ring`} selectedStepKey={null}>
+            <RingReadout title={playbook.title} steps={playbook.step} activeKey={null} />
+          </PlaybookRing>
+        ) : (
+          <p role="status">Loading the example playbook…</p>
+        )}
       </div>
     </>
   );
 }
+
+/** The four moves every playbook is built from. `tile` names its animation in handoffTiles.ts; the view boxes crop each to the same height. */
+export const BUILDING_BLOCKS = [
+  { tile: "branch", viewBox: "50 50 500 135", title: "Fan out, then merge" },
+  { tile: "parallel", viewBox: "0 24 300 140", title: "Parallel steps" },
+  { tile: "loop", viewBox: "0 40 300 115", title: "Loop back" },
+  { tile: "human", viewBox: "0 60 300 85", title: "Human checkpoints" },
+] as const;
+
+/** Onboarding's "Playbooks: Components" page: the four moves, as four small animated tiles, and where to read more. */
+export function LearnPlaybooks() {
+  const root = useTiles();
+  return (
+    <>
+      <h2>Playbooks are built from four composable moves</h2>
+      <div className="onboarding-tiles" ref={root}>
+        {BUILDING_BLOCKS.map((block) => (
+          <figure key={block.tile} className="onboarding-tile">
+            <svg viewBox={block.viewBox} data-tile={block.tile} aria-hidden="true" />
+            <figcaption>{block.title}</figcaption>
+          </figure>
+        ))}
+      </div>
+      <a
+        className="onboarding-learn-link"
+        href={LEARN_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(event) => {
+          event.preventDefault();
+          void ipc.openUrl(LEARN_URL).catch((cause: unknown) => toast(String(cause), "error"));
+        }}
+      >
+        Learn how each one works at alinery.ai/learn
+        <ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
+      </a>
+    </>
+  );
+}
+
+const noteDwell = () => NOTE_DWELL_MS;
 
 /** The step whose prompt the agents page opens on, and the comments drawn beside the parts of it they match. */
 export const ANNOTATED_STEP = "evaluate-source";
@@ -126,13 +123,6 @@ export function StepAgentsLesson({ playbook, error, onRetry }: { playbook: Norma
   const noted = blocks.filter((block) => block.note);
   const [active, choose] = useAutoAdvance(noted.length, noteDwell);
   const activeNote = noted[active]?.note;
-  // The prompt is longer than its pane, so the pane follows the comment being shown.
-  const pane = useRef<HTMLDivElement>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run when the highlighted comment or the step changes
-  useEffect(() => {
-    const block = pane.current?.querySelector<HTMLElement>("[data-active]");
-    if (pane.current && block) pane.current.scrollTo?.({ top: block.offsetTop - pane.current.offsetTop - 12, behavior: "smooth" });
-  }, [active, step?.key]);
   return (
     <>
       <div className="onboarding-agent-copy">
@@ -149,7 +139,7 @@ export function StepAgentsLesson({ playbook, error, onRetry }: { playbook: Norma
           <h3>
             Agent {steps.indexOf(step) + 1} of {steps.length}: {step.title}
           </h3>
-          <div className="onboarding-prompt" ref={pane}>
+          <div className="onboarding-prompt">
             {blocks.map((block, blockIndex) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: a prompt's paragraphs have no identity but their order
               <div key={blockIndex} className="onboarding-prompt-block" data-tone={block.note?.tone} data-active={(block.note && block.note === activeNote) || undefined}>

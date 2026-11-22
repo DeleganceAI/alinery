@@ -12,7 +12,7 @@ import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
 import { NoLibraryHost, readPlaybook } from "../sync/playbooks";
 import { readEffectiveConfig, readRepoSettings, writeRepoOverrides } from "../sync/settings";
 import type { AccountStatus, AppConfig, Config, NormalizedPlaybook, PlaybookRef } from "../types";
-import { LearnPlaybooks, StepAgentsLesson } from "./PlaybookLessons";
+import { LearnPlaybooks, PlaybookOverview, StepAgentsLesson } from "./PlaybookLessons";
 
 const INPUT_MODE_LABELS: Record<"single" | "each" | "complete", string> = {
   single: "single",
@@ -541,6 +541,12 @@ export function OnboardingFlow({
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {step === "overview" && (
+          <div className="onboarding-body onboarding-body-overview" data-dir={direction} data-testid="onboarding-step-overview">
+            <PlaybookOverview playbook={liveDefinitions["academic-survey"] ?? null} />
           </div>
         )}
 

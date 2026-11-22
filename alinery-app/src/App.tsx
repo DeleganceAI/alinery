@@ -1113,7 +1113,7 @@ export default function App() {
   };
 
   const replayPlaybookGuide = () => {
-    setOnboardingStep("learn");
+    setOnboardingStep("overview");
     setOnboardingOpen(true);
   };
 
