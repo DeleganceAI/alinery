@@ -1,13 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildPromptMessage, taskAttachmentDir } from "../chat/attachments";
 import { askConfirm } from "../confirm";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
-import { ExecutionAvailabilityNotice, InlineStatus, ModelInput, repoName, taskKey } from "../shared";
+import { ExecutionAvailabilityNotice, executionControlsAvailable, InlineStatus, ModelInput, repoName, taskKey } from "../shared";
 import { useRepoBoard } from "../sync/board";
-import { readTaskExecution } from "../sync/execution";
+import { useTaskExecution } from "../sync/execution";
 import { addTaskAttachment } from "../sync/tasks";
 import type { BoardTask, SessionTypeChoice, TaskExecutionReply } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
+
+// Keyed by repository and task so even two tasks with the same slug never share a subscription's initial value.
+function SelectedTaskExecution({ task, onUpdate }: { task: BoardTask; onUpdate: (reply: TaskExecutionReply | undefined, error: string, initial: boolean) => void }) {
+  const { reply, error, ready } = useTaskExecution(task.repo_path, task.slug);
+  const initial = useRef(true);
+  useEffect(() => {
+    if (!ready && !reply && !error) return;
+    onUpdate(reply, error, initial.current);
+    initial.current = false;
+  }, [reply, error, ready, onUpdate]);
+  return null;
+}
 
 export function CreateSessionPage({
   allRepos,
@@ -29,8 +41,7 @@ export function CreateSessionPage({
   const board = useRepoBoard(repos);
   const available = useMemo(() => board.tasks.filter((item) => !item.archived && !item.draft), [board.tasks]);
   const tasks = available;
-  const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
-  const [loadedTaskId, setLoadedTaskId] = useState("");
+  const [snapshot, setSnapshot] = useState<{ taskId: string; reply?: TaskExecutionReply; error: string }>();
   const [selection, setSelection] = useState("auxiliary");
   const [harness, setHarness] = useState("vinculum");
   const [model, setModel] = useState("");
@@ -38,7 +49,6 @@ export function CreateSessionPage({
   const [pickModel, setPickModel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [executionError, setExecutionError] = useState("");
   const [decisionPending, setDecisionPending] = useState(false);
   const decisionRef = useRef(false);
   const [images, setImages] = useState<PastedImage[]>([]);
@@ -69,6 +79,9 @@ export function CreateSessionPage({
     });
   }, [available, initialTask?.repo_path, initialTask?.slug]);
   const task = tasks.find((candidate) => taskKey(candidate) === taskId);
+  const exactTaskLoaded = !!task && snapshot?.taskId === taskId;
+  const executionView = exactTaskLoaded ? snapshot.reply : undefined;
+  const executionError = exactTaskLoaded ? snapshot.error : "";
   const records = Object.values(executionView?.state.executions ?? {});
   const [mode, executionId] = selection.split(":");
   const execution = records.find((record) => record.id === executionId);
@@ -76,47 +89,19 @@ export function CreateSessionPage({
   const auxiliary = selection === "auxiliary";
   const existing = mode === "existing";
   const effectiveHarness = auxiliary ? harness : "vinculum";
-  const exactTaskLoaded = loadedTaskId === taskId;
-  const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only;
+  const executionAvailable = !executionError && executionControlsAvailable(executionView);
 
-  useEffect(() => {
-    let alive = true;
-    let timer: number | undefined;
-    let initial = true;
-    setExecutionView(null);
-    setLoadedTaskId("");
-    setExecutionError("");
-    setSelection("auxiliary");
-    setModel("");
-    if (!task) return;
-    const refresh = () => {
-      readTaskExecution(task.repo_path, task.slug)
-        .then((value) => {
-          if (!alive) return;
-          setExecutionView(value);
-          setLoadedTaskId(taskKey(task));
-          setExecutionError("");
-          if (initial) {
-            const queued = Object.values(value.state.executions ?? {}).find((record) => record.lifecycle === "queued");
-            if (queued) setSelection(`existing:${queued.id}`);
-          }
-          initial = false;
-          if (value.live?.status !== "available") timer = window.setTimeout(refresh, 3000);
-        })
-        .catch((cause) => {
-          if (!alive) return;
-          setLoadedTaskId(taskKey(task));
-          setExecutionError(String(cause));
-          initial = false;
-          timer = window.setTimeout(refresh, 3000);
-        });
-    };
-    refresh();
-    return () => {
-      alive = false;
-      window.clearTimeout(timer);
-    };
-  }, [task?.repo_path, task?.slug]);
+  const updateExecution = useCallback(
+    (reply: TaskExecutionReply | undefined, error: string, initial: boolean) => {
+      setSnapshot({ taskId, reply, error });
+      if (initial) {
+        const queued = Object.values(reply?.state.executions ?? {}).find((record) => record.lifecycle === "queued");
+        setSelection(queued ? `existing:${queued.id}` : "auxiliary");
+        setModel("");
+      }
+    },
+    [taskId],
+  );
 
   const changeContext = async (apply: () => void) => {
     if (decisionRef.current || launchingRef.current) return;
@@ -148,7 +133,10 @@ export function CreateSessionPage({
     }
   };
 
-  const disabled = busy || decisionPending || !task?.worktree || !exactTaskLoaded || !executionAvailable || (!auxiliary && !execution);
+  const selectionAvailable =
+    auxiliary ||
+    (execution && (mode === "manual" || (existing && execution.lifecycle === "queued") || (mode === "recover" && execution.shutdown_confirmed && !execution.receipt_id)));
+  const disabled = busy || decisionPending || !task?.worktree || !exactTaskLoaded || !executionAvailable || !selectionAvailable;
   const launch = async () => {
     if (disabled || !task || launchingRef.current) return;
     let choice: SessionTypeChoice;
@@ -199,6 +187,7 @@ export function CreateSessionPage({
         if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void launch();
       }}
     >
+      {task && <SelectedTaskExecution key={taskId} task={task} onUpdate={updateExecution} />}
       <div className="createform createform-page">
         <h2 className="create-title">New session</h2>
         <label className="create-field">
@@ -263,9 +252,14 @@ export function CreateSessionPage({
               </optgroup>
             )}
             <option value="auxiliary">Auxiliary session (outside task graph)</option>
+            {exactTaskLoaded && !selectionAvailable && (
+              <option value={selection} disabled>
+                Selected execution is no longer available
+              </option>
+            )}
           </select>
         </label>
-        {executionView && <ExecutionAvailabilityNotice live={executionView.live} controls />}
+        {executionView && <ExecutionAvailabilityNotice view={executionView} />}
         {auxiliary && (
           <label className="create-field">
             <span>Auxiliary harness</span>
@@ -290,7 +284,7 @@ export function CreateSessionPage({
               Execution {execution.id} · {execution.lifecycle} · Current owner {execution.owner_session_id}
             </p>
             {mode === "recover" && executionAvailable && (
-              <p>Recovery retains these assignments and replaces only this proven-stopped owner. Its completion permission will be reset.</p>
+              <p>The replacement session keeps this execution’s assignments and completion permission. It must report readiness again before the step can finish.</p>
             )}
             {mode === "manual" && (
               <p>This independent execution uses the selected input occurrences. The daemon reserves new output paths; it does not complete the original execution.</p>
@@ -320,14 +314,14 @@ export function CreateSessionPage({
             </ul>
           </section>
         )}
-        {executionView && records.length === 0 && <p>No eligible executions are reserved. Required graph inputs may be unsatisfied.</p>}
+        {executionAvailable && records.length === 0 && <p>No eligible executions are reserved. Required graph inputs may be unsatisfied.</p>}
         {step && !auxiliary && (
           <details>
             <summary>Retained step instructions</summary>
             <pre className="mono">{step.prompt}</pre>
           </details>
         )}
-        {executionView && !executionAvailable && auxiliary && (
+        {executionView && executionView.definition.step.length > 0 && !executionAvailable && auxiliary && (
           <details>
             <summary>Retained playbook instructions</summary>
             {executionView.definition.step.map((savedStep) => (
@@ -344,7 +338,7 @@ export function CreateSessionPage({
             <ModelInput harness="vinculum" value={model} onChange={setModel} prefillRemembered={false} repoPath={task?.repo_path} onOpenPicker={() => setPickModel(true)} />
           </label>
         )}
-        {pickModel && <ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts onPick={setModel} onClose={() => setPickModel(false)} />}
+        {pickModel && <ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts repo={task?.repo_path} onPick={setModel} onClose={() => setPickModel(false)} />}
         <label className="create-field">
           <span>Working directory</span>
           <input className="field-input mono" value={task?.worktree || activeRepo} readOnly />

@@ -3,6 +3,7 @@ import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
+import { UnconfirmedDelivery } from "./mutation";
 import {
   abortSession,
   archiveSession,
@@ -15,6 +16,7 @@ import {
   readSessionHistory,
   readSessionVinculum,
   renameSession,
+  retryTurn,
   SessionConflict,
   setSessionModel,
   setSessionThinkingLevel,
@@ -47,6 +49,7 @@ beforeEach(() => {
             "readHistory",
             "readVinculumWindow",
             "promptSession",
+            "retryTurn",
             "abortSession",
             "setSessionModel",
             "setSessionThinkingLevel",
@@ -121,6 +124,29 @@ describe("session reads", () => {
 });
 
 describe("the turn controls and the process", () => {
+  it("reconciles a lost Retry reply using the same mutation and the original failed entry", async () => {
+    let reachable = false;
+    impl.retryTurn = () => {
+      if (!reachable) throw new ConnectError("connection dropped", Code.Unavailable);
+    };
+    const error = await retryTurn("/repo", "session", "failed-entry").catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(UnconfirmedDelivery);
+    expect(seen).toHaveLength(2);
+    reachable = true;
+    await (error as UnconfirmedDelivery).checkDelivery();
+    expect(seen).toHaveLength(3);
+    expect(seen[0]).toMatchObject({ repo: "/repo", call: "retryTurn", req: { sessionId: "session", failedEntryId: "failed-entry", meta: { mutationId: expect.any(String) } } });
+    expect(seen[1]).toEqual(seen[0]);
+    expect(seen[2]).toEqual(seen[0]);
+  });
+
+  it("surfaces a definitive handoff refusal without resubmitting", async () => {
+    impl.retryTurn = () => {
+      throw new ConnectError("The handoff has started.", Code.FailedPrecondition);
+    };
+    await expect(retryTurn("/repo", "session", "old-turn")).rejects.toThrow("The handoff has started.");
+    expect(seen).toHaveLength(1);
+  });
   it("a prompt and an abort name the session; a prompt carries a mutation id and an abort does not", async () => {
     await promptSession("/r", "s1", "hello");
     await abortSession("/r", "s1");
@@ -133,10 +159,15 @@ describe("the turn controls and the process", () => {
     expect(seen[1].req).toMatchObject({ sessionId: "s1" });
   });
 
-  it("a prompt's images go as bytes beside the text", async () => {
+  it("a prompt's images go as bytes beside the text, under the name of the copy", async () => {
+    await promptSession("/r", "s1", "look", [{ type: "image", data: "AQID", mimeType: "image/png", name: "shot.png" }]);
+    const images = seen[0].req.images as { name: string; mimeType: string; bytes: Uint8Array }[];
+    expect(images.map((image) => [image.name, image.mimeType, Array.from(image.bytes)])).toEqual([["shot.png", "image/png", [1, 2, 3]]]);
+  });
+
+  it("an image with no name of its own still travels, unnamed", async () => {
     await promptSession("/r", "s1", "look", [{ type: "image", data: "AQID", mimeType: "image/png" }]);
-    const images = seen[0].req.images as { mimeType: string; bytes: Uint8Array }[];
-    expect(images.map((image) => [image.mimeType, Array.from(image.bytes)])).toEqual([["image/png", [1, 2, 3]]]);
+    expect((seen[0].req.images as { name: string }[])[0]?.name).toBe("");
   });
 
   it("a model or thinking change answers with the controls in the shape the views read", async () => {

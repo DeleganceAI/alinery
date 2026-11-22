@@ -20,10 +20,16 @@ test("a shared conversation id is not a session", () => {
 test("the environment stamp selects the session whose tool is running", () => {
   const baseline = {};
   const solution = {};
-  rememberSessionEnv(baseline, "baseline");
-  rememberSessionEnv(solution, "solution-space");
+  rememberSessionEnv(baseline, rows[0]);
+  rememberSessionEnv(solution, rows[1]);
   expect(lookup(baseline)?.id).toBe("baseline");
   expect(lookup(solution)?.id).toBe("solution-space");
+});
+
+test("a callback from a replaced harness cannot claim the same session id", () => {
+  const old = {};
+  rememberSessionEnv(old, { ...rows[0] });
+  expect(lookup(old)).toBeUndefined();
 });
 
 test("one live conversation id still resolves without a stamp", () => {

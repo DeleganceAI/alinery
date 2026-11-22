@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fold, readLog, type State } from "playbook-engine/src/state.ts";
-import { completeSession, engineExecutions, forgetTask, type SessionHooks, prepareGraphs, resetGraphs, tickGraphs } from "../graph.ts";
+import { completeSession, continueReviewed, engineExecutions, forgetTask, type SessionHooks, prepareGraphs, resetGraphs, tickGraphs } from "../graph.ts";
 import { holdFromRust, holderBinary } from "../platform/rustHolder.ts";
 import { stepObjectBlob } from "./blobs.ts";
 import { setSessionName } from "./sessionOps.ts";
@@ -27,7 +27,7 @@ function forkJoin(repo: string, slug: string, extra: Record<string, unknown> = {
   writeFileSync(join(dir, "artifacts", "ticket.md"), "the task");
   const sections = KEYS.map((k) => `<!-- alinery:step ${k} -->\nDo ${k}.\n`).join("\n");
   writeFileSync(join(dir, "playbook.md"), `+++\nversion = 2\nkey = "fork-join"\ntitle = "Fork join"\ndescription = ""\ndefault_model = ""\ndefault_harness = "vinculum"\n\n${KEYS.map(step).join("\n")}\n+++\n${sections}\n`);
-  writeFileSync(join(dir, "task.md"), `name = "Fork join"\nworktree = ${JSON.stringify(repo)}\nhas_worktree = true\n`);
+  writeFileSync(join(dir, "task.md"), `name = "Fork join"\nslug = "${slug}"\nbranch = "fixture"\ncreated = 1\nengine_version = 2\nworktree = ${JSON.stringify(repo)}\nhas_worktree = true\n`);
   writeFileSync(join(dir, "execution.json"), JSON.stringify({ creation: "ready", initial_start_requested: true, max_live_sessions: 10, enabled_steps: KEYS, auto_approve_all: false, ...extra }));
   return dir;
 }
@@ -66,6 +66,14 @@ async function runUntil(condition: () => boolean, limit = 400) {
   if (!condition()) throw new Error("the run did not reach the expected point");
 }
 
+/** The agent reports the endpoint and the reviewer closes it. All other steps advance automatically. */
+async function finishRun(slug: string) {
+  await runUntil(() => engineExecutions(slug).some((e) => e.ready?.endpoint));
+  const end = engineExecutions(slug).find((e) => e.ready?.endpoint)!;
+  await continueReviewed(slug, end.id, end.sessionId!, end.ready!.revision);
+  await runUntil(() => done(slug));
+}
+
 describe("recovery from execution.json alone", () => {
   test("a daemon killed between two steps finishes the run with the same receipts, session ids and no agent session of its own", async () => {
     // The reference: an uninterrupted run.
@@ -73,14 +81,20 @@ describe("recovery from execution.json alone", () => {
     forkJoin(refRepo, "fj");
     resetGraphs();
     prepareGraphs(refRepo, agentHooks("fj"));
-    await runUntil(() => done("fj"));
+    await finishRun("fj");
     const reference = shape(loadStored(refRepo, "fj"));
     // The lineage a view draws from: which occurrence each execution produced and consumed.
     const lineageOf = (repo: string) => {
       const file = JSON.parse(readFileSync(executionPath(repo, "fj"), "utf8"));
-      return { occurrences: file.occurrences, inputs: Object.fromEntries(Object.entries(file.executions as Record<string, { candidate: { inputs: unknown } }>).map(([id, e]) => [id, e.candidate.inputs])) };
+      const rows = Object.entries(file.executions as Record<string, { candidate: { inputs: unknown }; parent_execution_ids: string[] }>);
+      return {
+        occurrences: file.occurrences,
+        inputs: Object.fromEntries(rows.map(([id, e]) => [id, e.candidate.inputs])),
+        parents: Object.fromEntries(rows.map(([id, e]) => [id, e.parent_execution_ids])),
+      };
     };
     const referenceLineage = lineageOf(refRepo);
+    expect(referenceLineage.parents).toEqual({ e1: [], e2: ["e1"], e3: ["e1"], e4: ["e2", "e3"] });
 
     const repo = mkdtempSync(join(tmpdir(), "vinculum-kill-"));
     const dir = forkJoin(repo, "fj");
@@ -98,7 +112,7 @@ describe("recovery from execution.json alone", () => {
     expect(existsSync(join(dir, "engine.jsonl"))).toBe(false);
     const after = agentHooks("fj");
     prepareGraphs(repo, after);
-    await runUntil(() => done("fj"));
+    await finishRun("fj");
     const finished = shape(loadStored(repo, "fj"));
     expect(finished).toEqual(reference);
     expect(lineageOf(repo)).toEqual(referenceLineage);
@@ -110,12 +124,32 @@ describe("recovery from execution.json alone", () => {
     }
   });
 
+  test("an unknown owner remains unconfirmed in persisted and streamed execution records", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-unknown-owner-"));
+    forkJoin(repo, "fj");
+    resetGraphs();
+    let observed = true;
+    prepareGraphs(repo, {
+      async open() {}, async send() {}, async stop() {}, bind() {},
+      async status() { return observed ? { kind: "idle" } : { kind: "unknown" }; },
+    });
+    await tickGraphs();
+    const owner = engineExecutions("fj")[0];
+    observed = false;
+    await tickGraphs();
+    expect(owner).toMatchObject({ status: "failed", unconfirmed: true });
+    const file = JSON.parse(readFileSync(executionPath(repo, "fj"), "utf8"));
+    expect(file.executions[owner.id].shutdown_confirmed).toBe(false);
+    const row = getTaskExecution(repo, "fj", "lane", "identity") as { state: typeof file };
+    expect(row.state.executions[owner.id].shutdown_confirmed).toBe(false);
+  });
+
   test("a step's manifest keeps the bytes it consumed after the live file changes and the daemon restarts", async () => {
     const repo = mkdtempSync(join(tmpdir(), "vinculum-history-"));
     const dir = forkJoin(repo, "fj");
     resetGraphs();
     prepareGraphs(repo, agentHooks("fj"));
-    await runUntil(() => done("fj"));
+    await finishRun("fj");
     const stored = JSON.parse(readFileSync(join(dir, "execution.json"), "utf8"));
     const sum = stored.engine.executions.find((e: { step: string }) => e.step === "sum");
     const original = sum.manifest.consumed[0];
@@ -154,6 +188,12 @@ describe("a task from before this change", () => {
       { t: "seeded", occurrences: [{ id: "seed/ticket.md", role: "ticket.md", path: join(artifacts, "ticket.md"), producer: null }] },
       { t: "reserved", execution: { id: "e1", step: "seed", depth: 1, inputs: { "ticket.md": ["seed/ticket.md"] }, outDir: join(artifacts, "1-seed-1"), origin: null, automatic: true } },
       { t: "started", execId: "e1", sessionId: "old-session" },
+      { t: "failed", execId: "e1", reason: "stopped" },
+      { t: "resumed", execId: "e1", sessionId: "retry" },
+      { t: "failed", execId: "e1", reason: "stopped" },
+      { t: "resumed", execId: "e1", sessionId: "retry" },
+      { t: "failed", execId: "e1", reason: "stopped" },
+      { t: "resumed", execId: "e1", sessionId: "final-owner" },
       { t: "accepted", execId: "e1", published: [{ id: "e1/numbers.md", role: "numbers.md", path: join(artifacts, "1-seed-1", "numbers.md"), producer: "e1" }] },
       { t: "exited", execId: "e1" },
     ];
@@ -169,6 +209,9 @@ describe("a task from before this change", () => {
 
     await saveEngineState(repo, "old", loaded.state);
     expect(loadEngineState(repo, "old").kind).toBe("stored");
+    const reply = getTaskExecution(repo, "old", "lane", "identity") as { state: { executions: Record<string, unknown>; occurrences: Record<string, unknown> } };
+    expect(reply.state.executions.e1).toMatchObject({ owner_session_id: "final-owner", previous_session_ids: ["old-session", "retry"], parent_execution_ids: [] });
+    expect(reply.state.occurrences["e1/numbers.md"]).toMatchObject({ producer_execution_id: "e1" });
     expect(readFileSync(join(dir, "engine.jsonl"), "utf8")).toBe(text);
     // The stored copy now wins even if the log is changed: it is never read again.
     writeFileSync(join(dir, "engine.jsonl"), "this is not json\n");

@@ -118,10 +118,14 @@ export function parseFileTrailers(text: string): { caption: string; files: { pat
   return { caption: captionLines.join("\n").replace(/^\n+/, "").replace(/\n+$/, ""), files };
 }
 
+/**
+ * The transcript row for a send's attachments. `name` is the copy the daemon holds (the same file the model
+ * read), so a row with no `src` can still show the image: the pane reads it back by that name.
+ */
 export function draftToRowAttachments(attachments: DraftAttachment[]): UserRowAttachment[] {
   return attachments.map((item) => ({
     kind: item.kind,
-    name: item.name,
+    name: item.copiedName ?? item.name,
     mimeType: item.mimeType,
     ...(item.previewUrl ? { src: item.previewUrl } : {}),
   }));

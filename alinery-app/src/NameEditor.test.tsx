@@ -123,11 +123,11 @@ describe("work name editor", () => {
 describe("pending session name", () => {
   const live = { lifecycle: { state: "live" }, state: { process: { state: "alive" }, agent: { state: "busy" } } };
 
-  it("waits only while a non-idle live Vinculum session has no name", () => {
-    expect(awaitingSessionName({ harness: "vinculum" }, live)).toBe(true);
+  it("stops waiting for a session name when the turn settles or fails", () => {
     expect(awaitingSessionName({ harness: "vinculum" }, live)).toBe(true);
     expect(awaitingSessionName({ harness: "vinculum" }, { ...live, state: { ...live.state, process: { state: "starting" } } })).toBe(true);
     expect(awaitingSessionName({ harness: "vinculum" }, { ...live, state: { ...live.state, agent: { state: "idle" } } })).toBe(false);
+    expect(awaitingSessionName({ harness: "vinculum" }, { ...live, state: { ...live.state, agent: { state: "errored" } } })).toBe(false);
     expect(awaitingSessionName({ harness: "vinculum", name: "Repair cache" }, live)).toBe(false);
     expect(awaitingSessionName({ harness: "vinculum", name_error: "unreadable" }, live)).toBe(false);
     expect(awaitingSessionName({ harness: "vinculum", archived: true }, live)).toBe(false);

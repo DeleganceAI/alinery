@@ -11,7 +11,7 @@ import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
 import type { CreateExecutionSessionReply, CreateExecutionSessionRequest, SessionMeta, SessionName, SessionNameSource, SessionNotificationClearRef } from "../types";
 import type { ImageContent } from "../vinculumRpc";
-import { newMutationMeta } from "./mutation";
+import { confirmDelivery, newMutationMeta } from "./mutation";
 
 /** The client, replaceable by a test (a fake transport stands in for the daemon). */
 export const sessionApi = {
@@ -161,7 +161,7 @@ export const controlsOf = (c: SessionControlsMessage | undefined): SessionContro
 /** A message to the harness of a live session. */
 /** A prompt's images as the wire carries them: bytes, not the base64 the composer holds. */
 export const promptImages = (images: ImageContent[] = []) =>
-  images.map((image) => ({ name: "", mimeType: image.mimeType, bytes: Uint8Array.from(atob(image.data), (c) => c.charCodeAt(0)) }));
+  images.map((image) => ({ name: image.name ?? "", mimeType: image.mimeType, bytes: Uint8Array.from(atob(image.data), (c) => c.charCodeAt(0)) }));
 
 /** `images` go to the model with the text, in the same user message. */
 export async function promptSession(repo: string, id: string, text: string, images?: ImageContent[], model?: string): Promise<void> {
@@ -171,6 +171,12 @@ export async function promptSession(repo: string, id: string, text: string, imag
 
 export async function abortSession(repo: string, id: string): Promise<void> {
   await call(() => sessionApi.sessions(repo).abortSession({ sessionId: id }));
+}
+
+/** Continue the same conversation only if this exact failed turn still owns the retry. */
+export async function retryTurn(repo: string, sessionId: string, failedEntryId: string): Promise<void> {
+  const request = { meta: newMutationMeta(), sessionId, failedEntryId };
+  await confirmDelivery("retry", () => sessionApi.sessions(repo).retryTurn(request));
 }
 
 export async function setSessionModel(repo: string, id: string, model: string): Promise<SessionControls> {

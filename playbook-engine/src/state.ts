@@ -61,6 +61,15 @@ export interface Manifest {
   worktree?: { ref: string; tree: string };
 }
 
+/** The checked publications and routing for this work revision. Hashes identify the bytes the human reviewed. */
+export interface ReadyAssessment {
+  revision: number;
+  roles: string[];
+  hashes: string[];
+  destinations: string[];
+  endpoint: boolean;
+}
+
 export interface Execution {
   id: string;
   step: string;
@@ -79,17 +88,27 @@ export interface Execution {
   origin: string | null;
   status: ExecutionStatus;
   sessionId: string | null;
+  /** Earlier conversations that owned this execution, in order. Resuming the same conversation adds no entry. */
+  previousSessionIds?: string[];
   /**
    * Whether this execution may finish without a person, snapshotted when it was reserved.
    * Absent on a log written before the snapshot: the playbook default still applies.
    * A later edit of the task set does not change it.
    */
   automatic?: boolean;
-  /** Human granted permission to finish this particular execution. Reset on resume. */
+  /** Human granted permission to finish this execution, including after a resume. */
   permitted: boolean;
   /** Immutable publication set. Set once on acceptance; later files never join it. */
   receipt: Occurrence[] | null;
   failure: string | null;
+  /** Increases on work admission, resume, or a change to a previous assessment. Older state starts at zero. */
+  workRevision?: number;
+  attempt?: number;
+  ready?: ReadyAssessment;
+  /** The latest feedback on a submitted handoff. Its successful reply allows a new human review. */
+  pendingReviewInput?: string;
+  /** Used to replay a reviewed Continue only for the revision actually accepted. */
+  acceptedRevision?: number;
   /** Failed, but the harness could not confirm the process stopped: it still holds capacity and the worktree until exit is confirmed. */
   unconfirmed?: boolean;
   /** Set when the execution first starts, extended when it is accepted. Absent before then and on a state converted from an old log. */
@@ -111,6 +130,7 @@ export interface State {
   /** Insertion order is reservation order, which is also launch priority. */
   executions: Map<string, Execution>;
   ambiguities: Ambiguity[];
+  stepModes?: Record<string, boolean>;
 }
 
 export type Event =
@@ -118,8 +138,11 @@ export type Event =
   | { t: 'reserved'; execution: Pick<Execution, 'id' | 'step' | 'depth' | 'inputs' | 'outDir' | 'origin' | 'automatic'> }
   | { t: 'started'; execId: string; sessionId: string; consumed?: FileRecord[] }
   | { t: 'resumed'; execId: string; sessionId: string; consumed?: FileRecord[] }
+  | { t: 'step-mode'; step: string; automatic: boolean }
+  | { t: 'work-changed'; execId: string; reviewInput?: string }
+  | { t: 'ready'; execId: string; assessment: ReadyAssessment }
   | { t: 'permitted'; execId: string }
-  | { t: 'accepted'; execId: string; published: Occurrence[]; files?: FileRecord[]; worktree?: { ref: string; tree: string } }
+  | { t: 'accepted'; execId: string; revision?: number; published: Occurrence[]; files?: FileRecord[]; worktree?: { ref: string; tree: string } }
   | { t: 'exited'; execId: string }
   | { t: 'failed'; execId: string; reason: string; unconfirmed?: boolean }
   | { t: 'ambiguity'; ambiguity: Ambiguity };
@@ -141,12 +164,43 @@ export function apply(state: State, ev: Event): void {
     case 'started':
     case 'resumed':
       if (!e) return;
+      if (e.sessionId && e.sessionId !== ev.sessionId) {
+        e.previousSessionIds = [...(e.previousSessionIds ?? []).filter((id) => id !== ev.sessionId), e.sessionId];
+      }
       e.sessionId = ev.sessionId;
       if (ev.consumed && !e.manifest) e.manifest = { consumed: ev.consumed, published: [] };
       e.status = 'live';
       e.failure = null;
       delete e.unconfirmed;
-      if (ev.t === 'resumed') e.permitted = false; // permission belonged to the previous owner
+      if (ev.t === 'resumed') {
+        e.attempt = (e.attempt ?? 0) + 1;
+        e.workRevision = (e.workRevision ?? 0) + 1;
+        delete e.ready;
+        delete e.pendingReviewInput;
+      }
+      return;
+    case 'step-mode':
+      state.stepModes = { ...state.stepModes, [ev.step]: ev.automatic };
+      for (const item of state.executions.values()) {
+        if (item.step !== ev.step || item.receipt) continue;
+        item.automatic = ev.automatic;
+        if (!ev.automatic) item.permitted = false; // Wait for me supersedes an earlier one-time permission.
+      }
+      return;
+    case 'work-changed':
+      if (e) {
+        e.workRevision = (e.workRevision ?? 0) + 1;
+        delete e.ready;
+        if (ev.reviewInput) e.pendingReviewInput = ev.reviewInput;
+        else delete e.pendingReviewInput;
+      }
+      return;
+    case 'ready':
+      if (e) {
+        e.workRevision = ev.assessment.revision;
+        e.ready = ev.assessment;
+        delete e.pendingReviewInput;
+      }
       return;
     case 'permitted':
       if (e) e.permitted = true;
@@ -154,6 +208,9 @@ export function apply(state: State, ev: Event): void {
     case 'accepted':
       if (!e || e.receipt) return;
       e.receipt = ev.published;
+      if (ev.revision !== undefined) e.acceptedRevision = ev.revision;
+      delete e.ready;
+      delete e.pendingReviewInput;
       if (ev.files || ev.worktree) {
         const m = (e.manifest ??= { consumed: [], published: [] });
         m.published = ev.files ?? [];
@@ -164,6 +221,8 @@ export function apply(state: State, ev: Event): void {
     case 'exited':
       if (!e || e.status === 'done') return;
       delete e.unconfirmed;
+      delete e.ready;
+      delete e.pendingReviewInput;
       if (e.receipt) {
         e.status = 'done';
         e.failure = null;
@@ -176,6 +235,8 @@ export function apply(state: State, ev: Event): void {
       if (!e || e.status === 'done') return;
       e.status = 'failed';
       e.failure = ev.reason;
+      delete e.ready;
+      delete e.pendingReviewInput;
       if (ev.unconfirmed) e.unconfirmed = true;
       else delete e.unconfirmed;
       return;
@@ -235,12 +296,13 @@ export interface StateJson {
   seeds: Occurrence[];
   executions: Execution[];
   ambiguities: Ambiguity[];
+  stepModes?: Record<string, boolean>;
 }
 
 export function stateToJson(state: State): StateJson {
-  return { seeds: state.seeds, executions: [...state.executions.values()], ambiguities: state.ambiguities };
+  return { seeds: state.seeds, executions: [...state.executions.values()], ambiguities: state.ambiguities, ...(state.stepModes && { stepModes: state.stepModes }) };
 }
 
 export function stateFromJson(json: StateJson): State {
-  return { seeds: json.seeds ?? [], executions: new Map((json.executions ?? []).map((e) => [e.id, e])), ambiguities: json.ambiguities ?? [] };
+  return { seeds: json.seeds ?? [], executions: new Map((json.executions ?? []).map((e) => [e.id, e])), ambiguities: json.ambiguities ?? [], ...(json.stepModes && { stepModes: json.stepModes }) };
 }

@@ -142,6 +142,11 @@ describe("task activity (resolve_task_activity_for_repo)", () => {
     expect(a?.status).toBe("");
     expect(a?.activeSession).toBeUndefined();
   });
+  test("a failed turn needs attention until the session exits or resumes", async () => {
+    const sessions = { s1: { created: 1 } };
+    expect((await run(sessions, [live("t", "s1", "errored")]))?.status).toBe("failed");
+    expect((await run(sessions, [live("t", "s1", "errored", "exited")]))?.status).toBe("");
+  });
   test("equal active sessions break ties on created, then descending id", async () => {
     const sessions = { "s-a": { created: 10 }, "s-b": { created: 10 }, "s-newer": { created: 20 } };
     const all = ["s-b", "s-newer", "s-a"].map((id) => live("t", id, "busy"));

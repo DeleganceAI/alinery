@@ -161,6 +161,7 @@ function mapPart(raw: unknown): ChatPart | null {
       type: "image",
       mimeType: typeof part.mimeType === "string" ? part.mimeType : "image/png",
       ...(typeof part.data === "string" ? { data: part.data } : {}),
+      ...(typeof part.name === "string" && part.name.length > 0 ? { name: part.name } : {}),
     };
   }
   return null;
@@ -224,6 +225,9 @@ export function mapHydratedMessage(raw: unknown, rowId?: string): ChatMessage | 
   if (!role) return null;
   const mapped: ChatMessage = { role, content: mapContent(message.content) };
   if (typeof message.stopReason === "string") mapped.stopReason = message.stopReason;
+  if (role === "assistant" && mapped.stopReason === "error" && typeof message.errorMessage === "string" && message.errorMessage.trim()) {
+    mapped.turnError = { reason: message.errorMessage };
+  }
   if (typeof message.customType === "string") mapped.customType = message.customType;
   if (rowId) mapped.rowId = rowId;
   if (typeof message.timestamp === "number") mapped.timestamp = message.timestamp;
@@ -471,6 +475,23 @@ function applyLoginProviders(state: ChatTranscriptState, data: Record<string, un
   return { ...state, sessionMeta: { ...state.sessionMeta, loginProviders } };
 }
 
+/**
+ * A prompt's image parts as transcript chips. The pane shows the bytes when the part carried them (a live
+ * message) and otherwise reads the named copy back from the daemon, so history costs the wire nothing.
+ * `named` is the row's own image chips, in order: a live part carries the bytes but not always the name the
+ * copy went under, and the row already knows it.
+ */
+function imageRowAttachments(content: ChatMessage["content"], named: UserRowAttachment[] = []): UserRowAttachment[] {
+  let index = -1;
+  return content.flatMap((part) => {
+    if (part.type !== "image") return [];
+    index += 1;
+    const chip: UserRowAttachment = { kind: "image", name: part.name ?? named[index]?.name ?? "", mimeType: part.mimeType };
+    if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
+    return [chip];
+  });
+}
+
 function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entrySeq: number; liveAssistantKeys: Record<string, string> } {
   let entrySeq = 0;
   const entries: ChatEntry[] = [];
@@ -493,21 +514,14 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
         .map((part) => (part.type === "text" ? part.text : ""))
         .join("");
       const parsed = parseFileTrailers(joined);
-      const attachments: UserRowAttachment[] = [
-        ...message.content.flatMap((part) => {
-          if (part.type !== "image") return [];
-          const chip: UserRowAttachment = { kind: "image", name: "image", mimeType: part.mimeType };
-          if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
-          return [chip];
-        }),
-        ...parsed.files.map((file) => ({ kind: "file" as const, name: file.name })),
-      ];
+      const attachments: UserRowAttachment[] = [...imageRowAttachments(message.content), ...parsed.files.map((file) => ({ kind: "file" as const, name: file.name }))];
       entries.push({
         id: alloc(),
         at: message.at,
         actor: ACTOR.you,
         type: "prompt",
         text: parsed.caption,
+        ...(message.nudgeDeliveryId ? { nudgeDeliveryId: message.nudgeDeliveryId } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
       });
       continue;
@@ -530,6 +544,9 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
         message.stopReason === "aborted",
       );
       entries.push(...exploded);
+      if (message.turnError) {
+        entries.push({ id: alloc("error"), type: "error", actor: ACTOR.agent, text: message.turnError.reason, at: message.at, failedEntryId: message.turnError.failedEntryId });
+      }
     }
   }
   return { entries, entrySeq, liveAssistantKeys: {} };
@@ -552,6 +569,8 @@ export type VinculumMessage = {
   toolName?: string;
   toolCallId?: string;
   isError?: boolean;
+  turnError?: string;
+  nudgeDeliveryId?: string;
   runningToolIds?: string[];
   /** When the message was complete, ms since the epoch. */
   at?: number;
@@ -576,6 +595,8 @@ function vinculumChatMessage(message: VinculumMessage, index: number): ChatMessa
   const raw = message.content !== undefined ? message : { ...message, content: [{ type: "text", text: message.text ?? "" }] };
   const mapped = mapHydratedMessage(raw, message.id && message.id.length > 0 ? message.id : `v${index}`);
   if (!mapped) return null;
+  if (mapped.role === "user" && message.nudgeDeliveryId) mapped.nudgeDeliveryId = message.nudgeDeliveryId;
+  if (mapped.role === "assistant" && message.turnError) mapped.turnError = { reason: message.turnError, failedEntryId: message.id };
   if (message.streaming && mapped.role === "toolResult") mapped.streaming = true;
   if (message.at) mapped.at = message.at;
   const running = new Set(message.runningToolIds ?? []);
@@ -1121,12 +1142,10 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
                 parsedIncoming.caption === lastUserEntry.text ||
                 (incoming === "" && attachments.some((item) => item.kind === "image"))));
           if (sameOptimistic) {
-            const imageChips: UserRowAttachment[] = content.flatMap((part) => {
-              if (part.type !== "image") return [];
-              const chip: UserRowAttachment = { kind: "image", name: "image", mimeType: part.mimeType };
-              if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
-              return [chip];
-            });
+            const imageChips = imageRowAttachments(
+              content,
+              attachments.filter((item) => item.kind === "image"),
+            );
             const fileChips: UserRowAttachment[] =
               parsedIncoming.files.length > 0
                 ? parsedIncoming.files.map((file) => ({ kind: "file" as const, name: file.name }))

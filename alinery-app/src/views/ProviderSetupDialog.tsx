@@ -31,6 +31,7 @@ export function ProviderSetupDialog({
   initialTab = "accounts",
   preselect = "",
   unsignedOpensAccounts = false,
+  repo,
   current,
   onPick,
   onClose,
@@ -39,6 +40,11 @@ export function ProviderSetupDialog({
   initialTab?: ProvidersDialogTab;
   /** `/model provider/id` typed in a chat: filters the Models tab to it. */
   preselect?: string;
+  /**
+   * The repository whose machine these accounts belong to. A chat names its own, so signing in from a
+   * chat reaches the daemon that runs it; left out, the open repository's daemon answers (Settings).
+   */
+  repo?: string;
   /** The model the open session will use next. Form pickers have no session, so they omit this. */
   current?: string;
   /**
@@ -59,7 +65,7 @@ export function ProviderSetupDialog({
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
   const [modelError, setModelError] = useState<string | null>(null);
   const [tab, setTab] = useState<ProvidersDialogTab>(initialTab);
-  const access = useProviderAccess(true);
+  const access = useProviderAccess(true, repo);
   // Same store the old ModelInput picker used, so stars survive the swap rather than resetting.
   const [favorites, setFavorites] = useState<string[]>([]);
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
@@ -76,7 +82,7 @@ export function ProviderSetupDialog({
       })
       .catch(() => undefined);
     void agent
-      .readModelRoles()
+      .readModelRoles(repo)
       .then((roles) => {
         if (!cancelled) setModelRoles(roles);
       })
@@ -102,7 +108,7 @@ export function ProviderSetupDialog({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [repo]);
 
   const applyModel = useCallback((provider: string, modelId: string) => {
     setModelError(null);
@@ -127,12 +133,12 @@ export function ProviderSetupDialog({
       if (model) next[role] = model;
       else delete next[role];
       try {
-        setModelRoles(await agent.writeModelRoles(next));
+        setModelRoles(await agent.writeModelRoles(next, repo));
       } catch (error) {
         setModelError(String(error));
       }
     },
-    [modelRoles],
+    [modelRoles, repo],
   );
 
   // In auto mode the component is a check first and a dialog second: it stays invisible until the
@@ -231,7 +237,7 @@ export function ProviderSetupDialog({
       }}
       footer={<CustomEndpointForm access={access} />}
     >
-      <SignInTarget />
+      <SignInTarget repo={repo} />
       <ProviderAccessPanel access={access} />
     </ChatModelDialog>
   );

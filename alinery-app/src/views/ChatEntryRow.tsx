@@ -1,7 +1,9 @@
 import { memo, type ReactNode, useState } from "react";
 import { ChatMarkdown, CopyChatMessageButton } from "../chat/CopyMessage";
 import { type ChatStampParts, formatChatStamp, formatIso } from "../chat/format";
-import { type Actor, type ChatEntry, type ChatEntryType, TYPE_LABEL, whoLabel, whoLane } from "../chat/types";
+import { PromptImages } from "../chat/PromptImages";
+import { type Actor, type ChatEntry, type ChatEntryType, TYPE_LABEL, type WrapUpPrompt, whoLabel, whoLane } from "../chat/types";
+import type { TurnRetryControl } from "../useTurnRetry";
 
 function kindFace(type: ChatEntryType): string {
   if (type === "prompt" || type === "follow_up") return "chat-face-strong";
@@ -14,6 +16,14 @@ function Status({ children, tone }: { children: ReactNode; tone?: "ok" | "bad" |
   return <span className={`chat-status${tone ? ` chat-status-${tone}` : ""}`}>{children}</span>;
 }
 
+const nudgeStatusLabel: Record<WrapUpPrompt["status"], string> = {
+  sending: "Sending…",
+  pending: "Sent",
+  unconfirmed: "Delivery unconfirmed",
+  failed: "Not sent",
+  ended: "Turn ended · delivery unconfirmed",
+};
+
 function stampFor(at: number | undefined, parts: ChatStampParts): string {
   if (at == null) return "";
   return formatChatStamp(at, parts);
@@ -23,7 +33,7 @@ function copyTextForEntry(entry: ChatEntry): string {
   switch (entry.type) {
     case "prompt":
     case "follow_up": {
-      const attachments = entry.attachments?.map((item) => `Attached ${item.kind}: ${item.name}`) ?? [];
+      const attachments = entry.attachments?.map((item) => `Attached ${item.kind}: ${item.name || item.kind}`) ?? [];
       return [entry.text, ...attachments].filter(Boolean).join("\n");
     }
     case "slash":
@@ -126,11 +136,7 @@ function UserRowBody({ entry }: { entry: Extract<ChatEntry, { type: "prompt" | "
           {folded ? `Show all · ${lines} ${lines === 1 ? "line" : "lines"}` : "Show less"}
         </button>
       ) : null}
-      {images.length > 0 ? (
-        <div className="chat-entry-thumbs">
-          {images.map((item) => (item.src ? <img key={`${item.name}:${item.src}`} alt={item.name} src={item.src} /> : <span key={item.name}>{item.name}</span>))}
-        </div>
-      ) : null}
+      {images.length > 0 ? <PromptImages images={images} /> : null}
       {files.length > 0 ? (
         <div className="chat-entry-chips">
           {files.map((item) => (
@@ -145,6 +151,7 @@ function UserRowBody({ entry }: { entry: Extract<ChatEntry, { type: "prompt" | "
 function ChatEntryRowImpl({
   entry,
   onApprove,
+  turnRetry,
   narration = false,
   showDate = true,
   showTime = true,
@@ -154,6 +161,7 @@ function ChatEntryRowImpl({
 }: {
   entry: ChatEntry;
   onApprove?: (id: string, allow: boolean) => void;
+  turnRetry?: TurnRetryControl;
   /** Agent text followed by more work in its turn (see `journalItems`). */
   narration?: boolean;
   showDate?: boolean;
@@ -229,6 +237,14 @@ function ChatEntryRowImpl({
       return (
         <Msg at={entry.at} actor={entry.actor} type={entry.type} stamp={stamp} showActorLabels={showActorLabels} copyText={copyText}>
           <p>{entry.text}</p>
+          {turnRetry && (
+            <div className="chat-msg-actions">
+              <button type="button" className="btn ghost small" disabled={turnRetry.pending} onClick={turnRetry.retry}>
+                {turnRetry.pending ? "Retrying…" : turnRetry.unconfirmed ? "Check delivery" : "Retry"}
+              </button>
+              {turnRetry.error && <span role="alert">{turnRetry.error}</span>}
+            </div>
+          )}
         </Msg>
       );
     case "prompt":
@@ -241,7 +257,16 @@ function ChatEntryRowImpl({
           stamp={stamp}
           showActorLabels={showActorLabels}
           copyText={entry.failed ? copyTextForEntry(entry) : copyText}
-          kicker={entry.failed ? <Status tone="bad">not sent</Status> : undefined}
+          kicker={
+            entry.nudgeDeliveryId ? (
+              <>
+                <span>Wrap-up nudge</span>
+                {entry.nudgeStatus && <Status tone={entry.nudgeStatus === "failed" ? "bad" : undefined}>{nudgeStatusLabel[entry.nudgeStatus]}</Status>}
+              </>
+            ) : entry.failed ? (
+              <Status tone="bad">not sent</Status>
+            ) : undefined
+          }
         >
           <UserRowBody entry={entry} />
         </Msg>

@@ -43,7 +43,7 @@ type InferenceFile = {
   pots?: Record<string, { token: string; expires_at: number }>;
 };
 
-let installed: { models: Pick<MutableModels, "setProvider">; appConfig: string } | null = null;
+let installed: { models: Pick<MutableModels, "setProvider">; appConfig: string; registered: Set<string> } | null = null;
 
 export function pairingConfigDir(appConfig: string): string {
   const dir = dirname(appConfig);
@@ -90,18 +90,20 @@ export function resolveModel(appConfig: string, requested: string): ResolvedMode
 
 /** A team's key can land after the daemon started; its provider exists only once registered. */
 export function refreshHostedProviders() {
-  if (installed) registerHostedProviders(installed.models, installed.appConfig);
+  if (!installed) return;
+  const { models, appConfig, registered } = installed;
+  // A registered provider reads its token and catalog on every call, so only a pot it has not seen needs registering.
+  for (const teamId of Object.keys(readInference(appConfig)?.pots ?? {})) {
+    if (registered.has(teamId)) continue;
+    registered.add(teamId);
+    registerHosted(models, appConfig, `alinery:${teamId}`, teamId);
+  }
 }
 
 export function installAlineryProvider(models: Pick<MutableModels, "setProvider">, appConfig: string) {
-  installed = { models, appConfig };
-  registerHostedProviders(models, appConfig);
-}
-
-function registerHostedProviders(models: Pick<MutableModels, "setProvider">, appConfig: string) {
+  installed = { models, appConfig, registered: new Set() };
   registerHosted(models, appConfig, "alinery", null);
-  const pots = readInference(appConfig)?.pots ?? {};
-  for (const teamId of Object.keys(pots)) registerHosted(models, appConfig, `alinery:${teamId}`, teamId);
+  refreshHostedProviders();
 }
 
 function registerHosted(models: Pick<MutableModels, "setProvider">, appConfig: string, id: string, teamId: string | null) {
@@ -152,7 +154,8 @@ function registerHosted(models: Pick<MutableModels, "setProvider">, appConfig: s
 
 function hostedToken(inference: InferenceFile | null, teamId: string | null): string | undefined {
   if (!inference) return undefined;
-  const token = teamId ? inference.pots?.[teamId]?.token : inference.token;
+  if (!teamId) return inference.token || undefined;
+  const token = inference.pots?.[teamId]?.token;
   return token?.startsWith("inf_") ? token : undefined;
 }
 

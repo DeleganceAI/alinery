@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
-import { ArtifactTree, isDirectOwnedArtifactNode, treeArtifactImages } from "../ArtifactTree";
+import { ArtifactTree, artifactTabPath, isDirectOwnedArtifactNode, treeArtifactImages } from "../ArtifactTree";
 import { AttachmentPreview } from "../AttachmentPreview";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import type { ArtifactPaneTab } from "../artifactClassification";
@@ -13,6 +13,7 @@ import { CodeView } from "../CodeView";
 import { classifyAttachment } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
+import { lineageSessionIntent } from "../executionLineage";
 import { GitDiffView, GitPanel, gitDiffTab } from "../GitPanel";
 import { MainTabs, useOpenTabs } from "../MainTabs";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
@@ -21,8 +22,10 @@ import { PlaybookGraph } from "../PlaybookGraph";
 import { PullCommentsButton } from "../PullCommentsButton";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import { RepoFileTree } from "../RepoFileTree";
+import { ReviewedCompletion } from "../ReviewedCompletion";
 import { relatedRepoKey, relatedStoredPath, sameMachine } from "../remoteRepo";
 import { revealPath } from "../revealPath";
+import { SessionLineage } from "../SessionLineage";
 import {
   classifySessionNotice,
   DEFAULT_TASK_SESSION_SORT,
@@ -36,7 +39,7 @@ import {
   sessionStartedAt,
   sessionUpdatedAt,
 } from "../sessionAttention";
-import { canAbortChatSession } from "../sessionMessage";
+import { canAbortChatSession, isTurnActive } from "../sessionMessage";
 import {
   ArchiveTaskModal,
   ArtifactProvenanceBadges,
@@ -45,6 +48,7 @@ import {
   EmptyState,
   ExecutionAvailabilityNotice,
   ExecutionOutputs,
+  executionControlsAvailable,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   harnessDisplayName,
@@ -73,7 +77,7 @@ import {
   useTaskArtifacts,
 } from "../sync/artifacts";
 import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
-import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
+import { useTaskExecution } from "../sync/execution";
 import { type GitDiffTarget, pushAndCompareUrlForRepo } from "../sync/git";
 import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
 import { abortSession, archiveSession, markSessionNotificationRead, renameSession } from "../sync/sessions";
@@ -166,6 +170,7 @@ type OpenArtifactTab = {
   mode: "preview" | "raw";
   diff?: GitDiffTarget;
   session?: TaskSessionTarget;
+  sourceSessionId?: string;
 };
 
 /** One choice for every task: the header opens compact until the user expands it. */
@@ -209,7 +214,15 @@ export function TaskDetail({
   onBack: () => void;
   /** The conversation of a session opened here, for its tab. `onClose` closes the tab (the session was archived); `onOpenPath`
    * opens a path from the conversation (`artifact:<name>` or `repo:<path>`) in this task's tabs. */
-  renderSession: (target: TaskSessionTarget, actions: { onClose: () => void; onOpenPath: (target: string, keep?: boolean) => void }) => ReactNode;
+  renderSession: (
+    target: TaskSessionTarget,
+    actions: {
+      active: boolean;
+      onClose: () => void;
+      onOpenPath: (target: string, keep?: boolean) => void;
+      onOpenSession: (session: SessionMeta, intent?: "history" | "attach") => void;
+    },
+  ) => ReactNode;
   onNewSession: () => void;
   onOpenRelatedTask: (slug: string, relatedRepoPath?: string) => void;
   knownRepos?: string[];
@@ -360,9 +373,39 @@ export function TaskDetail({
   const selectedArtifactNode = activeArtifactTab?.node ?? null;
   const artifactMode = activeArtifactTab?.mode ?? "preview";
   const setArtifactMode = fileTabs.setMode;
+  const navigatorArtifacts = useMemo(
+    () => artifactItems.filter((item) => !item.attachment).map((item) => ({ item, node: findOwnedArtifactNode(artifactTree, item.name) })),
+    [artifactItems, artifactTree],
+  );
+  const defaultFileSession = (tab: OpenArtifactTab) => {
+    if (tab.kind === "artifact" && (!tab.node || isDirectOwnedArtifactNode(tab.node))) {
+      const artifact = navigatorArtifacts.find(({ item, node }) => (tab.node ? node?.id === tab.node.id : item.name === tab.name))?.item;
+      const state = executionView?.state;
+      const path = artifact?.name ?? tab.name;
+      const producers = new Set(
+        Object.values(state?.occurrences ?? {})
+          .filter((o) => o.relative_path === path)
+          .map((o) => o.producer_execution_id),
+      );
+      const [onlyProducer] = producers;
+      const executionId = artifact?.execution_id || (producers.size === 1 && onlyProducer);
+      const owner = artifact?.session_id || (executionId && state?.executions?.[executionId]?.owner_session_id);
+      if (owner && sessions.some((s) => s.id === owner)) return owner;
+    }
+    return sessions[sessions.length - 1]?.id;
+  };
+  const fileSessionId = activeArtifactTab && (activeArtifactTab.sourceSessionId ?? defaultFileSession(activeArtifactTab));
+  const fileSession = fileSessionId ? sessions.find((s) => s.id === fileSessionId) : undefined;
+  const openFileTab = (tab: OpenArtifactTab, keep: boolean, origin?: string) => {
+    const current = fileTabs.current?.session;
+    const sourceSessionId = origin ?? (current?.taskSlug === slug ? current.id : fileSessionId);
+    // A click in the navigator can reopen the same file from a different handoff.
+    fileTabs.open({ ...tab, sourceSessionId }, keep, origin ? { sourceSessionId: origin } : undefined);
+  };
   // Lists open a file temporarily on a click and keep it on a double click (the second click's `detail` is 2).
-  const openArtifactTab = (name: string, node: ArtifactTreeNode | null, kind: OpenArtifactTab["kind"] = "artifact", keep = true) => {
-    fileTabs.open({ key: kind === "repo" ? `repo:${name}` : (node?.id ?? name), kind, name, node, mode: "preview" }, keep);
+  const openArtifactTab = (name: string, node: ArtifactTreeNode | null, kind: OpenArtifactTab["kind"] = "artifact", keep = true, origin?: string) => {
+    const path = artifactTabPath(artifactTree, node, name);
+    openFileTab({ key: kind === "repo" ? `repo:${name}` : (node?.id ?? name), kind, name: path, node, mode: "preview" }, keep, origin);
     setArtifactErr(null);
   };
   const selectedArtifactImages = useMemo(() => treeArtifactImages(artifactTree, selectedArtifactNode), [artifactTree, selectedArtifactNode]);
@@ -432,18 +475,6 @@ export function TaskDetail({
   const commitFetchedTask = (fetched: Task | null) => {
     setTask((current) => (current && fetched && sameTask(current, fetched) ? current : fetched));
   };
-  const allowCompletion = async (executionId: string) => {
-    if (executionView?.live?.status !== "available" || executionView.state.history_only || executionError || busy) return;
-    setBusy(`allow:${executionId}`);
-    try {
-      await allowExecutionCompletion(repoPath, slug, executionId, executionView.revision);
-    } catch (error) {
-      setExecutionError(String(error));
-    } finally {
-      setBusy("");
-    }
-  };
-
   const load = async () => {
     const isCurrent = beginNameRead();
     const managerResult = await fetchSubtaskState(repoPath, slug).then(
@@ -717,13 +748,17 @@ export function TaskDetail({
   const openSession = (ownerTaskSlug: string, s: SessionMeta & { name?: string | null }, intent?: TaskSessionTarget["intent"]) => {
     if (!s.worktree) return;
     const session = { taskSlug: ownerTaskSlug, id: s.id, cwd: s.worktree, phase: s.phase, harness: s.harness, model: s.model, playbook: s.playbook, generic: s.generic, intent };
-    fileTabs.open({ key: `session:${ownerTaskSlug}:${s.id}`, kind: "session", name: s.id, label: s.name || s.phase || "Session", node: null, mode: "preview", session });
+    fileTabs.open(
+      { key: `session:${ownerTaskSlug}:${s.id}`, kind: "session", name: s.id, label: s.name || s.phase || "Session", node: null, mode: "preview", session },
+      true,
+      intent ? { session } : undefined,
+    );
     markSessionNotificationRead(repoPath, ownerTaskSlug, s.id).catch(() => {});
   };
-  const openSessionPath = (target: string, keep?: boolean) => {
+  const openSessionPath = (origin: string, target: string, keep?: boolean) => {
     const name = target.slice(target.indexOf(":") + 1);
-    if (target.startsWith("artifact:")) openArtifactTab(name, findOwnedArtifactNode(artifactTree, name) ?? null, "artifact", keep);
-    else openArtifactTab(name, null, "repo", keep);
+    if (target.startsWith("artifact:")) openArtifactTab(name, findOwnedArtifactNode(artifactTree, name) ?? null, "artifact", keep, origin);
+    else openArtifactTab(name, null, "repo", keep, origin);
   };
   const openManagerSession = (ownerTaskSlug: string, manager: SessionMeta) => openSession(ownerTaskSlug, manager, "attach");
 
@@ -873,9 +908,11 @@ export function TaskDetail({
     );
   };
 
-  const autoApproveAll = task?.auto_approve_all === true;
+  const autoApproveAll = feed.reply ? feed.reply.state.auto_approve_all === true : task?.auto_approve_all === true;
+  const autoApproveDisabled =
+    !task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve" || !!feed.error || !executionControlsAvailable(feed.reply);
   const setAutoApproveAll = (enabled: boolean) => {
-    if (!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve") return;
+    if (autoApproveDisabled) return;
     setBusy("auto-approve");
     setErr(null);
     const epoch = taskMutationEpoch.current;
@@ -885,7 +922,6 @@ export function TaskDetail({
         if (epoch === taskMutationEpoch.current) {
           taskMutationEpoch.current += 1;
           setTask(updated);
-          setExecutionView((current) => (current ? { ...current, state: { ...current.state, auto_approve_all: updated.auto_approve_all === true } } : current));
         } else {
           void load();
         }
@@ -1009,11 +1045,11 @@ export function TaskDetail({
 
         {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
 
-        {executionView && !executionError && <ExecutionAvailabilityNotice live={executionView.live} controls />}
+        {executionView && !executionError && <ExecutionAvailabilityNotice view={executionView} />}
 
         {executionError && (
           <InlineStatus tone="error" detail={executionError}>
-            Execution request failed. {executionView ? "The last successful read is shown, not current live state. " : ""}Completion grants are disabled.
+            Execution request failed. {executionView ? "The last successful read is shown, not current live state. " : ""}Reviewed completion is unavailable.
           </InlineStatus>
         )}
 
@@ -1150,11 +1186,11 @@ export function TaskDetail({
                 type="button"
                 className={`btn ghost small auto-approve${autoApproveAll ? " on" : ""}`}
                 aria-pressed={autoApproveAll}
-                disabled={!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve"}
+                disabled={autoApproveDisabled}
                 title={
                   autoApproveAll
-                    ? "Auto Approval All is on. Every playbook step may complete without an approval card. Turn off to restore the steps chosen at creation."
-                    : "Auto Approval All is off. This task keeps the automatic-completion steps chosen at creation."
+                    ? "Intermediate steps continue automatically. Turn off to use each step’s saved choice. Final steps stay open for review."
+                    : "Each step uses its saved continuation choice. Final steps stay open for review."
                 }
                 onClick={() => setAutoApproveAll(!autoApproveAll)}
               >
@@ -1219,7 +1255,7 @@ export function TaskDetail({
             <GitPanel
               repoPath={repoPath}
               taskSlug={slug}
-              onOpen={(diff, subject, keep) => fileTabs.open({ ...gitDiffTab(diff, subject), kind: "diff", node: null, mode: "preview", diff }, keep)}
+              onOpen={(diff, subject, keep) => openFileTab({ ...gitDiffTab(diff, subject), kind: "diff", node: null, mode: "preview", diff }, keep)}
             />
           ) : sideTab === "history" ? (
             <div className="task-history-pane">
@@ -1271,15 +1307,17 @@ export function TaskDetail({
                         Completion permission: {execution.permission.kind}
                         {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
                       </p>
-                      {execution.permission.kind === "locked" && execution.lifecycle === "running" && !executionView.state.history_only && (
-                        <button
-                          type="button"
-                          className="btn small"
-                          disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
-                          onClick={() => void allowCompletion(execution.id)}
-                        >
-                          Allow this session to complete · {execution.owner_session_id}
-                        </button>
+                      {!executionView.state.history_only && execution.ready && !isTurnActive({ observation: observationsById[execution.owner_session_id] }) && (
+                        <>
+                          {execution.ready.endpoint && execution.lifecycle === "running" && <p>Ready for review</p>}
+                          <ReviewedCompletion
+                            repo={repoPath}
+                            slug={slug}
+                            execution={execution}
+                            steps={steps}
+                            disabled={!!busy || !!executionError || !executionControlsAvailable(executionView)}
+                          />
+                        </>
                       )}
                     </article>
                   ))}
@@ -1521,14 +1559,20 @@ export function TaskDetail({
               </div>
             )
           )}
-          {fileTabs.tabs.map(
-            (tab) =>
-              tab.session && (
-                <div key={tab.key} className="task-session-view" hidden={tab.key !== fileTabs.active}>
-                  {renderSession(tab.session, { onClose: () => fileTabs.close(tab.key), onOpenPath: openSessionPath })}
-                </div>
-              ),
-          )}
+          {fileTabs.tabs.map((tab) => {
+            const target = tab.session;
+            if (!target) return null;
+            return (
+              <div key={tab.key} className="task-session-view" hidden={tab.key !== fileTabs.active}>
+                {renderSession(target, {
+                  active: tab.key === fileTabs.active,
+                  onClose: () => fileTabs.close(tab.key),
+                  onOpenPath: (path, keep) => openSessionPath(target.id, path, keep),
+                  onOpenSession: (session, intent) => openSession(target.taskSlug, session, intent),
+                })}
+              </div>
+            );
+          })}
           <div className="task-sessions-tab" hidden={!!fileTabs.current}>
             <section className="task-panel task-sessions-panel">
               <div className="task-panel-head">
@@ -1824,7 +1868,27 @@ export function TaskDetail({
                         const resumedBy = sessions.find((other) => other.resume_of === s.id);
                         const execution = executionForSession(s);
                         const superseded = Boolean(execution && execution.owner_session_id !== s.id);
+                        const terminalLabel = sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited");
+                        const currentExecution = !superseded && !executionError && executionControlsAvailable(executionView) ? execution : undefined;
+                        const ready =
+                          !s.archived &&
+                          isLive &&
+                          s.ended_at == null &&
+                          obs?.state?.process.state === "alive" &&
+                          currentExecution?.lifecycle === "running" &&
+                          !currentExecution.receipt_id
+                            ? currentExecution.ready
+                            : undefined;
+                        const stepStatus =
+                          currentExecution?.lifecycle === "finishing" && currentExecution.receipt_id
+                            ? "Finishing step…"
+                            : ready
+                              ? ready.endpoint
+                                ? "Ready for review"
+                                : "Ready to advance"
+                              : undefined;
                         const stepTitle = steps.find((step) => step.key === execution?.candidate.step_key)?.title ?? execution?.candidate.step_key;
+                        const executionLabel = execution && !stepStatus && (terminalLabel ?? (execution.lifecycle === "running" ? null : execution.lifecycle));
                         const sessionType = s.subtask_manager
                           ? "Sub-task manager"
                           : execution
@@ -1877,7 +1941,8 @@ export function TaskDetail({
                                 unreadCompletion={unreadCompletion}
                                 exitCode={s.exit_code}
                                 exitAcknowledged={hasAcknowledgedExit(s)}
-                                terminalLabel={superseded ? null : sessionTerminalLabel(s.harness, s.id, execution, s.ended_at != null || obs?.lifecycle.state === "exited")}
+                                terminalLabel={superseded ? null : terminalLabel}
+                                stepStatus={stepStatus}
                               />
                             </td>
                             <td className="session-name-cell editable-name">
@@ -1887,12 +1952,7 @@ export function TaskDetail({
                                 <span className="dim" title={sessionType}>
                                   {sessionType}
                                 </span>
-                                {execution && (
-                                  <span className="pill">
-                                    {sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited") ??
-                                      execution.lifecycle}
-                                  </span>
-                                )}
+                                {executionLabel && <span className="pill">{executionLabel}</span>}
                                 {s.archived && <span className="pill session-archived">Archived</span>}
                                 {resumedBy && <span className="pill dim">Resumed</span>}
                               </div>
@@ -1997,6 +2057,28 @@ export function TaskDetail({
               )}
             </section>
           </div>
+          {activeArtifactTab && (
+            <SessionLineage
+              id={fileSessionId ?? ""}
+              name={fileSession?.name ?? ""}
+              phase={fileSession?.phase ?? ""}
+              sessions={sessions}
+              executionView={executionView}
+              observations={observationsById}
+              error={executionError}
+              artifactPaths={navigatorArtifacts.map(({ item }) => item.name)}
+              readableArtifactPaths={navigatorArtifacts.filter(({ node }) => node).map(({ item }) => item.name)}
+              viewingFile
+              selectedFile={
+                activeArtifactTab.kind === "diff"
+                  ? undefined
+                  : { path: selectedArtifactImages?.artifactPath || selectedArtifact, isTaskArtifact: selectedArtifactIsDirect && !selectedArtifactItem?.attachment }
+              }
+              emptyMessage={sessionsLoaded ? undefined : "Loading sessions…"}
+              onOpenSession={(s) => openSession(slug, s, lineageSessionIntent(executionView?.state, s))}
+              onOpenArtifact={(path) => openArtifactTab(path, findOwnedArtifactNode(artifactTree, path) ?? null, "artifact", true, fileSessionId)}
+            />
+          )}
         </main>
       </div>
       <ArchiveTaskModal task={pendingArchive} onCancel={() => setPendingArchive(null)} onConfirm={confirmArchive} />

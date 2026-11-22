@@ -1367,6 +1367,8 @@ export function Settings({
             <ProviderSetupDialog
               mode="manual"
               initialTab="models"
+              // A repository override is that repository's models; the global default has no machine of its own.
+              repo={isGlobal ? undefined : key}
               onPick={(v) => {
                 if (isGlobal) {
                   setGlobal({ ...global, [key]: { ...global[key], harness: "vinculum", model: v } });

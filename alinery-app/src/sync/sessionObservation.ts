@@ -31,9 +31,14 @@ function stateOf(status: NonNullable<Extract<Entity["value"], { case: "session" 
   const agent = status.agent;
   return {
     process: status.process === "exited" ? { state: "exited", code: null } : { state: status.process === "starting" ? "starting" : "alive" },
-    agent: (agent === "waiting_for_input" || agent === "waiting_for_approval"
-      ? { state: agent, correlation_id: correlationId }
-      : { state: agent === "busy" || agent === "idle" ? agent : "unknown" }) as SessionState["agent"],
+    agent:
+      agent === "errored"
+        ? { state: agent, correlation_id: status.agentCorrelationId, reason: status.agentReason }
+        : agent === "waiting_for_input" || agent === "waiting_for_approval"
+          ? { state: agent, correlation_id: correlationId }
+          : agent === "busy" && status.agentCorrelationId
+            ? { state: agent, correlation_id: status.agentCorrelationId }
+            : { state: agent === "busy" || agent === "idle" ? agent : "unknown" },
     playbook: (status.playbook === "failed" ? { state: "failed", reason: status.playbookReason } : { state: status.playbook || "in_progress" }) as SessionState["playbook"],
     adapter: status.adapter === "vinculum" ? "vinculum" : "unsupported",
     message_adapter: status.messageAdapter === "vinculum_bracketed_paste" ? "vinculum_bracketed_paste" : "unsupported",
@@ -87,7 +92,11 @@ export function useSessionObservations(refs: SessionStatusRef[], enabled = true)
         const next: Record<string, SessionObservation> = {};
         wanted.forEach(([repo, slug, id], i) => {
           const entity = replicas[i].get(sessionEntityKey(slug, id));
-          if (entity) next[sessionObservationKey(repo, slug, id)] = observationOf(entity);
+          if (entity) {
+            const observation = observationOf(entity);
+            if (replicas[i].stale) observation.stale = true;
+            next[sessionObservationKey(repo, slug, id)] = observation;
+          }
         });
         return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
       });

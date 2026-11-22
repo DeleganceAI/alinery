@@ -18,7 +18,7 @@ import type { TranscriptPart, TranscriptReply } from "../transcript.ts";
 import { requireCapability } from "./auth.ts";
 import { domain, fail, metaOf } from "./errors.ts";
 
-/** The session's transcript source, or undefined when it is not open in this daemon. */
+/** Live conversation or a snapshot of a retained session. */
 export type Transcripts = (taskSlug: string, id: string) => Promise<TranscriptFeed | undefined>;
 
 type Item = MessageInitShape<typeof TranscriptItemSchema>;
@@ -38,6 +38,8 @@ function part(p: TranscriptPart): NonNullable<Item["content"]>[number] {
           value: { id: p.id, name: p.name, ...(p.arguments === undefined ? {} : { arguments: fromJson(ValueSchema, p.arguments as JsonValue) }) },
         },
       };
+    case "image":
+      return { kind: { case: "image", value: { mimeType: p.mimeType, name: p.name ?? "" } } };
   }
 }
 
@@ -52,6 +54,8 @@ export function toItem(item: TranscriptReply): Item {
     isError: item.isError === true,
     runningToolIds: item.runningToolIds ?? [],
     at: BigInt(Math.trunc(item.at ?? 0)),
+    turnError: item.turnError,
+    nudgeDeliveryId: item.nudgeDeliveryId,
   };
 }
 
@@ -64,8 +68,12 @@ export function toResponse(frame: TranscriptFrame): MessageInitShape<typeof Watc
   };
 }
 
-/** An image part of a user message, as Pi takes it. */
-export type PromptImage = { type: "image"; data: string; mimeType: string };
+/**
+ * An image part of a user message, as Pi takes it. `name` is the copy in the session's attachment directory,
+ * which the pane reads the image back from: Pi keeps the part as it was submitted, so the name rides along
+ * and `formatTranscript` reports it instead of the megabytes.
+ */
+export type PromptImage = { type: "image"; data: string; mimeType: string; name?: string };
 
 const PROMPT_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 // The composer's own limits (MAX_CHAT_IMAGES, MAX_CHAT_IMAGE_BYTES); an image past them never left a composer.
@@ -78,13 +86,14 @@ export function promptImages(images: readonly DraftImage[]): PromptImage[] {
   return images.map((image) => {
     if (!PROMPT_IMAGE_TYPES.has(image.mimeType)) throw new DomainError("invalid_argument", `${image.name || "image"}: not a png, jpeg, gif or webp image`);
     if (image.bytes.length === 0 || image.bytes.length > MAX_PROMPT_IMAGE_BYTES) throw new DomainError("invalid_argument", `${image.name || "image"}: empty or larger than 5 MB`);
-    return { type: "image", data: Buffer.from(image.bytes).toString("base64"), mimeType: image.mimeType };
+    return { type: "image", data: Buffer.from(image.bytes).toString("base64"), mimeType: image.mimeType, ...(image.name ? { name: image.name } : {}) };
   });
 }
 
 /** The turn controls of a live harness session, the same for a task session and a chat thread. A refusal is a `DomainError`. */
 export type TurnControl = {
   prompt(id: string, text: string, images?: PromptImage[]): Promise<void>;
+  retry(id: string, failedEntryId: string): Promise<void>;
   abort(id: string): Promise<void>;
   setModel(id: string, model: string): Promise<Controls>;
   setThinkingLevel(id: string, level: string): Promise<Controls>;
@@ -212,7 +221,7 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
         // The stamp first and in the store before the process goes, so a subscriber sees `archived` before the exit.
         stampSessionArchived(c().repo, slug, id);
         await c().refresh(metaRel(slug, id));
-        if (live) c().runner.stop(id);
+        if (live) await c().runner.stop(id);
         c().telemetry.record(() => ({ event: "session.archive", source: "alineryd", killedLive: live, sessionId: ids.session, taskId: ids.task }));
         return { applied: applied(), killedLive: live };
       });
@@ -223,7 +232,7 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
         const slug = refSlug(req.session);
         const id = req.session?.id ?? "";
         const ids = c().telemetryIds(slug, id);
-        c().runner.stop(id);
+        await c().runner.stop(id);
         c().telemetry.record(() => ({ event: "session.kill", source: "alineryd", sessionId: ids.session, taskId: ids.task }));
         return { applied: applied() };
       });
@@ -262,6 +271,13 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
         return {};
       });
     },
+    retryTurn: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => {
+        await c().turns.retry(req.sessionId, req.failedEntryId);
+        return {};
+      });
+    },
     abortSession: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return domain(async () => {
@@ -285,9 +301,11 @@ function transcriptHandlers(transcripts: Transcripts): Pick<ServiceImpl<typeof S
     async *watchTranscript(req, ctx) {
       requireCapability(ctx, Capability.VIEW);
       if (!req.session?.id) throw new ConnectError("WatchTranscript needs a session", Code.InvalidArgument);
-      const source = await transcripts(req.session.taskSlug, req.session.id);
-      if (!source) throw new ConnectError(`no open session ${req.session.id}`, Code.NotFound);
-      for await (const frame of watchTranscript(source, Number(req.fromItem), ctx.signal)) yield toResponse(frame);
+      const session = req.session;
+      const source = await domain(() => transcripts(session.taskSlug, session.id));
+      if (!source) throw new ConnectError(`no transcript for session ${session.id}`, Code.NotFound);
+      const feed = { read: () => domain(() => source.read()), subscribe: source.subscribe?.bind(source) };
+      for await (const frame of watchTranscript(feed, Number(req.fromItem), ctx.signal)) yield toResponse(frame);
     },
   };
 }

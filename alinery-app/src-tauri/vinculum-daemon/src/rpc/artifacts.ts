@@ -52,7 +52,7 @@ export type ArtifactDeps = {
 export function executionRecords(taskExecution: (slug: string) => Json): (slug: string) => ExecutionRecords | undefined {
   return (slug) => {
     const out = taskExecution(slug);
-    return out.state ? (out.state as ExecutionRecords) : undefined;
+    return out.error === undefined && out.state ? (out.state as ExecutionRecords) : undefined;
   };
 }
 

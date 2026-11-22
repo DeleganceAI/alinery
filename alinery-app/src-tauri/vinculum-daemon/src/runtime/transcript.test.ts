@@ -137,6 +137,30 @@ test("a change with nothing new sends no frame", async () => {
   expect((await pending).done).toBe(true);
 });
 
+test("the last read after harness shutdown leaves a settled transcript off the polling timer", async () => {
+  const storage = await openNodeSqliteStorage(join(mkdtempSync(join(tmpdir(), "transcript-")), "a.sqlite"));
+  const harness = await Harness.open(storage, { models: createModels(), registry: createRegistry() } as never, BACKGROUND_CONTEXT);
+  const root = await harness.root(BACKGROUND_CONTEXT);
+  let reads = 0;
+  const attached = Promise.withResolvers<void>();
+  const stop = eventsChanges(harness, root.id, BACKGROUND_CONTEXT, 5)(() => {
+    reads++;
+    attached.resolve();
+  });
+  try {
+    await attached.promise;
+    const beforeClose = reads;
+    await harness.close(BACKGROUND_CONTEXT);
+    await Bun.sleep(20);
+    expect(reads).toBeGreaterThan(beforeClose);
+    const settled = reads;
+    await Bun.sleep(30);
+    expect(reads).toBe(settled);
+  } finally {
+    stop();
+  }
+});
+
 test("eventsChanges fires on a real harness commit and stops cleanly", async () => {
   const storage = await openNodeSqliteStorage(join(mkdtempSync(join(tmpdir(), "transcript-")), "a.sqlite"));
   const harness = await Harness.open(storage, { models: createModels(), registry: createRegistry(), env: () => { throw new Error("unused"); } } as never, BACKGROUND_CONTEXT);

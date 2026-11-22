@@ -416,7 +416,7 @@ export function itemJson(item: TranscriptItem): Args {
   };
 }
 
-/** A running agent session's conversation, a page of items, from the first frame of its transcript watch. */
+/** A page of the agent session's conversation from the first frame of its transcript watch. */
 async function transcriptHistory(conn: DaemonConnection, slug: string, id: string, offset: number | undefined, limit: number | undefined): Promise<Reply> {
   const abort = new AbortController();
   let items: TranscriptItem[] = [];
@@ -426,8 +426,7 @@ async function transcriptHistory(conn: DaemonConnection, slug: string, id: strin
       break;
     }
   } catch (e) {
-    // The daemon serves a transcript only for a session it has open.
-    if (e instanceof ConnectError && e.code === Code.NotFound) return failure(`session '${id}' is not running; only a running agent session's conversation can be read (resume it in Alinery first)`);
+    if (e instanceof ConnectError && e.code === Code.NotFound) return failure(`no transcript available for session '${id}'`);
     // A daemon built before this tool read transcripts does not grant WatchTranscript to an agent token.
     if (e instanceof ConnectError && e.code === Code.PermissionDenied) return failure("this repository's daemon is older than this MCP and cannot serve a conversation; restart it from Settings → System → Runtime");
     throw e;

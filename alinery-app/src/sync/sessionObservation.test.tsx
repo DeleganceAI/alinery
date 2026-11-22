@@ -43,6 +43,7 @@ describe("observationOf", () => {
     const shapes: SessionObservation[] = [
       running("busy"),
       running("waiting_for_input", "ask-1"),
+      { ...running(), state: { ...idleState, agent: { state: "errored", correlation_id: "failed-1", reason: "Provider unavailable" } } },
       exited,
       { lifecycle: { state: "never_started" }, state: null, checkpoint: { phase_completed_at: null, vinculum_session_id: null, vinculum_turn_id: null }, transport: null },
       { lifecycle: { state: "orphaned" }, state: null, checkpoint: { phase_completed_at: null, vinculum_session_id: null, vinculum_turn_id: null }, transport: null },
@@ -67,6 +68,27 @@ function Probe({ repo = "/r", notify = true }: { repo?: string; notify?: boolean
 }
 
 describe("a session's badge follows its subscription", () => {
+  it("notifies once for a failed turn, even when the session stays live", async () => {
+    const daemon = sessionDaemon();
+    vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
+    const observation = running();
+    daemon.show("/r", "task", "s1", observation);
+    render(<Probe />);
+    await screen.findByText("Running");
+    const failed = {
+      ...observation,
+      state: { ...(observation.state as SessionState), agent: { state: "errored" as const, correlation_id: "failed-1", reason: "Provider unavailable" } },
+    };
+    daemon.show("/r", "task", "s1", failed);
+    await screen.findByText("Turn failed");
+    expect(screen.getByTitle("Provider unavailable")).toBeDefined();
+    await waitFor(() => expect(notify).toHaveBeenCalledExactlyOnceWith("session — turn failed"));
+    daemon.show("/r", "task", "s1", failed);
+    daemon.show("/r", "task", "s1", running("idle"));
+    await screen.findByText("Idle");
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
   it("goes from running to waiting to exited (no status command or timer exists to ask), and asks for attention once", async () => {
     const daemon = sessionDaemon();
     vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));

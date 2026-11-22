@@ -17,6 +17,7 @@ type RecordedDrawer = {
   onNew?: () => void;
   onKillAll?: () => void;
   onTabExited?: (id: string) => void;
+  chatCwd?: string;
 };
 
 const appConfig: AppConfig = {
@@ -24,6 +25,32 @@ const appConfig: AppConfig = {
   known_repos: ["/repo", "/other"],
   local_onboarded: true,
   appearance: DEFAULT_APPEARANCE,
+};
+
+/** The same install with the Chat tab on: its view reports the focused thread's directory to the drawer. */
+const chatAppConfig: AppConfig = {
+  ...appConfig,
+  global: {
+    notifications: {
+      enabled: true,
+      sound: false,
+      bounce: false,
+      banner: true,
+      dock_badge: true,
+      dock_badge_input_waits: true,
+      dock_badge_approval_waits: true,
+      dock_badge_failures: true,
+      dock_badge_completions: true,
+    },
+    github: { token: "" },
+    defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
+    backup: { destination: "", enabled: false, retention: 5, trigger_pre_archive: false, trigger_post_artifact_change: false, trigger_post_push_commit: false },
+    harnesses: { harness: [] },
+    model_favorites: {},
+    telemetry: { enabled: false, prompted: true, install_id: "", endpoint: "" },
+    updates: { check_enabled: false },
+    experiments: { show_chat: true },
+  },
 };
 
 const drawerRecords = vi.hoisted(() => ({ current: [] as RecordedDrawer[] }));
@@ -103,6 +130,14 @@ vi.mock("./WindowChrome", () => ({ ResizeHandles: () => null, WindowControls: ()
 vi.mock("./useDaemonStatus", () => ({ useDaemonStatus: () => ({ repo_busy: false, conflict: null, refresh: () => {} }) }));
 vi.mock("./useMcpStatus", () => ({ useMcpStatus: () => ({}) }));
 vi.mock("./views/Grid", () => ({ Grid: () => null }));
+// Only the report matters here: which thread the view has focused is its own business (ChatView.test.tsx).
+vi.mock("./views/ChatView", () => ({
+  ChatView: ({ onFocusedCwdChange }: { onFocusedCwdChange?: (cwd: string) => void }) => (
+    <button type="button" onClick={() => onFocusedCwdChange?.("/repo/.alinery/chat-worktrees/s-wt")}>
+      Focus a chat thread
+    </button>
+  ),
+}));
 
 function meta(id: string, worktree = "/repo"): SessionMeta {
   return {
@@ -204,6 +239,14 @@ afterEach(() => {
 });
 
 describe("App terminal drawer tabs", () => {
+  it("hands the drawer the focused chat thread's directory", async () => {
+    await renderApp(chatAppConfig);
+    expect((await openFirst()).chatCwd).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: /^Chat\d/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Focus a chat thread" }));
+    await waitFor(() => expect(latestDrawer().chatCwd).toBe("/repo/.alinery/chat-worktrees/s-wt"));
+  });
+
   // A drawer shell outlives a normal quit (the daemon keeps the pty), so the next launch puts it back as a tab instead of
   // leaving it as an unreachable live session (#184).
   it("restores the previous launch's live drawer shells as tabs without creating a new shell", async () => {

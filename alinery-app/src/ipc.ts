@@ -263,3 +263,50 @@ export function onRemoteHostConnected(handler: () => void): () => void {
     stop?.();
   };
 }
+
+/**
+ * Listen on the loopback address a browser sign-in redirects to, for a sign-in whose daemon is on
+ * another machine. Rejects when the port is taken (a local sign-in, or the Codex CLI): the caller
+ * then falls back to asking for the pasted address.
+ */
+export const providerCallbackArm = (port: number, path: string) => invoke<void>("provider_callback_arm", { port, path });
+
+export const providerCallbackDisarm = () => invoke<void>("provider_callback_disarm");
+
+/**
+ * The browser's redirect arrived here instead of the daemon's machine. The URL is the value the
+ * daemon's sign-in prompt is waiting for. Returns the unlisten.
+ */
+export function onProviderCallback(handler: (url: string) => void): () => void {
+  let disposed = false;
+  let stop: (() => void) | null = null;
+  void listen<{ url: string }>("provider_callback", (event) => {
+    if (!disposed && event.payload?.url) handler(event.payload.url);
+  }).then((unlisten) => {
+    if (disposed) unlisten();
+    else stop = unlisten;
+  });
+  return () => {
+    disposed = true;
+    stop?.();
+  };
+}
+
+/**
+ * The armed listener gave up (ten minutes) without a redirect. The panel's promise that this window
+ * picks the result up by itself is over: the paste fallback is the only way left.
+ */
+export function onProviderCallbackExpired(handler: () => void): () => void {
+  let disposed = false;
+  let stop: (() => void) | null = null;
+  void listen("provider_callback_expired", () => {
+    if (!disposed) handler();
+  }).then((unlisten) => {
+    if (disposed) unlisten();
+    else stop = unlisten;
+  });
+  return () => {
+    disposed = true;
+    stop?.();
+  };
+}

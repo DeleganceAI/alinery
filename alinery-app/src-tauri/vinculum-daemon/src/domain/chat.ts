@@ -26,7 +26,7 @@ export type ChatSessions = {
   /** Spawns or resumes the session's process; rejects with the daemon's refusal. */
   open(header: Json): Promise<void>;
   isRunning(id: string): boolean;
-  stop(id: string): void;
+  stop(id: string): void | Promise<void>;
   /** The thread's canvas was just enabled: a live thread's agent gets the canvas tools now, not on its next start. */
   canvasEnabled?(id: string): Promise<void>;
 };
@@ -241,7 +241,7 @@ export async function archiveChatThread(repo: string, sessions: ChatSessions, id
   const meta = loadChat(repo, id);
   stampSessionArchived(repo, "", id);
   await stamped();
-  if (sessions.isRunning(id)) sessions.stop(id);
+  if (sessions.isRunning(id)) await sessions.stop(id);
   if (removeWorktree) await removeOwnedWorktree(repo, meta);
 }
 
@@ -305,7 +305,7 @@ async function resumeOnce(repo: string, sessions: ChatSessions, predecessorId: s
   try {
     await sessions.open({ op: "resume", id: successorId, cwd, task_slug: "", resume_token: token });
   } catch (error) {
-    if (sessions.isRunning(successorId)) sessions.stop(successorId);
+    if (sessions.isRunning(successorId)) await sessions.stop(successorId);
     deleteChatRow(repo, successorId);
     throw error;
   }

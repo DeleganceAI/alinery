@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { applyFilePage, emptyTranscript } from "../chatTranscript";
 import { decodeVinculumPage } from "./vinculumFile";
 
 function page(header: Record<string, number>, rows: string[]): ArrayBuffer {
@@ -27,6 +28,21 @@ describe("decodeVinculumPage", () => {
     });
     const [result] = decodeVinculumPage(page({ start: 0, end: 10, length: 10 }, [row])).messages;
     expect(result).toMatchObject({ role: "toolResult", toolName: "bash", toolCallId: "call-9", isError: true, rowId: "t1" });
+  });
+
+  it("keeps a legacy assistant's partial reply and read-only failure reason, including failures before any text", () => {
+    const rows = [
+      message("partial", "assistant", "Here is the first part", { stopReason: "error", errorMessage: "Provider disconnected" }),
+      message("empty", "assistant", "", { content: [], stopReason: "error", errorMessage: "Model unavailable" }),
+      message("aborted", "assistant", "", { content: [], stopReason: "aborted", errorMessage: "Stopped by user" }),
+    ];
+    const journal = decodeVinculumPage(page({ start: 0, end: 1000, length: 1000 }, rows));
+    const { entries } = applyFilePage(emptyTranscript(), journal, "initial");
+    expect(entries).toMatchObject([
+      { type: "text", text: "Here is the first part" },
+      { type: "error", text: "Provider disconnected", failedEntryId: undefined },
+      { type: "error", text: "Model unavailable", failedEntryId: undefined },
+    ]);
   });
 
   it("ignores rows that are not conversation", () => {

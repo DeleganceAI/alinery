@@ -35,7 +35,7 @@ const agent = (engine: () => Engine | undefined) => async (launch: Launch, _sess
     const current = engine();
     if (current) {
       const reply = await current.requestCompletion(launch.executionId);
-      if (reply.kind === 'accepted') return;
+      if (reply.kind === 'accepted' || reply.kind === 'ready') return;
       if (reply.kind === 'rejected') throw new Error(reply.problems.join('; '));
     }
     await new Promise((r) => setImmediate(r));
@@ -90,6 +90,9 @@ test('killing the engine after each save and reopening from the stored state end
     for (let i = 0; i < 400 && !dead; i++) {
       await first.tick();
       await new Promise((r) => setImmediate(r));
+      for (const e of first.state.executions.values()) {
+        if (!dead && e.ready?.endpoint) await first.continueReviewed(e.id, e.sessionId!, e.ready.revision);
+      }
     }
     assert.ok(dead, `save ${kill} of ${total} never happened`);
     // Restart: a new engine from the stored state alone. The harness (the agents) outlives it.
@@ -247,7 +250,10 @@ test('two completion requests that overlap while the worktree is being recorded 
   engine.seed(seedTicket(dir));
   await engine.tick();
   await new Promise((r) => setImmediate(r));
-  const replies = await Promise.all([engine.requestCompletion('e1'), engine.requestCompletion('e1')]);
+  const report = await engine.requestCompletion('e1');
+  assert.equal(report.kind, 'ready');
+  const owner = engine.state.executions.get('e1')!.sessionId!;
+  const replies = await Promise.all([engine.continueReviewed('e1', owner, report.revision), engine.continueReviewed('e1', owner, report.revision)]);
   assert.deepEqual(replies.map((r) => r.kind), ['accepted', 'accepted']);
   const e1 = engine.state.executions.get('e1')!;
   assert.equal(e1.manifest!.worktree!.ref, 'refs/alinery/executions/t/e1', 'the first record is the one kept');
@@ -278,9 +284,11 @@ test('a completion request is rejected when the execution fails while its worktr
   engine.seed(seedTicket(dir));
   await engine.tick();
   await new Promise((r) => setImmediate(r));
-  const reply = await engine.requestCompletion('e1');
-  assert.equal(reply.kind, 'rejected');
+  const report = await engine.requestCompletion('e1');
+  assert.equal(report.kind, 'ready');
   const e1 = engine.state.executions.get('e1')!;
+  const reply = await engine.continueReviewed('e1', e1.sessionId!, report.revision);
+  assert.equal(reply.kind, 'stale');
   assert.equal(e1.status, 'failed');
   assert.ok(!e1.receipt);
 });

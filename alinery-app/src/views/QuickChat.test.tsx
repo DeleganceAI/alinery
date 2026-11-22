@@ -7,7 +7,7 @@ import { fakeChat } from "../test/chatHooks";
 import { mockIpc } from "../test/mockIpc";
 import { stubScrollSize } from "../test/scroll";
 import { sessionDaemon } from "../test/sessionDaemon";
-import type { ChatThread, SessionMeta, SessionObservation } from "../types";
+import type { AgentState, ChatThread, SessionMeta, SessionObservation } from "../types";
 import { ChatView } from "./ChatView";
 import { ChatSessionProvider } from "./chatThreadSession";
 import { focusQuickChatComposer, QUICK_CHAT_HEIGHT, QUICK_CHAT_MARGIN, QUICK_CHAT_MIN_HEIGHT, QUICK_CHAT_MIN_WIDTH, QUICK_CHAT_WIDTH, QuickChat } from "./QuickChat";
@@ -27,6 +27,8 @@ let daemon = sessionDaemon();
 const mocks = vi.hoisted(() => ({
   listChatRepos: vi.fn(),
   chatPrompt: vi.fn(),
+  retryTurn: vi.fn(),
+  notifySessionAttention: vi.fn(async () => {}),
   pickAttachmentFilesDialog: vi.fn(),
   chatFileStat: vi.fn(),
   copyChatThreadAttachments: vi.fn(),
@@ -38,11 +40,13 @@ vi.mock("../sync/chat", async (actual) => ({
   copyChatThreadAttachments: mocks.copyChatThreadAttachments,
   promptChatThread: mocks.chatPrompt,
 }));
+vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), retryTurn: mocks.retryTurn }));
 vi.mock("../ipc", () =>
   mockIpc({
     listChatRepos: mocks.listChatRepos,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
     chatFileStat: mocks.chatFileStat,
+    notifySessionAttention: mocks.notifySessionAttention,
     getCurrentWebview: mocks.getCurrentWebview as never,
   }),
 );
@@ -77,14 +81,14 @@ function thread(id: string, repo: string, extra: Partial<ChatThread> = {}): Chat
   };
 }
 
-function observed() {
+function observed(agent: AgentState = { state: "idle" }): SessionObservation {
   return {
     transport: "rpc" as const,
     lifecycle: { state: "live" as const },
     checkpoint: {},
     state: {
       process: { state: "alive" as const },
-      agent: { state: "idle" as const },
+      agent,
       playbook: { state: "in_progress" },
       adapter: "vinculum",
       message_adapter: "vinculum_bracketed_paste",
@@ -121,7 +125,7 @@ beforeEach(() => {
   // Every chat thread under test is a live idle Vinculum chat as the daemon reports it.
   daemon = sessionDaemon();
   vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
-  for (const id of ["s-plain", "s-a", "s-b", "s-live"]) daemon.showId(id, observed() as SessionObservation);
+  for (const id of ["s-plain", "s-a", "s-b", "s-live"]) daemon.showId(id, observed());
   mocks.pickAttachmentFilesDialog.mockReset().mockResolvedValue([]);
   mocks.chatFileStat.mockReset().mockImplementation(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 4 }));
   mocks.copyChatThreadAttachments.mockReset().mockResolvedValue({ copied: [], failures: [] });
@@ -344,5 +348,56 @@ describe("QuickChat", () => {
     await waitFor(() => expect(daemon.transcriptCalls).toContain("s-live"));
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(daemon.transcriptCalls.filter((id) => id === "s-live")).toHaveLength(1);
+  });
+
+  it("shares one failed-turn Retry across Chat and the pinned window and keeps the composer intact", async () => {
+    const repo = "/repos/one";
+    const id = "s-live";
+    const entryId = "failed-reply";
+    const reason = "Provider unavailable after automatic retries";
+    fakeChat.set([thread(id, repo, { name: "Alpha", session: meta(id, { pinned: true }) })]);
+    daemon.show(repo, "", id, observed({ state: "busy" }));
+    mocks.pickAttachmentFilesDialog.mockResolvedValueOnce(["/tmp/notes.pdf"]);
+    let acknowledge!: () => void;
+    mocks.retryTurn.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          acknowledge = resolve;
+        }),
+    );
+    render(
+      <ChatSessionProvider>
+        <ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />
+        <QuickChat open visibility={DEFAULT_CHAT_VISIBILITY} onOpenInChat={() => {}} onHide={() => {}} />
+      </ChatSessionProvider>,
+    );
+    const main = within(screen.getByTestId("chat-view"));
+    const pinned = within(screen.getByTestId("quick-chat"));
+    fireEvent.click(await main.findByRole("button", { name: /^Alpha, Running/ }));
+    await pinned.findByRole("button", { name: "Abort turn" });
+    fireEvent.change(await main.findByRole("textbox"), { target: { value: "Keep this draft" } });
+    fireEvent.click(pinned.getByRole("button", { name: "Attach files" }));
+    await main.findByRole("button", { name: "Remove notes.pdf" });
+
+    act(() => {
+      daemon.setTranscript(id, [{ id: entryId, role: "assistant", content: [], turnError: reason }]);
+      daemon.show(repo, "", id, observed({ state: "errored", correlation_id: entryId, reason }));
+    });
+    const first = await pinned.findByRole("button", { name: "Retry" });
+    const second = await main.findByRole("button", { name: "Retry" });
+    expect(main.getByText(reason)).toBeTruthy();
+    expect(mocks.notifySessionAttention).toHaveBeenCalledOnce();
+    expect(mocks.notifySessionAttention).toHaveBeenCalledWith("Alpha — turn failed");
+    fireEvent.click(first);
+    fireEvent.click(second);
+    expect(mocks.retryTurn).toHaveBeenCalledTimes(1);
+    expect(mocks.retryTurn).toHaveBeenCalledWith(repo, id, entryId);
+    await act(async () => acknowledge());
+    for (const pane of [main, pinned]) {
+      expect((pane.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("Keep this draft");
+      expect(pane.getByRole("button", { name: "Remove notes.pdf" })).toBeTruthy();
+    }
+    expect(mocks.chatPrompt).not.toHaveBeenCalled();
+    expect(mocks.copyChatThreadAttachments).not.toHaveBeenCalled();
   });
 });
