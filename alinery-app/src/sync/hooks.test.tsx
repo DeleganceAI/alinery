@@ -59,6 +59,20 @@ it("liveSessionsNow answers 0 when the daemon never answers", async () => {
   expect(await liveSessionsNow("/r", 50)).toBe(0);
 });
 
+it("liveSessionsNow answers 0 at once when the stream fails, without waiting out the timeout", async () => {
+  vi.mocked(daemonTransport).mockReturnValue(
+    daemonHarness({
+      // biome-ignore lint/correctness/useYield: a stream that fails before its first frame
+      sync: scriptedSync(async function* () {
+        throw new Error("no daemon");
+      }).sync,
+    }).transport as Transport,
+  );
+  const started = Date.now();
+  expect(await liveSessionsNow("/r", 5000)).toBe(0);
+  expect(Date.now() - started).toBeLessThan(1000);
+});
+
 it("release is idempotent", async () => {
   const opened = { n: 0, closed: 0 };
   daemon(opened);
