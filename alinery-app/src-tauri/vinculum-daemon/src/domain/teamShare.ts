@@ -6,6 +6,9 @@ import { createHash } from "node:crypto";
 import { existsSync, type Dirent, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic, writeOwnerOnly } from "../platform/fs.ts";
+import { create } from "@bufbuild/protobuf";
+import { EntitySchema, TeamCommentsSchema } from "alinery-proto/alinery/v1/entities_pb";
+import type { Store } from "../sync/store.ts";
 import { addComment, loadComments } from "./artifactComments.ts";
 
 const BODY_LIMIT = 1_000_000;
@@ -320,7 +323,20 @@ async function post(file: ShareFile, path: string, body: unknown): Promise<Recor
   }
 }
 
-async function pull(repo: string, gen: number): Promise<number> {
+export const TEAM_COMMENTS_KEY = "daemon/_/team-comments";
+
+let onSaved: ((saved: number) => void) | null = null;
+
+/** Called with the count each time a heartbeat's pull saves teammates' comments. A pull the user asked for is not announced. */
+export function onTeamCommentsSaved(fn: (saved: number) => void) {
+  onSaved = fn;
+}
+
+export function commitTeamComments(store: Store, total: number): void {
+  store.commit([create(EntitySchema, { key: TEAM_COMMENTS_KEY, value: { case: "teamComments", value: create(TeamCommentsSchema, { total }) } })]);
+}
+
+async function pull(repo: string, gen: number, announce = true): Promise<number> {
   let saved = 0;
   for (let page = 0; page < 50; page++) {
     const file = readShareFile(repo);
@@ -328,7 +344,9 @@ async function pull(repo: string, gen: number): Promise<number> {
     const reply = await post(file, "/api/daemon/comments", { comments_since: readCommentCursor(repo) });
     if (gen !== generation) return saved;
     const rows = Array.isArray(reply.comments) ? (reply.comments as TeamComment[]) : [];
-    saved += saveTeamComments(repo, rows);
+    const pageSaved = saveTeamComments(repo, rows);
+    saved += pageSaved;
+    if (announce && pageSaved > 0) onSaved?.(pageSaved);
     if (reply.more !== true || rows.length === 0) return saved;
   }
   return saved;
@@ -341,7 +359,7 @@ export function pullTeamComments(repo: string): Promise<{ shared: boolean; saved
   return new Promise((resolve, reject) => {
     enqueue(async () => {
       try {
-        resolve({ shared: true, saved: await pull(repo, gen) });
+        resolve({ shared: true, saved: await pull(repo, gen, false) });
       } catch (error) {
         reject(error);
       }
@@ -396,6 +414,9 @@ async function push(repo: string, gen: number) {
     lastError = error instanceof Error ? error.message : "sync failed";
   }
 }
+
+/** One heartbeat now, as the timer would send it. */
+export const beatNow = (repo: string) => heartbeat(repo, generation);
 
 async function heartbeat(repo: string, gen: number) {
   const file = readShareFile(repo);

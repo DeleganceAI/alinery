@@ -56,6 +56,7 @@ import { liveSessionsNow } from "./sync/hooks";
 import { observationNow } from "./sync/sessionObservation";
 import { createDrawerTerminal, createSession, killSession, markSessionNotificationRead, startSession } from "./sync/sessions";
 import { duplicateTaskForRepo } from "./sync/tasks";
+import { TeamCommentsNotice } from "./TeamCommentsNotice";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
@@ -1425,6 +1426,7 @@ export default function App() {
               {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => openSetup()} />}
               <DaemonConflictBanner conflict={daemon.conflict} onRefresh={daemon.refresh} />
               {appConfig?.active_repo && isRemoteRepo(appConfig.active_repo) && <JoinRequestsBanner repo={appConfig.active_repo} />}
+              {appConfig?.active_repo && <TeamCommentsNotice repo={appConfig.active_repo} />}
               {/* Backend ownership gate is the source of truth; blank main so the busy
               strip is the only actionable surface (defense-in-depth). */}
               <main>

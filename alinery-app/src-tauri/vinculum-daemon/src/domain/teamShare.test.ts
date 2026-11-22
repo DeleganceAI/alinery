@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addComment, loadComments } from "./artifactComments.ts";
-import { changedKeys, commentKey, isShareRel, pullTeamComments, readCommentCursor, revisionOf, saveTeamComments, shareArtifactName, snapshotShare, type TeamComment, writeShareFile } from "./teamShare.ts";
+import { beatNow, changedKeys, commentKey, isShareRel, onTeamCommentsSaved, pullTeamComments, readCommentCursor, revisionOf, saveTeamComments, shareArtifactName, snapshotShare, type TeamComment, writeShareFile } from "./teamShare.ts";
 
 describe("team share", () => {
   test("task.md and every artifact markdown are share paths, including a step folder", () => {
@@ -111,5 +111,32 @@ describe("team share", () => {
     expect(isShareRel("tasks/alpha/artifacts/1-roll-1/roll.comments.json")).toBe(true);
     expect(isShareRel("tasks/alpha/artifacts/1-roll-1/roll.comments.md")).toBe(false);
     expect(isShareRel("tasks/alpha/artifacts/attachments/x.comments.json")).toBe(false);
+  });
+
+  test("a heartbeat that saves teammates' comments announces them, and a pull the user asked for does not", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "team-announce-"));
+    const artifacts = join(repo, ".alinery", "tasks", "alpha", "artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    writeFileSync(join(artifacts, "01-plan.md"), "# Plan\n\nShip it.\n");
+    const at = (n: number) => `2026-11-21T19:0${n}:00.000+00:00`;
+    let waiting = [{ task_slug: "alpha", filename: "01-plan.md", body: "first", created_at: at(1), author_email: "bo@example.com" }];
+    const server = Bun.serve({
+      port: 0,
+      fetch: (request) => (new URL(request.url).pathname.endsWith("/heartbeat") ? Response.json({ online: true, comment_updates: waiting.length > 0 }) : Response.json({ comments: waiting, more: false })),
+    });
+    const announced: number[] = [];
+    onTeamCommentsSaved((saved) => announced.push(saved));
+    try {
+      writeShareFile(repo, { team_id: "t", name: "r", token: "sync_x", accounts_url: `http://127.0.0.1:${server.port}` });
+      await beatNow(repo);
+      await pullTeamComments(repo); // queued behind the heartbeat's pull, so it has finished
+      expect(announced).toEqual([1]);
+      waiting = [{ ...waiting[0], body: "second", created_at: at(2) }];
+      expect(await pullTeamComments(repo)).toEqual({ shared: true, saved: 1 });
+      expect(announced).toEqual([1]);
+    } finally {
+      server.stop(true);
+      onTeamCommentsSaved(() => {});
+    }
   });
 });
