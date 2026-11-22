@@ -2009,16 +2009,15 @@ main {
 }
 .playbook-picker-card {
   position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: 4px;
   min-width: 0;
+  padding-right: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
-}
-.playbook-picker-card > .playbook-star-button {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 1;
 }
 .playbook-star-button {
   display: grid;
@@ -2047,7 +2046,6 @@ main {
   opacity: 0.45;
 }
 .playbook-option .playbook-option-meta {
-  padding-right: 28px;
   flex-wrap: wrap;
 }
 .playbook-picker-card.selected {
@@ -2069,10 +2067,10 @@ main {
 .playbook-option {
   position: relative;
   display: flex;
-  align-items: stretch;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
-  padding: 16px;
+  padding: 12px 6px 12px 14px;
   border-radius: var(--radius-md);
   color: var(--text);
   cursor: pointer;
@@ -2093,7 +2091,7 @@ main {
   display: grid;
   flex: 1;
   min-width: 0;
-  gap: 8px;
+  gap: 4px;
 }
 .playbook-option-meta {
   display: flex;
@@ -2101,15 +2099,6 @@ main {
   gap: 8px;
   color: var(--text-muted);
   font-size: calc(11px * var(--ui-scale));
-}
-.playbook-option-selected {
-  color: var(--accent);
-}
-.playbook-option-topline {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
 }
 .playbook-option-title {
   color: var(--text-strong);
@@ -2139,45 +2128,41 @@ main {
   border: 5px solid var(--accent);
   background: var(--surface);
 }
-/* The expander is only an arrow, tucked under the selection circle so a closed card stays two lines tall. */
-.playbook-card-details {
-  position: relative;
-  margin: 10px 16px 0;
-}
-.playbook-card-details[open] {
-  padding-bottom: 14px;
-}
-.playbook-card-details > summary {
-  position: absolute;
-  top: -24px;
-  right: -4px;
+/* The expander is only an arrow, in the same row as the star and the selection circle. */
+.playbook-details-toggle {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 18px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-subtle);
   color: var(--text-muted);
-  list-style: none;
   cursor: pointer;
 }
-.playbook-card-details > summary::-webkit-details-marker {
-  display: none;
-}
-.playbook-card-details > summary:hover {
+.playbook-details-toggle:hover {
   border-color: var(--border-strong);
   color: var(--text);
 }
-.playbook-card-details > summary:focus-visible {
+.playbook-details-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.playbook-card-details[open] > summary svg {
+.playbook-details-toggle[aria-expanded="true"] svg {
   transform: rotate(180deg);
 }
+.playbook-card-details {
+  grid-column: 1 / -1;
+  margin-left: 14px;
+  padding: 12px 4px 14px 0;
+  border-top: 1px solid var(--border);
+}
+.playbook-card-details:not([data-open]) {
+  display: none;
+}
 .playbook-card-details > .playbook-option-description {
-  margin: 4px 0 0;
+  margin: 0;
 }
 .playbook-card-overview {
   margin-top: 12px;

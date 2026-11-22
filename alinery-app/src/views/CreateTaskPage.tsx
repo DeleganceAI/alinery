@@ -214,6 +214,8 @@ export function CreateTaskPage({
   const [catalogRevision, setCatalogRevision] = useState(0);
   const resetAutoAdvance = useRef(!initialDraft);
   const [autoAdvance, setAutoAdvance] = useState<string[]>(initialDraft?.auto_advance ?? []);
+  // One playbook card shows its description and steps at a time; the rest stay one row tall.
+  const [expandedPlaybook, setExpandedPlaybook] = useState<string | null>(null);
   // The result sits at the end of the form while the buttons stay pinned, so bring it into view.
   const resultRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -1520,19 +1522,16 @@ export function CreateTaskPage({
                         />
                         {item.steps && <PlaybookRingMark steps={item.steps} />}
                         <span className="playbook-option-content">
+                          <span className="playbook-option-title">{item.title ?? item.source.reference.key}</span>
                           <span className="playbook-option-meta">
                             <span className="pill">{item.source.reference.scope}</span>
                             {starred && samePlaybookRef(item.source.reference, RECOMMENDED_PLAYBOOK) && <span>Recommended</span>}
-                            {selected && <span className="playbook-option-selected">Selected</span>}
-                          </span>
-                          <span className="playbook-option-topline">
-                            <span className="playbook-option-title">{item.title ?? item.source.reference.key}</span>
-                            <span aria-hidden="true" className="playbook-option-indicator" />
                           </span>
                           {item.diagnostics.map((diagnostic) => (
                             <span key={`${diagnostic.code}:${diagnostic.field}:${diagnostic.line}:${diagnostic.message}`}>{diagnostic.message}</span>
                           ))}
                         </span>
+                        <span aria-hidden="true" className="playbook-option-indicator" />
                       </label>
                       <button
                         type="button"
@@ -1546,10 +1545,18 @@ export function CreateTaskPage({
                       >
                         <Star size={16} strokeWidth={1.5} fill={starred ? "currentColor" : "none"} aria-hidden="true" />
                       </button>
-                      <details className="playbook-card-details">
-                        <summary aria-label={`${item.title ?? item.source.reference.key} details`} title="Details">
-                          <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />
-                        </summary>
+                      <button
+                        type="button"
+                        className="playbook-details-toggle"
+                        aria-label={`${item.title ?? item.source.reference.key} details`}
+                        title="Details"
+                        aria-expanded={expandedPlaybook === identity}
+                        aria-controls={`create-playbook-details-${identity}`}
+                        onClick={() => setExpandedPlaybook((current) => (current === identity ? null : identity))}
+                      >
+                        <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />
+                      </button>
+                      <div className="playbook-card-details" id={`create-playbook-details-${identity}`} data-open={expandedPlaybook === identity || undefined}>
                         <p className="playbook-option-description" id={`create-playbook-description-${identity}`}>
                           {item.description}
                         </p>
@@ -1580,7 +1587,7 @@ export function CreateTaskPage({
                             </div>
                           </section>
                         )}
-                      </details>
+                      </div>
                     </div>
                   );
                 })

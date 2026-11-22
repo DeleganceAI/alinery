@@ -623,7 +623,9 @@ describe("scoped playbook selection", () => {
     if (!card) throw new Error("Preview must be inside the selected card");
     expect(within(card).getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
     // The description and the workflow preview stay folded until the person opens Details.
-    expect(preview.closest("details")?.open).toBe(false);
+    expect(within(card).getByRole("button", { name: "SuperDevelop details" }).getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(within(card).getByRole("button", { name: "SuperDevelop details" }));
+    expect(preview.closest("[data-open]")).toBeTruthy();
     expect(within(preview).getByText("Build")).toBeTruthy();
   });
 
