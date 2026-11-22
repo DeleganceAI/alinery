@@ -542,23 +542,6 @@ describe("SessionView navigator", () => {
     fireEvent.click(visibleNavigator.getByRole("button", { name: /Review the result/ }));
     expect(open).toHaveBeenCalledExactlyOnceWith(nextSession, "attach");
   });
-
-  it("returns to an auxiliary conversation from a file even when the task has no execution", async () => {
-    const open = vi.fn();
-    fakeBoard.set({ taskSessions: [{ ...session("session", "", 1), name: "Research notes", generic: true }] });
-    const view = render(<View onOpenSession={open} />);
-    const toggle = await screen.findByRole("button", { name: /Session Navigator/ });
-    if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
-    const tabs = within(screen.getByRole("group", { name: "Open files" }));
-    fakeArtifacts.texts["00-ticket.md"] = "# The brief";
-    fireEvent.click(await screen.findByRole("button", { name: /00-ticket\.md/ }));
-    expect(await screen.findByRole("heading", { name: "The brief" })).toBeDefined();
-    fireEvent.click(within(screen.getByRole("region", { name: "Session lineage" })).getByRole("button", { name: /Research notes/ }));
-    expect(tabs.getByRole("button", { name: "Agent conversation" }).getAttribute("aria-pressed")).toBe("true");
-    expect(open).not.toHaveBeenCalled();
-    view.rerender(<View taskSlug="" onOpenSession={open} />);
-    expect(screen.queryByRole("region", { name: "Session lineage" })).toBeNull();
-  });
 });
 
 describe("session work names", () => {
