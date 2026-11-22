@@ -1344,67 +1344,63 @@
 .onboarding-body-learn {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 12px;
   width: 100%;
   max-width: 1040px;
   margin-inline: auto;
   box-sizing: border-box;
 }
-.onboarding-lesson-intro { display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
-.onboarding-lesson-grid {
+.onboarding-tiles {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  margin-top: 8px;
 }
-.onboarding-lesson-card {
-  display: grid;
-  grid-template-columns: 196px minmax(0, 1fr);
-  gap: 20px;
-  align-items: center;
+/* Fan out is the widest drawing, so it takes the first row; the other three share the second. */
+.onboarding-tile:first-child { grid-column: 1 / -1; }
+.onboarding-tile:first-child svg { max-width: 680px; margin-inline: auto; }
+/* The tiles are drawn by handoffTiles.ts, which names its marks with these classes and tokens. */
+.onboarding-tile {
+  justify-content: space-between;
+  --tile-surface: var(--surface);
+  --tile-line: var(--border-strong);
+  --tile-accent: var(--accent);
+  --tile-ok: var(--success);
+  --tile-muted: var(--text-muted);
+  --tile-strong: var(--text-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
   padding: 16px 18px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
 }
-/* A lesson's ring is the diagram itself, so its chords and loop are drawn at full strength, not on hover. */
-.onboarding-lesson-card .playbook-ring .ring-chord,
-.onboarding-lesson-card .playbook-ring .ring-loop { opacity: 1; }
-.onboarding-lesson-note { margin: 0; color: var(--text-muted); font-size: calc(13px * var(--ui-scale)); }
-.onboarding-lesson-card h3 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: calc(15px * var(--ui-scale));
-  font-weight: 600;
-}
-.onboarding-lesson-card p {
-  margin: 6px 0 0;
-  color: var(--text-muted);
-  font-size: calc(13px * var(--ui-scale));
-  line-height: 1.5;
-}
-.onboarding-lesson-card .onboarding-lesson-chain { margin-top: 2px; font-size: calc(12px * var(--ui-scale)); }
-.onboarding-lesson-card .onboarding-lesson-headline { color: var(--text); font-weight: 500; }
-.onboarding-lesson-card .onboarding-lesson-mark { color: var(--text); }
-.onboarding-body-agents { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); }
+.onboarding-tile svg { display: block; width: 100%; height: auto; overflow: visible; }
+.onboarding-tile figcaption { display: flex; flex-direction: column; gap: 2px; text-align: center; }
+.onboarding-tile figcaption strong { color: var(--text-strong); font-size: calc(15px * var(--ui-scale)); font-weight: 600; }
+.onboarding-tile figcaption span { color: var(--text-muted); font-size: calc(13px * var(--ui-scale)); }
+.onboarding-tile .st { font-family: var(--font-mono); font-size: 11px; fill: var(--tile-muted); }
+.onboarding-tile .st.hi { fill: var(--tile-strong); }
+.onboarding-tile .nl { font-size: 11.5px; fill: var(--tile-muted); }
+.onboarding-tile .seg { fill: none; stroke: var(--tile-line); stroke-width: 1.25; }
+.onboarding-tile .seg.back { stroke: var(--tile-ok); stroke-dasharray: 4 3; }
+.onboarding-tile .nd { fill: var(--tile-surface); stroke: var(--tile-line); stroke-width: 1.25; }
+.onboarding-tile .nd.cp { stroke: var(--warning); }
+.onboarding-tile .nd.on { stroke: var(--tile-accent); stroke-width: 2; }
+.onboarding-tile .nd.done { stroke: var(--tile-ok); }
+.onboarding-tile .dot { fill: var(--tile-accent); }
+.onboarding-tile .dot.work { fill: var(--tile-ok); }
+.onboarding-tile .dot.wait { fill: var(--warning); }
+.onboarding-tile .hand { fill: var(--tile-surface); stroke: var(--warning); }
+.onboarding-tile .tap { fill: none; stroke: var(--warning); stroke-width: 1.5; }
+.onboarding-body-agents { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
 .onboarding-agent-copy { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.onboarding-agent-points {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 4px 0 0;
-  padding: 0;
-  list-style: none;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-.onboarding-agent-points strong { color: var(--text-strong); font-weight: 600; }
+.onboarding-agent-copy .playbook-ring { width: 100%; max-width: 380px; margin: 8px auto 0; }
 .onboarding-agent-stage {
   display: flex;
   flex-direction: column;
-  gap: 12px;
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--border);
@@ -1414,28 +1410,35 @@
 }
 .onboarding-agent-stage > p,
 .onboarding-agent-stage > .btn { margin: 16px; align-self: flex-start; }
-.onboarding-agent-ring { flex: none; padding: 16px 16px 0; }
-.onboarding-agent-ring .playbook-ring-panel { max-width: 240px; }
-.onboarding-agent-hint { margin: 8px 0 0; color: var(--text-muted); font-size: calc(12px * var(--ui-scale)); text-align: center; }
-.onboarding-agent-prompt {
+.onboarding-agent-stage h3 {
+  margin: 0;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-scale));
+  font-weight: 600;
+}
+.onboarding-agent-stage pre {
   flex: 1;
   min-height: 160px;
-  overflow: auto;
+  margin: 0;
   padding: 14px 18px;
-  border-top: 1px solid var(--border);
-  background: var(--surface-raised);
-}
-.onboarding-agent-prompt h3 { margin: 0; color: var(--text-strong); font-size: calc(14px * var(--ui-scale)); font-weight: 600; }
-.onboarding-agent-prompt pre {
-  margin: 10px 0 0;
+  overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: calc(12px * var(--ui-scale));
   line-height: 1.5;
   color: var(--text);
+  animation: onboarding-agent-prompt-in 320ms ease-out;
+}
+@keyframes onboarding-agent-prompt-in {
+  from { opacity: 0; transform: translateY(4px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-agent-stage pre { animation: none; }
 }
 @media (max-width: 860px) {
-  .onboarding-lesson-grid,
+  .onboarding-tiles,
   .onboarding-body-agents { grid-template-columns: minmax(0, 1fr); }
 }

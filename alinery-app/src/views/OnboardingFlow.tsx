@@ -353,7 +353,6 @@ export function OnboardingFlow({
           <div className="onboarding-body onboarding-body-playbooks" data-dir={direction} data-testid="onboarding-step-playbooks">
             <div className="onboarding-playbook-rail">
               <h2>Choose a playbook to start with</h2>
-              <p className="onboarding-lede">Each playbook is drawn as a ring. Read it clockwise from step 1. Choose one to watch how its work moves.</p>
 
               <div
                 className="onboarding-archetype-list"

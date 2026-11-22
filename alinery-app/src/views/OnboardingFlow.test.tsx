@@ -526,18 +526,16 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
   });
 
-  it("teaches the four building blocks, each drawn as its own ring", async () => {
+  it("teaches the four building blocks, each as its own animated drawing", async () => {
     render(<OnboardingFlow {...flowProps()} initialStep="learn" />);
     await act(async () => {});
     expect(screen.getByRole("heading", { name: "Learning how to use playbooks" })).toBeTruthy();
-    const blocks = within(screen.getByRole("list", { name: "The four building blocks of a playbook" })).getAllByRole("listitem");
-    expect(blocks.map((block) => within(block).getByRole("heading").textContent)).toEqual(["Fan out, then merge", "Parallel steps", "Loop back", "Human checkpoints"]);
-    for (const block of blocks) expect(within(block).getByRole("region", { name: / ring$/ })).toBeTruthy();
-    // A lesson's ring is a picture: its nodes are not buttons.
-    for (const block of blocks) expect(within(block).queryAllByRole("button")).toHaveLength(0);
-    // The loop is drawn only where a block has one, and the hand only where a step waits.
-    expect(blocks.map((block) => block.querySelectorAll(".ring-loop").length)).toEqual([0, 0, 1, 0]);
-    expect(blocks.map((block) => block.querySelectorAll(".ring-hand").length)).toEqual([0, 0, 0, 1]);
+    const blocks = screen.getAllByRole("figure");
+    expect(blocks.map((block) => block.querySelector("strong")?.textContent)).toEqual(["Fan out, then merge", "Parallel steps", "Loop back", "Human checkpoints"]);
+    // Every tile's drawing was built: it has nodes, and the loop and the hand appear only where they belong.
+    for (const block of blocks) expect(block.querySelectorAll("svg .nd").length).toBeGreaterThan(2);
+    expect(blocks.map((block) => block.querySelectorAll(".seg.back").length)).toEqual([0, 0, 1, 0]);
+    expect(blocks.map((block) => block.querySelectorAll(".hand").length)).toEqual([0, 0, 0, 1]);
   });
 
   it("shows the prompt each step's agent follows on a real playbook", async () => {
@@ -550,15 +548,25 @@ describe("OnboardingFlow wizard", () => {
         modified_at_ms: null,
       };
     });
-    render(<OnboardingFlow {...flowProps()} initialStep="agents" />);
-    expect(screen.getByRole("heading", { name: "Every step is its own agent" })).toBeTruthy();
-    const stage = await screen.findByRole("region", { name: "SuperDevelop step prompts" });
-    expect(within(stage).getByRole("heading", { name: "Agent 1 of 7: Clarify" })).toBeTruthy();
-    expect(within(stage).getByText("You are the Clarify agent.")).toBeTruthy();
-    fireEvent.click(within(stage).getByRole("button", { name: "Build" }));
-    expect(within(stage).getByRole("heading", { name: "Agent 6 of 7: Build" })).toBeTruthy();
-    expect(within(stage).getByText("You are the Build agent.")).toBeTruthy();
-    expect(within(stage).queryByText("You are the Clarify agent.")).toBeNull();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      render(<OnboardingFlow {...flowProps()} initialStep="agents" />);
+      expect(screen.getByRole("heading", { name: "Every step is its own agent" })).toBeTruthy();
+      const stage = await screen.findByRole("region", { name: "SuperDevelop step prompts" });
+      expect(within(stage).getByRole("heading", { name: "Agent 1 of 7: Clarify" })).toBeTruthy();
+      expect(within(stage).getByText("You are the Clarify agent.")).toBeTruthy();
+      // The ring walks to the next agent by itself.
+      act(() => void vi.advanceTimersByTime(3200));
+      expect(within(stage).getByRole("heading", { name: "Agent 2 of 7: Investigate" })).toBeTruthy();
+      // Choosing a step shows its prompt and ends the walk.
+      fireEvent.click(within(screen.getByRole("region", { name: "SuperDevelop ring" })).getByRole("button", { name: "Build" }));
+      expect(within(stage).getByText("You are the Build agent.")).toBeTruthy();
+      act(() => void vi.advanceTimersByTime(10000));
+      expect(within(stage).getByRole("heading", { name: "Agent 6 of 7: Build" })).toBeTruthy();
+      expect(within(stage).queryByText("You are the Clarify agent.")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("offers building a new playbook separately through the existing creation form", async () => {
