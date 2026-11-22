@@ -4,6 +4,7 @@
 import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import { LoginMethod, type LoginStatus as WireLoginStatus, LoginStatusSchema, type ProviderCatalog as WireCatalog, ProviderCatalogSchema, type ProviderService } from "alinery-proto/alinery/v1/providers_pb";
+import { refreshHostedProviders } from "../provider.ts";
 import { create } from "@bufbuild/protobuf";
 import { join } from "node:path";
 import { readSettingsFiles, settingsEntity } from "../domain/settings.ts";
@@ -45,6 +46,7 @@ export function loginStatusToWire(s: LoginStatus): WireLoginStatus {
 /** What the harness picker offers: the harness row's own models, then `provider/id` for every model of a signed-in provider here. */
 export async function listModels(d: ProviderDeps, harness: string): Promise<string[]> {
   if (!MODEL_HARNESSES.has(harness)) return [];
+  refreshHostedProviders();
   const settings = settingsEntity(readSettingsFiles(join(d.repo, ".alinery"), d.appConfig)).value;
   const rows = settings.case === "settings" ? settings.value.harnesses : [];
   const out = [...(rows.find((r) => r.harness?.key === harness)?.harness?.models ?? [])];

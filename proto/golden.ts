@@ -7,6 +7,7 @@
 //   bun golden.ts            writes golden/admin.json
 import { mkdirSync, writeFileSync } from "node:fs";
 import { create, toBinary, type DescMessage, type MessageInitShape } from "@bufbuild/protobuf";
+import { ClearShareRequestSchema, ClearShareResponseSchema, SetShareRequestSchema, SetShareResponseSchema } from "./gen/alinery/v1/share_pb";
 import { EnsureReadyRequestSchema, WriteHostedInferenceRequestSchema, WriteHostedInferenceResponseSchema } from "./gen/alinery/v1/settings_pb";
 import {
   HostBackupRestoreSchema,
@@ -66,6 +67,10 @@ const golden = {
   EnsureReadyRequest: hex(EnsureReadyRequestSchema, { meta: { clientId: "client-1", mutationId: "mutation-1" } }),
   WriteHostedInferenceRequest: hex(WriteHostedInferenceRequestSchema, { meta: { clientId: "client-1", mutationId: "mutation-2" }, inferenceJson: '{"token":"inf_x"}' }),
   WriteHostedInferenceResponse: hex(WriteHostedInferenceResponseSchema, {}),
+  SetShareRequest: hex(SetShareRequestSchema, { meta: { clientId: "client-1", mutationId: "mutation-3" }, teamId: "team-1", name: "repo", token: "sync_test_abc", accountsUrl: "https://accounts.alinery.ai" }),
+  SetShareResponse: hex(SetShareResponseSchema, {}),
+  ClearShareRequest: hex(ClearShareRequestSchema, { meta: { clientId: "client-1", mutationId: "mutation-4" } }),
+  ClearShareResponse: hex(ClearShareResponseSchema, {}),
 };
 
 mkdirSync(new URL("./golden", import.meta.url), { recursive: true });

@@ -153,7 +153,7 @@ export class ArtifactProjector {
       for (const item of [...items.filter((i) => !i.attachment), ...repoTargets.map((name) => ({ name }))]) {
         try {
           for (const c of loadComments(this.repo, slug, item.name)) {
-            add(create(EntitySchema, { key: `comment/${slug}/${item.name}/${c.id}`, value: { case: "comment", value: { slug, id: c.id, artifact: c.artifact, anchorId: c.anchor_id, anchorKind: c.anchor_kind, anchorLabel: c.anchor_label, anchorExcerpt: c.anchor_excerpt, lineStart: c.line_start, lineEnd: c.line_end, body: c.body, createdAtMs: BigInt(c.created_at_ms) } } }));
+            add(create(EntitySchema, { key: `comment/${slug}/${item.name}/${c.id}`, value: { case: "comment", value: { slug, id: c.id, artifact: c.artifact, anchorId: c.anchor_id, anchorKind: c.anchor_kind, anchorLabel: c.anchor_label, anchorExcerpt: c.anchor_excerpt, lineStart: c.line_start, lineEnd: c.line_end, body: c.body, createdAtMs: BigInt(c.created_at_ms), author: c.author ?? "" } } }));
           }
         } catch (e) {
           this.log(`comments ${slug}/${item.name}: ${(e as Error).message}`);

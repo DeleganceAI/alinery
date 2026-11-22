@@ -29,7 +29,7 @@ export type PendingUi = {
 
 export type DumpTool = { name: string; description?: string; parameters?: unknown; examples?: unknown };
 
-export type ChatModelOption = { provider: string; id: string };
+export type ChatModelOption = { provider: string; id: string; label?: string };
 
 export type ChatLoginProvider = {
   id: string;

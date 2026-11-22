@@ -685,7 +685,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
     if (judged) entry.verdicts.set(command.id, verdict);
     try {
-      await promptChatThread(repo, id, text, command.images);
+      await promptChatThread(repo, id, text, command.images, transcript.sessionMeta.model);
     } catch (cause) {
       entry.verdicts.delete(command.id);
       throw cause;

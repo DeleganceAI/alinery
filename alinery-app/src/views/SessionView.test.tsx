@@ -1415,7 +1415,7 @@ describe("Vinculum session chat", () => {
     const onMessageDraftChange = vi.fn();
     renderSession({ intent: "attach", messageDraft: { body: "hello", pendingActions: [], attachments: [] }, onMessageDraftChange });
     fireEvent.click(await screen.findByRole("button", { name: "Send" }));
-    await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("/repo", "session", "hello", undefined));
+    await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("/repo", "session", "hello", undefined, undefined));
   });
 
   it("keeps the sent images in the prompt row, under the name the copy went to", async () => {
@@ -1657,7 +1657,7 @@ describe("Vinculum session chat", () => {
     expect(screen.queryByRole("button", { name: "Wait for me" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Continue automatically" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("/repo", "session", "Please revise the last paragraph", undefined));
+    await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("/repo", "session", "Please revise the last paragraph", undefined, undefined));
     await waitFor(() => expect(screen.queryByText("Ready for review")).toBeNull());
     daemon.setTranscript("session", [{ id: "reviewed-again", role: "assistant", content: [{ type: "text", text: "Updated the paragraph." }] }]);
     getTaskExecution.mockResolvedValue(executionReply([{ ...record, ready: { ...ready, revision: 5 } }]));

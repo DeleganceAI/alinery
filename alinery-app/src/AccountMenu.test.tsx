@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   accountCancelSignIn: vi.fn<() => Promise<void>>(),
   accountSignOut: vi.fn<() => Promise<AccountSignOutResult>>(),
   accountOpen: vi.fn<() => Promise<void>>(),
+  accountOpenPlans: vi.fn<() => Promise<void>>(),
+  accountTeams: vi.fn<() => Promise<{ pots: { teamId: string | null; name: string; role: string; balanceCents: number }[]; pendingInvites: [] }>>(),
   accountCredits: vi.fn<() => Promise<DesktopCreditsView>>(),
   toastError: vi.fn(),
   toastInfo: vi.fn(),
@@ -30,6 +32,8 @@ vi.mock("./ipc", () =>
     accountCancelSignIn: mocks.accountCancelSignIn,
     accountSignOut: mocks.accountSignOut,
     accountOpen: mocks.accountOpen,
+    accountOpenPlans: mocks.accountOpenPlans,
+    accountTeams: mocks.accountTeams,
     accountCredits: mocks.accountCredits,
   }),
 );
@@ -62,6 +66,8 @@ const creditsHidden: DesktopCreditsView = {
 
 beforeEach(() => {
   mocks.accountCredits.mockResolvedValue(creditsHidden);
+  mocks.accountTeams.mockResolvedValue({ pots: [], pendingInvites: [] });
+  mocks.accountOpenPlans.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -123,7 +129,7 @@ describe("signed out", () => {
     renderMenu();
 
     fireEvent.click(await screen.findByRole("button", { name: "Account" }));
-    expect(screen.getAllByRole("menuitem").map((el) => el.textContent)).toEqual(["Notifications8", "Settings9", "Sign in"]);
+    expect(screen.getAllByRole("menuitem").map((el) => el.textContent)).toEqual(["Team", "Notifications8", "Settings9", "Sign in"]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Notifications" }));
     expect(mocks.onOpenNotifications).toHaveBeenCalledTimes(1);
     expect(mocks.onOpenSettings).not.toHaveBeenCalled();
@@ -398,5 +404,44 @@ describe("account chip glyph", () => {
     const cancel = await screen.findByRole("button", { name: "Cancel sign-in" });
     expect(glyphOf(cancel)).toContain("lucide-x");
     expect(glyphOf(cancel)).not.toContain("lucide-user-round");
+  });
+});
+
+describe("Team row", () => {
+  it("shows the Teams price and opens Alinery accounts when the account has no team", async () => {
+    mocks.accountStatus.mockResolvedValue(signedIn);
+    mocks.accountRefresh.mockResolvedValue(signedIn);
+    mocks.accountTeams.mockResolvedValue({
+      pots: [{ teamId: null, name: "Personal", role: "owner", balanceCents: 500 }],
+      pendingInvites: [],
+    });
+    renderMenu();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Team" }));
+    expect(await screen.findByRole("dialog", { name: "Teams" })).toBeTruthy();
+    expect(screen.getByText("$30")).toBeTruthy();
+    expect(screen.getByText("per seat / month")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open Alinery accounts" }));
+    await waitFor(() => expect(mocks.accountOpenPlans).toHaveBeenCalledTimes(1));
+    expect(mocks.accountOpen).not.toHaveBeenCalled();
+  });
+
+  it("opens the account page when the account belongs to a team", async () => {
+    mocks.accountStatus.mockResolvedValue(signedIn);
+    mocks.accountRefresh.mockResolvedValue(signedIn);
+    mocks.accountOpen.mockResolvedValue(undefined);
+    mocks.accountTeams.mockResolvedValue({
+      pots: [{ teamId: "team-1", name: "SuperTech1", role: "owner", balanceCents: 1669 }],
+      pendingInvites: [],
+    });
+    renderMenu();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+    await waitFor(() => expect(mocks.accountTeams).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("menuitem", { name: "Team" }));
+    await waitFor(() => expect(mocks.accountOpen).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog", { name: "Teams" })).toBeNull();
+    expect(mocks.accountOpenPlans).not.toHaveBeenCalled();
   });
 });

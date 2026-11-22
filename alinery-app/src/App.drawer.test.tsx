@@ -121,6 +121,7 @@ vi.mock("./TerminalDrawer", () => ({
 }));
 vi.mock("./sync/hooks", () => ({ liveSessionsNow: mocks.liveSessionsNow }));
 vi.mock("./sync/sessionObservation", async (importOriginal) => ({ ...(await importOriginal<typeof import("./sync/sessionObservation")>()), observationNow: mocks.observationNow }));
+vi.mock("./TeamCommentsNotice", () => ({ TeamCommentsNotice: () => null }));
 vi.mock("./BackgroundFX", () => ({ BackgroundFX: () => null }));
 vi.mock("./Boot", () => ({ Boot: () => null }));
 vi.mock("./HotkeyBar", () => ({ HotkeyBar: () => null }));

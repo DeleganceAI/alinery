@@ -48,6 +48,7 @@ import * as ipc from "../ipc";
 import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PaneResizer } from "../PaneResizer";
+import { PullCommentsButton } from "../PullCommentsButton";
 import { ReviewedCompletion } from "../ReviewedCompletion";
 import { revealPath } from "../revealPath";
 import { SessionLineage } from "../SessionLineage";
@@ -100,6 +101,7 @@ import {
   setSessionThinkingLevel,
   startSession,
 } from "../sync/sessions";
+import { pullTeamComments } from "../sync/share";
 import { addTaskAttachment, copyTaskAttachments } from "../sync/tasks";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
@@ -818,7 +820,7 @@ export function SessionView({
     try {
       if (transport === "rpc") {
         const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
-        await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
+        await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images, chatRef.current.sessionMeta.model);
         if (reviewKey) setInvalidatedReview(reviewKey);
         // The row keeps the images the model was given, by the name they were copied under: the pane
         // reads them back from the same directory, so they stay visible after the turn ends.
@@ -856,7 +858,7 @@ export function SessionView({
     try {
       const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
       await abortSession(repoPath, id);
-      await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
+      await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images, chatRef.current.sessionMeta.model);
       if (reviewKey) setInvalidatedReview(reviewKey);
       const rowAttachments = prepared ? draftToRowAttachments(prepared.copied) : [];
       updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
@@ -1393,9 +1395,12 @@ export function SessionView({
                     )}
                   </div>
                   {showInfo ? null : (
-                    <span className="pill">
-                      {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
-                    </span>
+                    <>
+                      <PullCommentsButton onPull={() => pullTeamComments(repoPath)} />
+                      <span className="pill">
+                        {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
+                      </span>
+                    </>
                   )}
                 </div>
                 {artifactErr && (

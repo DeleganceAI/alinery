@@ -36,7 +36,14 @@ export function thinkingForHosted(thinking: CatalogModel["thinking"]): { reasoni
   }
   return { reasoning: true, thinkingLevelMap };
 }
-type InferenceFile = { token: string; expires_at: number; catalog: { base_url: string; models: CatalogModel[] } };
+type InferenceFile = {
+  token: string;
+  expires_at: number;
+  catalog: { base_url: string; models: CatalogModel[] };
+  pots?: Record<string, { token: string; expires_at: number }>;
+};
+
+let installed: { models: Pick<MutableModels, "setProvider">; appConfig: string; registered: Set<string> } | null = null;
 
 export function pairingConfigDir(appConfig: string): string {
   const dir = dirname(appConfig);
@@ -54,7 +61,8 @@ export function readInference(appConfig: string): InferenceFile | null {
 
 export function modelSources(appConfig: string): { hosted: boolean; grok: boolean } {
   const inference = readInference(appConfig);
-  return { hosted: Boolean(inference?.token && inference.catalog?.models?.length), grok: Boolean(process.env.XAI_API_KEY?.trim()) };
+  const pot = Object.values(inference?.pots ?? {}).some((row) => row.token.startsWith("inf_"));
+  return { hosted: Boolean((inference?.token || pot) && inference?.catalog?.models?.length), grok: Boolean(process.env.XAI_API_KEY?.trim()) };
 }
 
 export type ResolvedModel = { provider: string; modelId: string };
@@ -64,6 +72,7 @@ export type ResolvedModel = { provider: string; modelId: string };
  * `alinery/grok-*` stays on disk and is read as xAI. The provider prefix is otherwise kept, and only the first slash splits it.
  */
 export function resolveModel(appConfig: string, requested: string): ResolvedModel | null {
+  refreshHostedProviders();
   const trimmed = requested.trim();
   const slash = trimmed.indexOf("/");
   const prefix = slash > 0 ? trimmed.slice(0, slash) : "";
@@ -79,15 +88,33 @@ export function resolveModel(appConfig: string, requested: string): ResolvedMode
   return fallback ? { provider: "xai", modelId: fallback } : null;
 }
 
+/** A team's key can land after the daemon started; its provider exists only once registered. */
+export function refreshHostedProviders() {
+  if (!installed) return;
+  const { models, appConfig, registered } = installed;
+  // A registered provider reads its token and catalog on every call, so only a pot it has not seen needs registering.
+  for (const teamId of Object.keys(readInference(appConfig)?.pots ?? {})) {
+    if (registered.has(teamId)) continue;
+    registered.add(teamId);
+    registerHosted(models, appConfig, `alinery:${teamId}`, teamId);
+  }
+}
+
 export function installAlineryProvider(models: Pick<MutableModels, "setProvider">, appConfig: string) {
+  installed = { models, appConfig, registered: new Set() };
+  registerHosted(models, appConfig, "alinery", null);
+  refreshHostedProviders();
+}
+
+function registerHosted(models: Pick<MutableModels, "setProvider">, appConfig: string, id: string, teamId: string | null) {
   // The hosted catalog is openai-completions. /v1/responses is not served and comes back 404.
   const catalog = () => {
     const inference = readInference(appConfig);
-    const hosted = (inference?.catalog.models ?? []).map((model) => ({
+    return (inference?.catalog.models ?? []).map((model) => ({
       id: model.id,
       name: model.name,
       api: "openai-completions",
-      provider: "alinery",
+      provider: id,
       baseUrl: inference?.catalog.base_url,
       ...thinkingForHosted(model.thinking),
       input: inputForHosted(model.input),
@@ -95,23 +122,20 @@ export function installAlineryProvider(models: Pick<MutableModels, "setProvider"
       contextWindow: model.context_window,
       maxTokens: model.max_tokens,
     }));
-    return hosted;
   };
   const streamWith = (method: "stream" | "streamSimple", model: { id: string; api?: string }, context: unknown, options: Record<string, unknown> | undefined) =>
-    streamAlinery(appConfig, method, model, context, options);
-  // createProvider reads api.stream. A top-level stream is not a field it uses.
+    streamAlinery(appConfig, teamId, method, model, context, options);
   const provider = createProvider({
-    id: "alinery",
-    name: "Alinery",
+    id,
+    name: teamId ? `Alinery ${teamId}` : "Alinery",
     auth: {
       apiKey: {
         name: "Alinery hosted",
-        // Models.applyAuth reads resolution.auth. A credential-shaped return leaves auth undefined and throws on auth.apiKey before any request.
         resolve: async ({ credential }) => {
           const explicit = credential?.key?.trim();
           if (explicit) return { auth: { apiKey: explicit }, source: "stored credential" };
-          const inference = readInference(appConfig);
-          if (inference?.token) return { auth: { apiKey: inference.token }, source: "alinery hosted" };
+          const token = hostedToken(readInference(appConfig), teamId);
+          if (token) return { auth: { apiKey: token }, source: "alinery hosted" };
           return undefined;
         },
       },
@@ -123,21 +147,28 @@ export function installAlineryProvider(models: Pick<MutableModels, "setProvider"
       streamSimple: (model, context, options) => streamWith("streamSimple", model, context, options),
     },
   });
-  // createProvider's getModels is the baseline snapshot. Re-read inference.json on each lookup.
   provider.getModels = catalog;
   provider.getAllModels = catalog;
   models.setProvider(provider);
 }
 
+function hostedToken(inference: InferenceFile | null, teamId: string | null): string | undefined {
+  if (!inference) return undefined;
+  if (!teamId) return inference.token || undefined;
+  const token = inference.pots?.[teamId]?.token;
+  return token?.startsWith("inf_") ? token : undefined;
+}
+
 type StreamMethod = "stream" | "streamSimple";
 
-function streamAlinery(appConfig: string, method: StreamMethod, model: { id: string; api?: string; baseUrl?: string }, context: unknown, options: Record<string, unknown> | undefined) {
+function streamAlinery(appConfig: string, teamId: string | null, method: StreamMethod, model: { id: string; api?: string; baseUrl?: string }, context: unknown, options: Record<string, unknown> | undefined) {
   const hostedApi = openAICompletionsApi();
   const inference = readInference(appConfig);
+  const token = hostedToken(inference, teamId);
   const hosted = inference?.catalog.models.some((item) => item.id === model.id);
-  if (!hosted || !inference?.token) throw new Error(`model ${model.id} is unavailable`);
+  if (!hosted || !token || !inference) throw new Error(`model ${model.id} is unavailable`);
   const hostedModel = { ...model, api: "openai-completions", baseUrl: inference.catalog.base_url };
-  return hostedApi[method](hostedModel, context, { ...options, apiKey: inference.token });
+  return hostedApi[method](hostedModel, context, { ...options, apiKey: token });
 }
 
 /** One tools-off reply through whichever provider owns the model. The caller does not write it into a conversation. */
