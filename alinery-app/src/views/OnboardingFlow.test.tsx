@@ -527,8 +527,17 @@ describe("OnboardingFlow wizard", () => {
     render(<OnboardingFlow {...flowProps()} initialStep="overview" />);
     const body = screen.getByTestId("onboarding-step-overview");
     expect(within(body).getByRole("heading", { name: "A playbook is an expert's process, written down for agents" })).toBeTruthy();
-    expect(within(body).getAllByRole("listitem")).toHaveLength(4);
+    // One point each for the expert's process, artifacts, steering, the guarantee and trust.
+    expect(body.querySelectorAll(".onboarding-points li")).toHaveLength(5);
+    expect(within(body).getByText("Agents coordinate through files.")).toBeTruthy();
     expect(await within(body).findByRole("region", { name: "Academic Survey ring" })).toBeTruthy();
+    // The legend names the three marks: a step, where a person steps in, and an artifact handoff.
+    const legend = within(body).getByRole("list", { name: "How to read the ring" });
+    expect(
+      within(legend)
+        .getAllByRole("listitem")
+        .map((item) => item.querySelector("strong")?.textContent),
+    ).toEqual(["A step", "You step in", "Artifact handoff"]);
   });
 
   it("shows the four components as four small drawings, with a link to the Learn page", async () => {
@@ -561,7 +570,8 @@ describe("OnboardingFlow wizard", () => {
       render(<OnboardingFlow {...flowProps()} initialStep="agents" />);
       await act(async () => {});
       const stage = screen.getByRole("region", { name: "Academic Survey step prompts" });
-      expect(within(stage).getByRole("heading", { name: "Agent 4 of 4: Read and Evaluate One Source" })).toBeTruthy();
+      expect(within(stage).getByText("Agent 4 of 4")).toBeTruthy();
+      expect(within(stage).getByRole("heading", { name: "Read and Evaluate One Source" })).toBeTruthy();
       const notes = within(stage).getAllByRole("button");
       expect(notes.map((note) => note.querySelector("strong")?.textContent)).toEqual(PROMPT_NOTES.map((note) => note.label));
       const pressed = () => notes.map((note) => note.getAttribute("aria-pressed") === "true");
@@ -574,7 +584,7 @@ describe("OnboardingFlow wizard", () => {
       expect(pressed()).toEqual([false, false, false, false, true]);
       // Another step shows its own prompt.
       fireEvent.click(within(screen.getByRole("region", { name: "Academic Survey ring" })).getByRole("button", { name: "Queries" }));
-      expect(within(stage).getByRole("heading", { name: "Agent 1 of 4: Queries" })).toBeTruthy();
+      expect(within(stage).getByRole("heading", { name: "Queries" })).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

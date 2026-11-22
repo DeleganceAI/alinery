@@ -407,10 +407,6 @@ export function OnboardingFlow({
                     <span className="onboarding-step-ordinal">{selectedStep ? `Step ${selectedStepIndex + 1} of ${playbookSteps.length}` : "Playbook preview"}</span>
                     <h3>{demoComplete && playing ? "Demo complete" : (selectedStep?.title ?? activePlaybook.title)}</h3>
                   </div>
-                  <p className="onboarding-sim-copy">{simStatusCopy}</p>
-                </div>
-
-                <div className="onboarding-graph-frame">
                   <button
                     type="button"
                     className="onboarding-demo-toggle"
@@ -423,6 +419,10 @@ export function OnboardingFlow({
                     {playing ? <Pause size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
                     {playing ? "Pause demo" : "Resume demo"}
                   </button>
+                  <p className="onboarding-sim-copy">{simStatusCopy}</p>
+                </div>
+
+                <div className="onboarding-graph-frame">
                   <PlaybookRing
                     key={activePlaybook.key}
                     steps={playbookSteps}

@@ -770,6 +770,8 @@
   border-radius: var(--radius-md);
   background: var(--surface);
 }
+.onboarding-brand { white-space: nowrap; }
+.onboarding-sim-title { padding-right: 130px; }
 .onboarding-sim-bar {
   position: sticky;
   top: 0;
@@ -812,9 +814,8 @@
 }
 .onboarding-demo-toggle {
   position: absolute;
-  z-index: 2;
-  inset-block-start: 40px;
-  inset-inline-end: 40px;
+  inset-block-start: 14px;
+  inset-inline-end: 14px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1313,36 +1314,99 @@
 }
 
 /* Building blocks and Agents: the two lessons before the playbook picker (views/PlaybookLessons.tsx). */
+/* The three lesson pages share one frame: copy and figure centred in a column of the same width. */
+.onboarding-body-overview,
+.onboarding-body-learn,
+.onboarding-body-agents {
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
+  padding: 40px 48px;
+  gap: 48px;
+  align-content: center;
+  align-items: center;
+  box-sizing: border-box;
+}
+.onboarding-lesson-copy { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.onboarding-lesson-copy h2 { font-size: calc(26px * var(--ui-scale)); line-height: 1.2; }
+.onboarding-lesson-copy .onboarding-lede { font-size: calc(14.5px * var(--ui-scale)); }
+/* Components is one centred column: the claim, the four tiles, the link. */
 .onboarding-body-learn {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 16px;
-  width: 100%;
-  max-width: 1040px;
-  margin-inline: auto;
-  box-sizing: border-box;
+  align-items: stretch;
+  gap: 28px;
 }
-/* Overview: what a playbook is, beside one real playbook's ring. */
-.onboarding-body-overview { align-items: center; }
-.onboarding-overview-copy h2 { max-width: 20ch; }
-.onboarding-overview-copy ul {
+.onboarding-body-learn .onboarding-lesson-copy { align-items: center; text-align: center; }
+/* Overview: what a playbook is, beside one real playbook's ring and how to read it. */
+.onboarding-points {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  margin: 20px 0 0;
-  padding-left: 18px;
-  color: var(--text);
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
   line-height: 1.5;
 }
-.onboarding-overview-ring { display: grid; place-items: center; min-width: 0; min-height: 0; }
-.onboarding-overview-ring .playbook-ring { width: 100%; max-width: 560px; }
+.onboarding-points li { position: relative; padding-left: 18px; }
+.onboarding-points li::before {
+  content: "";
+  position: absolute;
+  top: 0.6em;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.onboarding-points strong { color: var(--text-strong); font-weight: 600; }
+.onboarding-figure {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.onboarding-figure > .playbook-ring { width: 100%; padding: 12px 16px 4px; box-sizing: border-box; }
+.onboarding-figure > p { margin: 24px; color: var(--text-muted); }
+/* On this page the ring is the lesson, so its handoff lines are drawn at full strength. */
+.onboarding-figure .playbook-ring .ring-chord { opacity: 1; }
+.onboarding-legend {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  list-style: none;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.4;
+}
+.onboarding-legend li { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.onboarding-legend svg,
+.onboarding-legend .legend-hand { flex: none; width: 22px; height: 22px; }
+.onboarding-legend strong { display: block; color: var(--text-strong); font-weight: 600; }
+.onboarding-legend .legend-node { fill: var(--surface); stroke: var(--border-strong); }
+.onboarding-legend .legend-num { fill: var(--text); font-family: var(--font-mono); font-size: 10px; }
+.onboarding-legend .legend-line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.onboarding-legend .legend-hand {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid var(--warning);
+  border-radius: 50%;
+  color: var(--warning);
+}
 /* Components: four small tiles of one size, drawn by handoffTiles.ts with these classes and tokens. */
 .onboarding-tiles {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 8px;
+  gap: 14px;
 }
 .onboarding-tile {
   --tile-surface: var(--surface);
@@ -1355,7 +1419,7 @@
   flex-direction: column;
   gap: 8px;
   margin: 0;
-  padding: 12px 14px;
+  padding: 18px 16px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -1364,7 +1428,8 @@
 /* The tiles are captioned in the page, so the running commentary inside each drawing is left out. */
 .onboarding-tile svg > text.st { display: none; }
 .onboarding-tile figcaption { color: var(--text-strong); font-size: calc(13px * var(--ui-scale)); font-weight: 600; text-align: center; }
-.onboarding-learn-link { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; margin-top: 8px; color: var(--accent); }
+.onboarding-learn-link { display: inline-flex; align-items: center; gap: 6px; align-self: center; color: var(--accent); font-size: calc(13px * var(--ui-scale)); text-decoration: none; }
+.onboarding-learn-link:hover { text-decoration: underline; }
 .onboarding-tile .st { font-family: var(--font-mono); font-size: 11px; fill: var(--tile-muted); }
 .onboarding-tile .st.hi { fill: var(--tile-strong); }
 .onboarding-tile .nl { font-size: 13px; fill: var(--tile-muted); }
@@ -1380,9 +1445,8 @@
 .onboarding-tile .dot.wait { fill: var(--warning); }
 .onboarding-tile .hand { fill: var(--tile-surface); stroke: var(--warning); }
 .onboarding-tile .tap { fill: none; stroke: var(--warning); stroke-width: 1.5; }
-.onboarding-body-agents { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
-.onboarding-agent-copy { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.onboarding-agent-copy .playbook-ring { width: 100%; max-width: 380px; margin: 8px auto 0; }
+.onboarding-body-agents { grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr); }
+.onboarding-agent-copy .playbook-ring { width: 100%; max-width: 340px; margin: 16px auto 0; }
 .onboarding-agent-stage {
   display: flex;
   flex-direction: column;
@@ -1396,16 +1460,16 @@
 }
 .onboarding-agent-stage > p,
 .onboarding-agent-stage > .btn { margin: 16px; align-self: flex-start; }
-.onboarding-agent-stage h3 {
-  margin: 0;
-  padding: 14px 18px;
+.onboarding-agent-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 18px 14px;
   border-bottom: 1px solid var(--border);
-  color: var(--text-strong);
-  font-size: calc(14px * var(--ui-scale));
-  font-weight: 600;
 }
+.onboarding-agent-stage h3 { margin: 0; color: var(--text-strong); font-size: calc(16px * var(--ui-scale)); font-weight: 600; }
 /* The prompt, a paragraph per row, with a comment beside each part the lesson points at. */
-.onboarding-prompt { padding: 12px 14px; }
+.onboarding-prompt { display: flex; flex-direction: column; gap: 4px; padding: 14px; }
 .onboarding-prompt-block {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 190px;

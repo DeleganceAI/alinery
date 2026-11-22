@@ -1,4 +1,4 @@
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Hand } from "lucide-react";
 import { useEffect, useState } from "react";
 import * as ipc from "../ipc";
 import { PlaybookRing, RingReadout, stepOwnPrompt } from "../PlaybookRing";
@@ -33,20 +33,68 @@ function useAutoAdvance(count: number, dwellMs: (index: number) => number): [num
 
 const LEARN_URL = "https://alinery.ai/learn";
 
+/** What the Overview page says a playbook is. Each point is a lead phrase and one sentence. */
+export const OVERVIEW_POINTS = [
+  ["An expert's process.", "It encodes how a human expert does a kind of work: the steps, their order, and what each one hands to the next."],
+  ["Agents coordinate through files.", "Each step writes markdown files, called artifacts. The steps after it read them."],
+  ["You launch it and steer it.", "Agents do the steps. You step in where the playbook waits for you."],
+  ["The process is guaranteed.", "Each step runs in order, and its handoff is checked before the next one starts."],
+  [
+    "Trust comes from the process.",
+    "Much of the work agents do can't be verified from the output alone. You can rely on the result only if you can rely on the process that produced it.",
+  ],
+] as const;
+
+/** How to read a ring: the three marks the Overview page explains. */
+function RingLegend() {
+  return (
+    <ul className="onboarding-legend" aria-label="How to read the ring">
+      <li>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" className="legend-node" />
+          <text x="12" y="15.5" textAnchor="middle" className="legend-num">
+            1
+          </text>
+        </svg>
+        <span>
+          <strong>A step</strong>Run by its own agent.
+        </span>
+      </li>
+      <li>
+        <span className="legend-hand" aria-hidden="true">
+          <Hand size={12} strokeWidth={2} />
+        </span>
+        <span>
+          <strong>You step in</strong>Before the swarm continues.
+        </span>
+      </li>
+      <li>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 18 Q12 1 21 18" className="legend-line" />
+        </svg>
+        <span>
+          <strong>Artifact handoff</strong>A file passed to a later step.
+        </span>
+      </li>
+    </ul>
+  );
+}
+
 /** Onboarding's "Playbooks: Overview" page: what a playbook is and why the process matters, beside one real playbook's ring. */
 export function PlaybookOverview({ playbook }: { playbook: NormalizedPlaybook | null }) {
   return (
     <>
-      <div className="onboarding-overview-copy">
+      <div className="onboarding-lesson-copy">
         <h2>A playbook is an expert's process, written down for agents</h2>
-        <ul>
-          <li>A playbook encodes how a human expert does a kind of work: the steps, their order, and what each one hands to the next.</li>
-          <li>You launch it and you steer it. Agents do the steps, and you step in where the playbook waits for you.</li>
-          <li>A playbook guarantees the agents follow that process. Each step runs in order, and its handoff is checked before the next one starts.</li>
-          <li>Much of the work agents do can't be verified from the output alone. You can rely on the result only if you can rely on the process that produced it.</li>
+        <ul className="onboarding-points">
+          {OVERVIEW_POINTS.map(([lead, text]) => (
+            <li key={lead}>
+              <strong>{lead}</strong> {text}
+            </li>
+          ))}
         </ul>
       </div>
-      <div className="onboarding-overview-ring">
+      <figure className="onboarding-figure">
         {playbook ? (
           <PlaybookRing steps={playbook.step} label={`${playbook.title} ring`} selectedStepKey={null}>
             <RingReadout title={playbook.title} steps={playbook.step} activeKey={null} />
@@ -54,7 +102,8 @@ export function PlaybookOverview({ playbook }: { playbook: NormalizedPlaybook | 
         ) : (
           <p role="status">Loading the example playbook…</p>
         )}
-      </div>
+        <RingLegend />
+      </figure>
     </>
   );
 }
@@ -72,7 +121,10 @@ export function LearnPlaybooks() {
   const root = useTiles();
   return (
     <>
-      <h2>Playbooks are built from four composable moves</h2>
+      <div className="onboarding-lesson-copy">
+        <h2>Playbooks are built from four composable moves</h2>
+        <p className="onboarding-lede">Every playbook, however large, is some combination of these.</p>
+      </div>
       <div className="onboarding-tiles" ref={root}>
         {BUILDING_BLOCKS.map((block) => (
           <figure key={block.tile} className="onboarding-tile">
@@ -125,9 +177,9 @@ export function StepAgentsLesson({ playbook, error, onRetry }: { playbook: Norma
   const activeNote = noted[active]?.note;
   return (
     <>
-      <div className="onboarding-agent-copy">
+      <div className="onboarding-lesson-copy onboarding-agent-copy">
         <h2>Every step is its own agent</h2>
-        <p className="onboarding-lede">A fresh agent runs each step, following a prompt written for that step. Read what it is told to do.</p>
+        <p className="onboarding-lede">A fresh agent runs each step, following a prompt an expert wrote for that step. Read what this one is told to do.</p>
         {playbook && step && (
           <PlaybookRing size="panel" steps={steps} label={`${playbook.title} ring`} selectedStepKey={step.key} onSelectStep={setChosenKey}>
             <RingReadout steps={steps} activeKey={step.key} />
@@ -136,9 +188,12 @@ export function StepAgentsLesson({ playbook, error, onRetry }: { playbook: Norma
       </div>
       {playbook && step ? (
         <section className="onboarding-agent-stage" aria-label={`${playbook.title} step prompts`}>
-          <h3>
-            Agent {steps.indexOf(step) + 1} of {steps.length}: {step.title}
-          </h3>
+          <div className="onboarding-agent-head">
+            <span className="onboarding-step-ordinal">
+              Agent {steps.indexOf(step) + 1} of {steps.length}
+            </span>
+            <h3>{step.title}</h3>
+          </div>
           <div className="onboarding-prompt">
             {blocks.map((block, blockIndex) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: a prompt's paragraphs have no identity but their order
