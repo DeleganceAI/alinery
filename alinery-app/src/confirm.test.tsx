@@ -20,7 +20,9 @@ describe("confirmation withdrawal", () => {
     const controller = new AbortController();
     controller.abort();
     await expect(askConfirm({ title: "Withdrawn request", body: "No longer valid.", cancelKey: "leave", signal: controller.signal })).resolves.toBe("leave");
-    expect(screen.getByRole("alertdialog", { name: "Current request" })).toBeDefined();
+    const dialog = screen.getByRole("alertdialog", { name: "Current request" });
+    // Outside any container-query ancestor, so WebKit hit-tests the buttons where they are drawn.
+    expect(dialog.parentElement).toBe(document.body);
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await expect(current).resolves.toBe("confirm");
   });
