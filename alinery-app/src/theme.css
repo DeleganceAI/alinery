@@ -2278,13 +2278,33 @@ main {
   min-height: 180px;
   resize: vertical;
 }
-.worktree-row {
+/* Workspace settings: the three names share a row, then the session cap and the start choice share one. */
+.create-workspace-names {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.create-workspace-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 28px;
+}
+.create-field.create-field-inline {
+  flex-direction: row;
   align-items: center;
   gap: 10px;
-  margin: 12px 0;
 }
-.worktree-row .opt {
-  flex: 0 0 auto;
+.create-field-inline .field-input {
+  width: 88px;
+}
+.create-disclosure .task-default-model {
+  max-width: 440px;
+}
+@media (max-width: 900px) {
+  .create-workspace-names {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .createform-page .field-input.worktree-input {
   flex: 1 1 0;

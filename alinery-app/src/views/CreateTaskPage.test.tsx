@@ -971,7 +971,10 @@ describe("per-step default model", () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByLabelText("Build model");
     const taskModel = screen.getByLabelText("Task Default Model");
-    const permission = screen.getByText("Steering settings");
+    // The task's model sits inside Steering settings, above the per-step choices.
+    const steering = screen.getByRole("heading", { name: /^Steering settings/ }).parentElement as HTMLElement;
+    expect(steering.contains(taskModel)).toBe(true);
+    const permission = within(steering).getByText("After each step");
     expect(taskModel.compareDocumentPosition(permission) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(screen.queryByLabelText("Model")).toBeNull();
   });

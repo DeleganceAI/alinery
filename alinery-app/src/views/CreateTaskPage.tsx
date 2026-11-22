@@ -1284,31 +1284,35 @@ export function CreateTaskPage({
                 </div>
               </div>
             </section>
-            <label className="create-field task-default-model">
-              <span>Task Default Model</span>
-              <ModelInput
-                harness="vinculum"
-                repoPath={repoPath}
-                ariaLabel="Task Default Model"
-                value={model}
-                onChange={(v) => {
-                  dirtyRef.current = true;
-                  setModel(v);
-                  setModelNeedsReselection(false);
-                }}
-                onOpenPicker={() => setPicking("task")}
-              />
-              {modelNeedsReselection && <InlineStatus tone="error">Select a model available in this repository.</InlineStatus>}
-            </label>
-            {!!selectedSource?.definition.step.length && (
-              <section className="create-disclosure">
-                <h3>
-                  Steering settings
+            <section className="create-disclosure">
+              <h3>
+                Steering settings
+                {!!selectedSource?.definition.step.length && (
                   <small>
                     {selectedSource.definition.step.length} {selectedSource.definition.step.length === 1 ? "step" : "steps"} ·{" "}
                     {selectedSource.definition.step.filter((step) => autoAdvance.includes(step.key)).length} continue automatically
                   </small>
-                </h3>
+                )}
+              </h3>
+              <div className="create-disclosure-body">
+                <label className="create-field task-default-model">
+                  <span>Task Default Model</span>
+                  <ModelInput
+                    harness="vinculum"
+                    repoPath={repoPath}
+                    ariaLabel="Task Default Model"
+                    value={model}
+                    onChange={(v) => {
+                      dirtyRef.current = true;
+                      setModel(v);
+                      setModelNeedsReselection(false);
+                    }}
+                    onOpenPicker={() => setPicking("task")}
+                  />
+                  {modelNeedsReselection && <InlineStatus tone="error">Select a model available in this repository.</InlineStatus>}
+                </label>
+              </div>
+              {!!selectedSource?.definition.step.length && (
                 <div className="step-model-list">
                   <div className="step-model-head">
                     <span>Step</span>
@@ -1375,8 +1379,8 @@ export function CreateTaskPage({
                     );
                   })}
                 </div>
-              </section>
-            )}
+              )}
+            </section>
             {picking && (
               <ProviderSetupDialog
                 mode="manual"
@@ -1398,24 +1402,22 @@ export function CreateTaskPage({
             <section className="create-disclosure">
               <h3>Workspace settings</h3>
               <div className="create-disclosure-body">
-                <label className="create-field">
-                  <span>Task slug</span>
-                  <input
-                    className="field-input"
-                    value={taskSlug}
-                    onChange={(e) => {
-                      dirtyRef.current = true;
-                      const next = slugifyTaskName(e.target.value);
-                      setTaskSlug(next);
-                      setSlugEdited(next !== slugifyTaskName(name));
-                    }}
-                    placeholder="task-slug"
-                  />
-                  <div className="hint">Task folder and automatic Git names. Edit to override.</div>
-                </label>
-                <div className="crow worktree-row">
-                  <span>Dedicated task worktree</span>
-                  <label className="create-field grow">
+                <div className="create-workspace-names">
+                  <label className="create-field">
+                    <span>Task slug</span>
+                    <input
+                      className="field-input"
+                      value={taskSlug}
+                      onChange={(e) => {
+                        dirtyRef.current = true;
+                        const next = slugifyTaskName(e.target.value);
+                        setTaskSlug(next);
+                        setSlugEdited(next !== slugifyTaskName(name));
+                      }}
+                      placeholder="task-slug"
+                    />
+                  </label>
+                  <label className="create-field">
                     <span>New task branch</span>
                     <input
                       className="field-input worktree-input"
@@ -1424,10 +1426,10 @@ export function CreateTaskPage({
                         dirtyRef.current = true;
                         setBranchName(e.target.value);
                       }}
-                      placeholder="Branch name (optional — auto if blank or taken)"
+                      placeholder="Automatic"
                     />
                   </label>
-                  <label className="create-field grow">
+                  <label className="create-field">
                     <span>Worktree folder</span>
                     <input
                       className="field-input worktree-input"
@@ -1436,26 +1438,29 @@ export function CreateTaskPage({
                         dirtyRef.current = true;
                         setWorktreeName(e.target.value);
                       }}
-                      placeholder="Worktree folder name (optional — auto if blank or taken)"
+                      placeholder="Automatic"
                     />
                   </label>
                 </div>
-                <label className="create-field">
-                  <span>Maximum live sessions</span>
-                  <input
-                    className="field-input"
-                    type="number"
-                    min="1"
-                    max="4294967295"
-                    step="1"
-                    value={maxLiveSessions}
-                    onChange={(event) => {
-                      dirtyRef.current = true;
-                      setMaxLiveSessions(event.target.value);
-                    }}
-                  />
-                </label>
-                <Checkbox checked={start} onChange={setStart} label="Start eligible sessions after creation" />
+                <div className="hint">The slug names the task folder. A blank branch or worktree folder is named automatically.</div>
+                <div className="create-workspace-run">
+                  <label className="create-field create-field-inline">
+                    <span>Maximum live sessions</span>
+                    <input
+                      className="field-input"
+                      type="number"
+                      min="1"
+                      max="4294967295"
+                      step="1"
+                      value={maxLiveSessions}
+                      onChange={(event) => {
+                        dirtyRef.current = true;
+                        setMaxLiveSessions(event.target.value);
+                      }}
+                    />
+                  </label>
+                  <Checkbox checked={start} onChange={setStart} label="Start eligible sessions after creation" />
+                </div>
               </div>
             </section>
             {created && (
