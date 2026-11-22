@@ -1,201 +1,146 @@
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
+# Alinery Source Available License v1.0
 
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+Copyright © 2026 Delegance. All rights reserved.
 
-   1. Definitions.
+## 1. Definitions
 
-      "License" shall mean the terms and conditions for use, reproduction,
-      and distribution as defined by Sections 1 through 9 of this document.
+**1.1 "Software"** means the Alinery software components made available by
+Delegance under this License, including the Client and the Execution Daemon,
+together with their source code, documentation, and any Modifications.
 
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License.
+**1.2 "Execution Daemon"** means the component of the Software that executes
+Playbooks, including on a schedule or without an interactive user present,
+and that records process logs and maintains the optimization loop.
 
-      "Legal Entity" shall mean the union of the acting entity and all
-      other entities that control, are controlled by, or are under common
-      control with that entity. For the purposes of this definition,
-      "control" means (i) the power, direct or indirect, to cause the
-      direction or management of such entity, whether by contract or
-      otherwise, or (ii) ownership of fifty percent (50%) or more of the
-      outstanding shares, or (iii) beneficial ownership of such entity.
+**1.3 "Modification"** means any addition to, deletion from, or change to
+the Software, including adaptations of the Software's interfaces.
 
-      "You" (or "Your") shall mean an individual or Legal Entity
-      exercising permissions granted by this License.
+**1.4 "Individual Use"** means a single natural person using the Software,
+including the Execution Daemon, on hardware that person owns or controls,
+for that person's own purposes. Individual Use expressly includes
+non-commercial use, academic use, classroom and research use, and use by a
+student, whether or not affiliated with an educational institution.
 
-      "Source" form shall mean the preferred form for making modifications,
-      including but not limited to software source code, documentation
-      source, and configuration files.
+**1.5 "Shared Server Use"** means operating the Execution Daemon such that
+it is used, directly or indirectly, by more than one natural person, or by
+more than one legal entity, or by any employee, contractor, or agent of an
+organization other than the operator as an individual.
 
-      "Object" form shall mean any form resulting from mechanical
-      transformation or translation of a Source form, including but
-      not limited to compiled object code, generated documentation,
-      and conversions to other media types.
+**1.6 "Production Use"** means operating the Execution Daemon, whether or
+not shared within the meaning of Section 1.5, on behalf of or within an
+organization in connection with the organization's commercial activity,
+including internal business processes, client work, and product
+development.
 
-      "Work" shall mean the work of authorship, whether in Source or
-      Object form, made available under the License, as indicated by a
-      copyright notice that is included in or attached to the work
-      (an example is provided in the Appendix below).
+**1.7 "Server License"** means a commercial license issued by Delegance
+that authorizes Shared Server Use and/or Production Use of the Execution
+Daemon under terms stated in that license.
 
-      "Derivative Works" shall mean any work, whether in Source or Object
-      form, that is based on (or derived from) the Work and for which the
-      editorial revisions, annotations, elaborations, or other modifications
-      represent, as a whole, an original work of authorship. For the purposes
-      of this License, Derivative Works shall not include works that remain
-      separable from, or merely link (or bind by name) to the interfaces of,
-      the Work and Derivative Works thereof.
+## 2. License Grant
 
-      "Contribution" shall mean any work of authorship, including
-      the original version of the Work and any modifications or additions
-      to that Work or Derivative Works thereof, that is intentionally
-      submitted to Licensor for inclusion in the Work by the copyright owner
-      or by an individual or Legal Entity authorized to submit on behalf of
-      the copyright owner. For the purposes of this definition, "submitted"
-      means any form of electronic, verbal, or written communication sent
-      to the Licensor or its representatives, including but not limited to
-      communication on electronic mailing lists, source code control systems,
-      and issue tracking systems that are managed by, or on behalf of, the
-      Licensor for the purpose of discussing and improving the Work, but
-      excluding communication that is conspicuously marked or otherwise
-      designated in writing by the copyright owner as "Not a Contribution."
+Subject to the terms and conditions of this License, Delegance grants you a
+non-exclusive, non-transferable, non-sublicensable, worldwide, revocable
+license to use, copy, modify, and create Modifications of the Software, and
+to permit others to receive the Software and this License from you,
+provided that:
 
-      "Contributor" shall mean Licensor and any individual or Legal Entity
-      on behalf of whom a Contribution has been received by Licensor and
-      subsequently incorporated within the Work.
+**2.1** each recipient receives this License and all notices included with
+the Software; and
 
-   2. Grant of Copyright License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      copyright license to reproduce, prepare Derivative Works of,
-      publicly display, publicly perform, sublicense, and distribute the
-      Work and such Derivative Works in Source or Object form.
+**2.2** any Modification you distribute, and any Software you distribute,
+is distributed only under this License, with the notices intact.
 
-   3. Grant of Patent License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      (except as stated in this section) patent license to make, have made,
-      use, offer to sell, sell, import, and otherwise transfer the Work,
-      where such license applies only to those patent claims licensable
-      by such Contributor that are necessarily infringed by their
-      Contribution(s) alone or by combination of their Contribution(s)
-      with the Work to which such Contribution(s) was submitted. If You
-      institute patent litigation against any entity (including a
-      cross-claim or counterclaim in a lawsuit) alleging that the Work
-      or a Contribution incorporated within the Work constitutes direct
-      or contributory patent infringement, then any patent licenses
-      granted to You under this License for that Work shall terminate
-      as of the date such litigation is filed.
+Individual Use of the Software, including the Execution Daemon, requires
+no fee and no Server License.
 
-   4. Redistribution. You may reproduce and distribute copies of the
-      Work or Derivative Works thereof in any medium, with or without
-      modifications, and in Source or Object form, provided that You
-      meet the following conditions:
+## 3. Your Rights
 
-      (a) You must give any other recipients of the Work or
-          Derivative Works a copy of this License; and
+You may:
 
-      (b) You must cause any modified files to carry prominent notices
-          stating that You changed the files; and
+**3.1** use the Software for Individual Use, including running the
+Execution Daemon on your own machines, without charge;
 
-      (c) You must retain, in the Source form of any Derivative Works
-          that You distribute, all copyright, patent, trademark, and
-          attribution notices from the Source form of the Work,
-          excluding those notices that do not pertain to any part of
-          the Derivative Works; and
+**3.2** read, study, and audit the source code; and
 
-      (d) If the Work includes a "NOTICE" text file as part of its
-          distribution, then any Derivative Works that You distribute must
-          include a readable copy of the attribution notices contained
-          within such NOTICE file, excluding those notices that do not
-          pertain to any part of the Derivative Works, in at least one
-          of the following places: within a NOTICE text file distributed
-          as part of the Derivative Works; within the Source form or
-          documentation, if provided along with the Derivative Works; or,
-          within a display generated by the Derivative Works, if and
-          wherever such third-party notices normally appear. The contents
-          of the NOTICE file are for informational purposes only and
-          do not modify the License. You may add Your own attribution
-          notices within Derivative Works that You distribute, alongside
-          or as an addendum to the NOTICE text from the Work, provided
-          that such additional attribution notices cannot be construed
-          as modifying the License.
+**3.3** create Modifications for your own use and distribute Modifications
+under the terms of Section 2.
 
-      You may add Your own copyright statement to Your modifications and
-      may provide additional or different license terms and conditions
-      for use, reproduction, or distribution of Your modifications, or
-      for any such Derivative Works as a whole, provided Your use,
-      reproduction, and distribution of the Work otherwise complies with
-      the conditions stated in this License.
+## 4. Limitations
 
-   5. Submission of Contributions. Unless You explicitly state otherwise,
-      any Contribution intentionally submitted for inclusion in the Work
-      by You to the Licensor shall be under the terms and conditions of
-      this License, without any additional terms or conditions.
-      Notwithstanding the above, nothing herein shall supersede or modify
-      the terms of any separate license agreement you may have executed
-      with Licensor regarding such Contributions.
+You may NOT:
 
-   6. Trademarks. This License does not grant permission to use the trade
-      names, trademarks, service marks, or product names of the Licensor,
-      except as required for reasonable and customary use in describing the
-      origin of the Work and reproducing the content of the NOTICE file.
+**4.1 Managed Service.** Provide the Software, including any Modification,
+to third parties as a hosted, managed, or software-as-a-service offering in
+which the Software, or any substantial part of its functionality, is made
+available to users who do not hold this License from Delegance.
 
-   7. Disclaimer of Warranty. Unless required by applicable law or
-      agreed to in writing, Licensor provides the Work (and each
-      Contributor provides its Contributions) on an "AS IS" BASIS,
-      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-      implied, including, without limitation, any warranties or conditions
-      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
-      PARTICULAR PURPOSE. You are solely responsible for determining the
-      appropriateness of using or redistributing the Work and assume any
-      risks associated with Your exercise of permissions under this License.
+**4.2 Server Use Gate.** Operate the Execution Daemon, or permit it to be
+operated, for Shared Server Use or Production Use without a then-current
+Server License covering that use. This restriction does not apply to
+Individual Use as defined in Section 1.4.
 
-   8. Limitation of Liability. In no event and under no legal theory,
-      whether in tort (including negligence), contract, or otherwise,
-      unless required by applicable law (such as deliberate and grossly
-      negligent acts) or agreed to in writing, shall any Contributor be
-      liable to You for damages, including any direct, indirect, special,
-      incidental, or consequential damages of any character arising as a
-      result of this License or out of the use or inability to use the
-      Work (including but not limited to damages for loss of goodwill,
-      work stoppage, computer failure or malfunction, or any and all
-      other commercial damages or losses), even if such Contributor
-      has been advised of the possibility of such damages.
+**4.3 License Key Circumvention.** Move, change, disable, or circumvent any
+license key, entitlement check, usage meter, or other license-enforcement
+functionality in the Software, or remove or obscure any report or log
+generated by such functionality.
 
-   9. Accepting Warranty or Additional Liability. While redistributing
-      the Work or Derivative Works thereof, You may choose to offer,
-      and charge a fee for, acceptance of support, warranty, indemnity,
-      or other liability obligations and/or rights consistent with this
-      License. However, in accepting such obligations, You may act only
-      on Your own behalf and on Your sole responsibility, not on behalf
-      of any other Contributor, and only if You agree to indemnify,
-      defend, and hold each Contributor harmless for any liability
-      incurred by, or claims asserted against, such Contributor by reason
-      of your accepting any such warranty or additional liability.
+**4.4 Notices.** Remove or obscure any copyright, attribution, or license
+notice contained in the Software.
 
-   END OF TERMS AND CONDITIONS
+## 5. Server License
 
-   APPENDIX: How to apply the Apache License to your work.
+Shared Server Use and Production Use of the Execution Daemon are available
+under a Server License from Delegance. A Server License is evidenced by a
+license key or similar entitlement issued by Delegance, is effective for
+the term and the use stated in it, and is governed by its own terms
+together with this License. If a Server License conflicts with this License
+as to uses it expressly authorizes, the Server License controls for those
+uses.
 
-      To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "[]"
-      replaced with your own identifying information. (Don't include
-      the brackets!)  The text should be enclosed in the appropriate
-      comment syntax for the file format. We also recommend that a
-      file or class name and description of purpose be included on the
-      same "printed page" as the copyright notice for easier
-      identification within third-party archives.
+## 6. Notices
 
-   Copyright [yyyy] [name of copyright owner]
+You must retain, and must not remove or obscure, all copyright, attribution,
+and license notices in the Software, in any Modification, and in any
+distribution of the Software or a Modification.
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+## 7. Intellectual Property
 
-       http://www.apache.org/licenses/LICENSE-2.0
+This License grants no rights in or to Delegance's trademarks, service
+marks, or trade names, and grants no rights under or to any patent rights of
+Delegance or its licensors. Except for the express license grants above,
+Delegance reserves all rights in the Software.
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+## 8. Term and Termination
+
+This License is effective until terminated. Delegance may terminate this
+License, and any Server License, upon written notice if you breach any
+provision of Section 4 or 6 and fail to cure the breach within fourteen
+(14) days of notice. Upon termination, you must stop using and distributing
+the Software, except that:
+
+**8.1** any copy you hold for Individual Use as of the termination date
+remains usable by you as an individual; and
+
+**8.2** any perpetual license you hold to a specific released version under
+a Delegance subscription remains effective for that version.
+
+## 9. Disclaimer of Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS," WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT WILL
+DELEGANCE OR ITS LICENSORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+## 10. Governing Law and Venue
+
+This License is governed by the laws of the State of Delaware, without
+regard to its conflict-of-law rules. The United Nations Convention on
+Contracts for the International Sale of Goods does not apply.
+
+---
+
+*Alinery is a product of Delegance. For commercial licensing, contact
+legal@delegance.ai.*

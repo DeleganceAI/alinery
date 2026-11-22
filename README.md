@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://alinery.ai"><img src="https://img.shields.io/badge/Website-alinery.ai-111827?style=flat-square" alt="Website: alinery.ai"></a>
   <a href="https://discord.gg/tgAUKEv5U"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord: join the community"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-2563eb?style=flat-square" alt="License: Apache 2.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Source_Available_(ASAL_1.0)-2563eb?style=flat-square" alt="License: Alinery Source Available License 1.0"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux-475569?style=flat-square" alt="Platforms: macOS and Linux"></a>
 </p>
 
@@ -197,6 +197,6 @@ Before contributing code, read [AGENTS.md](AGENTS.md) for the repository's engin
 ## License
 
 Alinery's original source code and documentation are licensed under the
-[Apache License 2.0](LICENSE). Third-party components and adapted materials retain
+the [Alinery Source Available License v1.0](LICENSE): the code is source available, Individual Use (including academic and non-commercial use) is free, and Shared Server or Production Use of the Execution Daemon requires a commercial license. Third-party components and adapted materials retain
 their respective licenses; see [third-party notices](THIRD-PARTY-NOTICES.md) and
 any accompanying license files. See [NOTICE](NOTICE) for copyright information.
