@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE, normalizeChatView } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
@@ -295,6 +296,78 @@ describe("Sessions view and Chat tabs", () => {
     renderSection("chat", { ...DEFAULT_APPEARANCE, chat_show_copy_buttons: false });
     expect(((await (await partOf("chat")).findByLabelText(/Show copy buttons/)) as HTMLInputElement).checked).toBe(true);
     expect((await partOf("chat")).getByRole("button", { name: "900px" }).getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("Auto-compaction limit", () => {
+  // The real app feeds the saved appearance back in; a stateless prop would hide the
+  // round trip this test is about.
+  function LiveSettings({ initial }: { initial: AppearancePrefs }) {
+    const [appearance, setAppearance] = useState(initial);
+    return (
+      <Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={appearance} onAppearanceChange={setAppearance} onNotificationsChange={() => {}} initialSection="agents" />
+    );
+  }
+
+  // The limit lives under Session defaults, not in the chat view's own settings.
+  const defaultsPart = async () => {
+    const find = () => document.querySelector<HTMLElement>('[data-anchor="agents.defaults"]');
+    await waitFor(() => expect(find()).not.toBeNull());
+    return within(find() as HTMLElement);
+  };
+
+  const percentField = async () => (await (await defaultsPart()).findByLabelText("Compaction percent of context")) as HTMLInputElement;
+
+  it("retypes 100 to 30 without a keystroke snapping back to the maximum", async () => {
+    render(<LiveSettings initial={{ ...DEFAULT_APPEARANCE, chat_compaction_basis: "percent", chat_compaction_percent: 100 }} />);
+    const percent = await percentField();
+    expect(percent.value).toBe("100");
+    act(() => percent.focus());
+    // Backspace all the way to empty, then type 30. Nothing may clamp mid-edit: the old
+    // behaviour turned the empty field into 1 and "130" into 100 on the second digit.
+    for (const text of ["10", "1", "", "3", "30"]) {
+      fireEvent.change(percent, { target: { value: text } });
+      expect(percent.value).toBe(text);
+    }
+    act(() => percent.blur());
+    await waitFor(() => expect(lastSavedAppearance().chat_compaction_percent).toBe(30));
+    expect(percent.value).toBe("30");
+  });
+
+  it("clamps a typed 130 to 100 when the field is left, not while typing", async () => {
+    render(<LiveSettings initial={{ ...DEFAULT_APPEARANCE, chat_compaction_basis: "percent", chat_compaction_percent: 80 }} />);
+    const percent = await percentField();
+    act(() => percent.focus());
+    fireEvent.change(percent, { target: { value: "130" } });
+    expect(percent.value).toBe("130");
+    act(() => percent.blur());
+    await waitFor(() => expect(lastSavedAppearance().chat_compaction_percent).toBe(100));
+    expect(percent.value).toBe("100");
+  });
+
+  it("leaves the saved percent alone when the field is emptied", async () => {
+    render(<LiveSettings initial={{ ...DEFAULT_APPEARANCE, chat_compaction_basis: "percent", chat_compaction_percent: 40 }} />);
+    const percent = await percentField();
+    act(() => percent.focus());
+    fireEvent.change(percent, { target: { value: "" } });
+    act(() => percent.blur());
+    expect(percent.value).toBe("40");
+    expect(mocks.writeAppearance).not.toHaveBeenCalled();
+  });
+
+  it("takes a token ceiling the same way", async () => {
+    render(<LiveSettings initial={{ ...DEFAULT_APPEARANCE, chat_compaction_basis: "percent" }} />);
+    const part = await defaultsPart();
+    fireEvent.click(await part.findByRole("button", { name: "Tokens" }));
+    const tokens = (await part.findByLabelText("Compaction token count")) as HTMLInputElement;
+    expect(tokens.value).toBe("128000");
+    act(() => tokens.focus());
+    for (const text of ["12800", "1280", "128", "1280", "1280000"]) {
+      fireEvent.change(tokens, { target: { value: text } });
+      expect(tokens.value).toBe(text);
+    }
+    act(() => tokens.blur());
+    await waitFor(() => expect(lastSavedAppearance().chat_compaction_tokens).toBe(1_280_000));
   });
 });
 

@@ -11,6 +11,14 @@ export type ToolStatus = "running" | "ok" | "error" | "blocked" | "aborted" | "d
 
 export type SubagentStatus = "spawned" | "running" | "waiting" | "completed" | "failed" | "aborted";
 
+export type WrapUpPrompt = {
+  deliveryId: string;
+  text: string;
+  status: "sending" | "pending" | "unconfirmed" | "failed" | "ended";
+  at: number;
+  position?: { promptId: string; offset: number };
+};
+
 export type ChatEntryType =
   | "prompt"
   | "follow_up"
@@ -38,6 +46,8 @@ export type ChatEntry =
   | (Base & {
       type: "prompt" | "follow_up";
       text: string;
+      nudgeDeliveryId?: string;
+      nudgeStatus?: WrapUpPrompt["status"];
       attachments?: UserRowAttachment[];
       /** Vinculum refused this send and the composer could not take the text back, so the row stays as "not sent". */
       failed?: boolean;
@@ -92,7 +102,7 @@ export type ChatEntry =
       denyLabel?: string;
     })
   | (Base & { type: "turn_marker"; turn: number; phase: "start" | "end"; stopReason?: string })
-  | (Base & { type: "error"; text: string })
+  | (Base & { type: "error"; text: string; failedEntryId?: string })
   | (Base & { type: "abort"; text: string })
   | (Base & { type: "harness"; event: string; text: string });
 

@@ -18,7 +18,7 @@ import type { TranscriptPart, TranscriptReply } from "../transcript.ts";
 import { requireCapability } from "./auth.ts";
 import { domain, fail, metaOf } from "./errors.ts";
 
-/** The session's transcript source, or undefined when it is not open in this daemon. */
+/** Live conversation or a snapshot of a retained session. */
 export type Transcripts = (taskSlug: string, id: string) => Promise<TranscriptFeed | undefined>;
 
 type Item = MessageInitShape<typeof TranscriptItemSchema>;
@@ -54,6 +54,8 @@ export function toItem(item: TranscriptReply): Item {
     isError: item.isError === true,
     runningToolIds: item.runningToolIds ?? [],
     at: BigInt(Math.trunc(item.at ?? 0)),
+    turnError: item.turnError,
+    nudgeDeliveryId: item.nudgeDeliveryId,
   };
 }
 
@@ -91,6 +93,7 @@ export function promptImages(images: readonly DraftImage[]): PromptImage[] {
 /** The turn controls of a live harness session, the same for a task session and a chat thread. A refusal is a `DomainError`. */
 export type TurnControl = {
   prompt(id: string, text: string, images?: PromptImage[]): Promise<void>;
+  retry(id: string, failedEntryId: string): Promise<void>;
   abort(id: string): Promise<void>;
   setModel(id: string, model: string): Promise<Controls>;
   setThinkingLevel(id: string, level: string): Promise<Controls>;
@@ -218,7 +221,7 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
         // The stamp first and in the store before the process goes, so a subscriber sees `archived` before the exit.
         stampSessionArchived(c().repo, slug, id);
         await c().refresh(metaRel(slug, id));
-        if (live) c().runner.stop(id);
+        if (live) await c().runner.stop(id);
         c().telemetry.record(() => ({ event: "session.archive", source: "alineryd", killedLive: live, sessionId: ids.session, taskId: ids.task }));
         return { applied: applied(), killedLive: live };
       });
@@ -229,7 +232,7 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
         const slug = refSlug(req.session);
         const id = req.session?.id ?? "";
         const ids = c().telemetryIds(slug, id);
-        c().runner.stop(id);
+        await c().runner.stop(id);
         c().telemetry.record(() => ({ event: "session.kill", source: "alineryd", sessionId: ids.session, taskId: ids.task }));
         return { applied: applied() };
       });
@@ -268,6 +271,13 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
         return {};
       });
     },
+    retryTurn: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => {
+        await c().turns.retry(req.sessionId, req.failedEntryId);
+        return {};
+      });
+    },
     abortSession: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return domain(async () => {
@@ -291,9 +301,11 @@ function transcriptHandlers(transcripts: Transcripts): Pick<ServiceImpl<typeof S
     async *watchTranscript(req, ctx) {
       requireCapability(ctx, Capability.VIEW);
       if (!req.session?.id) throw new ConnectError("WatchTranscript needs a session", Code.InvalidArgument);
-      const source = await transcripts(req.session.taskSlug, req.session.id);
-      if (!source) throw new ConnectError(`no open session ${req.session.id}`, Code.NotFound);
-      for await (const frame of watchTranscript(source, Number(req.fromItem), ctx.signal)) yield toResponse(frame);
+      const session = req.session;
+      const source = await domain(() => transcripts(session.taskSlug, session.id));
+      if (!source) throw new ConnectError(`no transcript for session ${session.id}`, Code.NotFound);
+      const feed = { read: () => domain(() => source.read()), subscribe: source.subscribe?.bind(source) };
+      for await (const frame of watchTranscript(feed, Number(req.fromItem), ctx.signal)) yield toResponse(frame);
     },
   };
 }

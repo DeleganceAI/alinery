@@ -163,9 +163,9 @@ test("task tools take task_slug or the older slug, session_status takes id, and 
   expect((await callTool(ctx, "alinery_get_task", { repo, task_slug: "first-task" })).content[0].text).toBe(bySlug.content[0].text);
   expect((await callTool(ctx, "alinery_get_task_execution", { repo, slug: "first-task" })).isError).toBeUndefined();
   const sessions = JSON.parse((await callTool(ctx, "alinery_list_sessions", { repo, task_slug: "first-task" })).content[0].text) as { id: string; harness: string }[];
-  // An agent session answers its transcript while it runs, and says it is not running otherwise: never an empty scrollback.
+  // An agent session answers its live or retained conversation when available.
   const agent = sessions.find((s) => s.harness === "vinculum");
-  if (agent) expect((await callTool(ctx, "alinery_read_session_history", { repo, task_slug: "first-task", session_id: agent.id })).content[0].text).toMatch(/"mode":"transcript"|is not running/);
+  if (agent) expect((await callTool(ctx, "alinery_read_session_history", { repo, task_slug: "first-task", session_id: agent.id })).content[0].text).toMatch(/"mode":"transcript"|no transcript available/);
   const sid = sessions.find((s) => s.harness === "no-harness")?.id ?? "";
   expect(JSON.parse((await callTool(ctx, "alinery_session_status", { repo, slug: "first-task", id: sid })).content[0].text).session_id).toBe(sid);
   const window = JSON.parse((await callTool(ctx, "alinery_read_session_history", { repo, task_slug: "first-task", session_id: sid, limit: 5 })).content[0].text);

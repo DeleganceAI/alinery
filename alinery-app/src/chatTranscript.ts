@@ -225,6 +225,9 @@ export function mapHydratedMessage(raw: unknown, rowId?: string): ChatMessage | 
   if (!role) return null;
   const mapped: ChatMessage = { role, content: mapContent(message.content) };
   if (typeof message.stopReason === "string") mapped.stopReason = message.stopReason;
+  if (role === "assistant" && mapped.stopReason === "error" && typeof message.errorMessage === "string" && message.errorMessage.trim()) {
+    mapped.turnError = { reason: message.errorMessage };
+  }
   if (typeof message.customType === "string") mapped.customType = message.customType;
   if (rowId) mapped.rowId = rowId;
   if (typeof message.timestamp === "number") mapped.timestamp = message.timestamp;
@@ -518,6 +521,7 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
         actor: ACTOR.you,
         type: "prompt",
         text: parsed.caption,
+        ...(message.nudgeDeliveryId ? { nudgeDeliveryId: message.nudgeDeliveryId } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
       });
       continue;
@@ -540,6 +544,9 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
         message.stopReason === "aborted",
       );
       entries.push(...exploded);
+      if (message.turnError) {
+        entries.push({ id: alloc("error"), type: "error", actor: ACTOR.agent, text: message.turnError.reason, at: message.at, failedEntryId: message.turnError.failedEntryId });
+      }
     }
   }
   return { entries, entrySeq, liveAssistantKeys: {} };
@@ -562,6 +569,8 @@ export type VinculumMessage = {
   toolName?: string;
   toolCallId?: string;
   isError?: boolean;
+  turnError?: string;
+  nudgeDeliveryId?: string;
   runningToolIds?: string[];
   /** When the message was complete, ms since the epoch. */
   at?: number;
@@ -586,6 +595,8 @@ function vinculumChatMessage(message: VinculumMessage, index: number): ChatMessa
   const raw = message.content !== undefined ? message : { ...message, content: [{ type: "text", text: message.text ?? "" }] };
   const mapped = mapHydratedMessage(raw, message.id && message.id.length > 0 ? message.id : `v${index}`);
   if (!mapped) return null;
+  if (mapped.role === "user" && message.nudgeDeliveryId) mapped.nudgeDeliveryId = message.nudgeDeliveryId;
+  if (mapped.role === "assistant" && message.turnError) mapped.turnError = { reason: message.turnError, failedEntryId: message.id };
   if (message.streaming && mapped.role === "toolResult") mapped.streaming = true;
   if (message.at) mapped.at = message.at;
   const running = new Set(message.runningToolIds ?? []);

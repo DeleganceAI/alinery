@@ -2,7 +2,14 @@
 // lives (range), and whether it matches the community copy (state). The Playbooks page reads only this.
 import type { CommunityImportRow, CommunitySummary, DownloadStatusRow, PlaybookCandidate, PlaybookRef, PublicationLink } from "./types";
 
-export type Origin = { kind: "alinery" } | { kind: "mine" } | { kind: "team" } | { kind: "download"; label: string; id: string };
+// A playbook's provenance on this disk: shipped with the app, written here (global or in a repo), committed to a repo's
+// alinery/playbooks, your published listing with no copy here, or a community download.
+export type Origin =
+  | { kind: "alinery" } // ships with the app
+  | { kind: "local"; scope: "global" | "repo" } // yours, written on this machine
+  | { kind: "team" } // committed in alinery/playbooks, changed through git
+  | { kind: "published" } // your listing with no copy here
+  | { kind: "download"; label: string; id: string };
 export type Range = "All repos" | "This repo";
 export type LinkState =
   | "builtin" // ships with Alinery
@@ -44,7 +51,18 @@ export function rangeOf(reference: PlaybookRef): Range {
 }
 
 export function originLabel(origin: Origin): string {
-  return origin.kind === "alinery" ? "Alinery" : origin.kind === "mine" ? "Mine" : origin.kind === "team" ? "Team" : `@${origin.label}`;
+  switch (origin.kind) {
+    case "alinery":
+      return "Alinery";
+    case "local":
+      return origin.scope === "global" ? "Global" : "Repo";
+    case "team":
+      return "Committed";
+    case "published":
+      return "Published";
+    case "download":
+      return `@${origin.label}`;
+  }
 }
 
 /** The status column's words and tone. */
@@ -121,6 +139,14 @@ export function libraryRows({ candidates, imports, downloads, mine, published }:
     const importRow = imports.find((item) => item.localKey === reference.key && (item.localScope ?? "repo") === reference.scope);
     if (importRow) {
       const download = downloadById.get(importRow.id) ?? null;
+      // A download of your own listing is a local copy that tracks the listing, so it reads live or changed like any source
+      // and offers Publish again. Only a global copy can be that source; a repository copy never is.
+      const publication = reference.scope === "global" ? (mine?.find((item) => item.id === importRow.id) ?? null) : null;
+      if (publication) {
+        const hash = candidate.body_sha256;
+        const state: LinkState = candidate.diagnostics.length ? "broken" : hash !== undefined && hash !== publication.bodySha256 ? "changed" : "live";
+        return { ...base, origin: { kind: "download", label: importRow.label, id: importRow.id }, state, importRow, download, publication };
+      }
       const edited = download?.locallyEdited ?? importRow.locallyEdited ?? false;
       const state: LinkState = candidate.diagnostics.length
         ? "broken"
@@ -137,10 +163,14 @@ export function libraryRows({ candidates, imports, downloads, mine, published }:
                 : "downloaded";
       return { ...base, origin: { kind: "download", label: importRow.label, id: importRow.id }, state, importRow, download };
     }
-    // A listing published before links were recorded matches by key, and only while no other copy is linked to it.
-    const link = published.find((item) => item.reference.scope === reference.scope && item.reference.key === reference.key);
+    // Only a global playbook is a listing's source. A repository playbook is always unpublished or a copy, so it never claims a
+    // listing; the listing shows as remote instead, ready to download globally. A listing published before links were recorded
+    // matches by key, and only while no other copy is linked to it.
+    const link = reference.scope === "global" ? published.find((item) => item.reference.scope === "global" && item.reference.key === reference.key) : undefined;
     const publication =
-      (link ? mine?.find((item) => item.id === link.id) : mine?.find((item) => item.playbookKey === reference.key && !linked.has(item.id) && !used.has(item.id))) ?? null;
+      reference.scope !== "global"
+        ? null
+        : ((link ? mine?.find((item) => item.id === link.id) : mine?.find((item) => item.playbookKey === reference.key && !linked.has(item.id) && !used.has(item.id))) ?? null);
     if (publication) used.add(publication.id);
     const hash = candidate.body_sha256;
     const state: LinkState = candidate.diagnostics.length
@@ -152,9 +182,9 @@ export function libraryRows({ candidates, imports, downloads, mine, published }:
           : hash !== undefined && hash !== publication.bodySha256
             ? "changed"
             : "live";
-    return { ...base, origin: { kind: "mine" }, state, publication };
+    return { ...base, origin: { kind: "local", scope: reference.scope }, state, publication };
   });
-  // Your listings with no copy here, so republishing or downloading your own work starts from the same list.
+  // Your published playbooks with no copy here, so republishing or downloading your own work starts from the same list.
   for (const publication of mine ?? []) {
     if (used.has(publication.id) || imports.some((item) => item.id === publication.id)) continue;
     rows.push({
@@ -163,7 +193,7 @@ export function libraryRows({ candidates, imports, downloads, mine, published }:
       description: publication.description,
       reference: null,
       candidate: null,
-      origin: { kind: "mine" },
+      origin: { kind: "published" },
       range: null,
       state: "remote",
       publication,

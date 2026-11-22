@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => ({
   chatSetThinkingLevel: vi.fn(async () => ({ model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] })),
   chatPrompt: vi.fn(async (..._args: unknown[]) => undefined),
   chatAbort: vi.fn(async () => undefined),
+  notifySessionAttention: vi.fn(async () => {}),
   openUrl: vi.fn(),
   startChatThread: vi.fn(),
   pickAttachmentFilesDialog: vi.fn(),
@@ -79,6 +80,7 @@ vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import(
 vi.mock("../ipc", () =>
   mockIpc({
     listChatRepos: mocks.listChatRepos,
+    notifySessionAttention: mocks.notifySessionAttention,
     openUrl: mocks.openUrl,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
     chatFileStat: mocks.chatFileStat,
@@ -86,8 +88,8 @@ vi.mock("../ipc", () =>
     getCurrentWebview: mocks.getCurrentWebview as never,
   }),
 );
-function chat(visibility: ChatPrefs = DEFAULT_CHAT_VISIBILITY) {
-  return <ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={visibility} />;
+function chat(visibility: ChatPrefs = DEFAULT_CHAT_VISIBILITY, onFocusedCwdChange?: (cwd: string) => void) {
+  return <ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={visibility} onFocusedCwdChange={onFocusedCwdChange} />;
 }
 
 function meta(id: string, extra: Partial<SessionMeta> = {}): SessionMeta {
@@ -437,6 +439,50 @@ describe("ChatView", () => {
   const liveMeta = { started_at: 1, ended_at: null, archived: false };
   const live = (id: string, extra: Partial<ChatThread> = {}) => thread(id, { session: meta(id, liveMeta), ...extra });
 
+  it("notifies once when a running thread fails after switching to another chat", async () => {
+    fakeChat.set([live("s-live"), live("s-wt")]);
+    const busy = observed("busy", "alive", "rpc");
+    const failure = { ...busy, state: { ...busy.state, agent: { state: "errored", correlation_id: "failure-a", reason: "Provider unavailable" } } };
+    showChat("s-live", busy);
+    showChat("s-wt", observed("idle", "alive", "rpc"));
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: "Chat s-live, Running" }));
+    await screen.findByRole("button", { name: "Abort turn" });
+    fireEvent.click(screen.getByRole("button", { name: "Chat s-wt, Idle" }));
+    await screen.findByRole("heading", { name: "Chat s-wt" });
+    act(() => showChat("s-live", failure));
+    const failed = await screen.findByRole("button", { name: "Chat s-live, Turn failed" });
+    await waitFor(() => expect(mocks.notifySessionAttention).toHaveBeenCalledWith("Chat s-live — turn failed"));
+    fireEvent.click(failed);
+    await screen.findByRole("button", { name: "Retry" });
+    act(() => showChat("s-live", failure));
+    expect(mocks.notifySessionAttention).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains the failed turn's reason across a disconnect and offers Retry again only for the same live thread", async () => {
+    const id = "s-live";
+    const old = "turn-a";
+    const reason = "Provider declined the turn";
+    const rpc = observed("idle", "alive", "rpc");
+    fakeChat.set([live(id)]);
+    showChat(id, { ...rpc, state: { ...rpc.state, agent: { state: "errored", correlation_id: old, reason } } });
+    daemon.setTranscript(id, [{ id: old, role: "assistant", content: [], turnError: reason }]);
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow(id) }));
+    await screen.findByRole("button", { name: "Retry" });
+
+    act(() => daemon.drop("/repo"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry" })).toBeNull());
+    expect(screen.getByText(reason)).toBeTruthy();
+    act(() => daemon.up("/repo"));
+    await screen.findByRole("button", { name: "Retry" });
+    act(() => showChat(id, observed("idle", "exited", "rpc")));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry" })).toBeNull());
+    expect(screen.getByText(reason)).toBeTruthy();
+    expect(mocks.startChatThread).not.toHaveBeenCalled();
+    expect(mocks.resumeChatThread).not.toHaveBeenCalled();
+  });
+
   it("shows the name the daemon publishes after a turn, and never asks for it on a timer", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -495,6 +541,19 @@ describe("ChatView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Archive" }));
     await waitFor(() => expect(confirmDanger).toHaveBeenCalledWith("Archive chat", expect.stringContaining("still running, and archiving stops it"), "Stop and archive"));
     expect(mocks.archiveChatThread).not.toHaveBeenCalled();
+  });
+
+  it("reports the focused thread's directory for the terminal drawer, and clears it with no thread open", async () => {
+    const onFocusedCwdChange = vi.fn();
+    const worktree = "/repo/.alinery/chat-worktrees/s-wt";
+    fakeChat.set([thread("s-wt", { checkout: false, session: meta("s-wt", { worktree }) }), thread("s-checkout")]);
+    render(chat(DEFAULT_CHAT_VISIBILITY, onFocusedCwdChange));
+    await waitFor(() => expect(onFocusedCwdChange).toHaveBeenLastCalledWith(""));
+    fireEvent.click(await within(rail()).findByRole("button", { name: threadRow("s-wt") }));
+    await waitFor(() => expect(onFocusedCwdChange).toHaveBeenLastCalledWith(worktree));
+    // A thread without a worktree runs in the checkout, and that is the directory to land in.
+    fireEvent.click(within(rail()).getByRole("button", { name: threadRow("s-checko") }));
+    await waitFor(() => expect(onFocusedCwdChange).toHaveBeenLastCalledWith("/repo"));
   });
 
   it("will not remove a running thread's worktree on its own", async () => {

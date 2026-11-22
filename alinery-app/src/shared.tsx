@@ -38,6 +38,7 @@ import type {
   TaskActivityMap,
   TaskActivityRef,
   TaskActivitySummary,
+  TaskExecutionReply,
   TaskExecutionState,
   UpdateStatus,
 } from "./types";
@@ -486,12 +487,25 @@ export function executionAvailabilityLabel(live: ExecutionAvailability | undefin
   }
 }
 
-export function ExecutionAvailabilityNotice({ live, controls = false }: { live: ExecutionAvailability | undefined; controls?: boolean }) {
-  if (live?.status === "available") return null;
+export function executionControlsAvailable(view: TaskExecutionReply | null | undefined): boolean {
+  return view?.live?.status === "available" && !view.state.history_only && !view.state.engine_unavailable;
+}
+
+export function ExecutionAvailabilityNotice({ view }: { view: TaskExecutionReply }) {
+  const { live, state } = view;
+  if (live?.status === "available") {
+    if (state.engine_unavailable) {
+      return (
+        <InlineStatus tone="warning" detail={state.engine_unavailable}>
+          Playbook execution controls are unavailable for this task.
+        </InlineStatus>
+      );
+    }
+    return state.history_only ? <InlineStatus tone="info">This task uses an older execution format. Its playbook history is read-only.</InlineStatus> : null;
+  }
   return (
     <InlineStatus tone="info">
-      {executionAvailabilityLabel(live)}. Showing saved progress, not confirmed live status.
-      {controls && " Execution controls are disabled until project ownership and live status are available."}
+      {executionAvailabilityLabel(live)}. Showing saved progress, not confirmed live status. Execution controls are disabled until project ownership and live status are available.
       <details>
         <summary>Technical details</summary>
         <pre className="inline-status-detail">{live?.detail ?? "Owner availability could not be determined."}</pre>
@@ -1017,6 +1031,8 @@ export function ArtifactProvenanceBadges({ handoffs, onOpenRelatedTask }: { hand
 // compacted only where a row badge cannot carry the full phrase.
 export function obsLabel(kind: ObservationDisplayKind): string {
   switch (kind) {
+    case "errored":
+      return "Turn failed";
     case "failed":
       return "Failed";
     case "stale":
@@ -1050,6 +1066,8 @@ export function obsLabel(kind: ObservationDisplayKind): string {
 
 function obsTooltip(kind: ObservationDisplayKind): string {
   switch (kind) {
+    case "errored":
+      return "The provider could not finish the last turn";
     case "failed":
       return "Playbook failed";
     case "stale":
@@ -1083,7 +1101,8 @@ function obsTooltip(kind: ObservationDisplayKind): string {
 
 // Attention reason to pass to notify_session_attention, or null if no notification.
 // Unsupported/unknown never notify.
-function attentionReason(kind: ObservationDisplayKind): "idle" | "waiting_for_input" | "waiting_for_approval" | null {
+function attentionReason(kind: ObservationDisplayKind): keyof typeof ATTENTION_SUFFIX | null {
+  if (kind === "errored") return "errored";
   if (kind === "idle") return "idle";
   if (kind === "waiting_for_input") return "waiting_for_input";
   if (kind === "waiting_for_approval") return "waiting_for_approval";
@@ -1101,7 +1120,12 @@ export function notifySessionAttentionTransition(previous: ObservationDisplayKin
   ipc.notifySessionAttention(attentionBody(label, reason)).catch(() => {});
 }
 
-const ATTENTION_SUFFIX = { idle: "idle, needs you", waiting_for_input: "waiting for your input", waiting_for_approval: "waiting for your approval" } as const;
+const ATTENTION_SUFFIX = {
+  idle: "idle, needs you",
+  errored: "turn failed",
+  waiting_for_input: "waiting for your input",
+  waiting_for_approval: "waiting for your approval",
+} as const;
 
 /** The text of an attention notification: the label the session entity carries (its task's name) and why it needs the person. */
 export const attentionBody = (label: string, reason: keyof typeof ATTENTION_SUFFIX) => `${label || "session"} — ${ATTENTION_SUFFIX[reason]}`;
@@ -1123,6 +1147,7 @@ export function StatusDot({
   exitAcknowledged = false,
   notifyTransitions = true,
   terminalLabel = null,
+  stepStatus,
 }: {
   id: string;
   slug?: string;
@@ -1137,6 +1162,8 @@ export function StatusDot({
   notifyTransitions?: boolean;
   /** Replaces Exited when the session is stopped: recoverable, completed, or a real exit. */
   terminalLabel?: "Recoverable" | "Completed" | "Ready to advance" | "Exited" | null;
+  /** The owning execution distinguishes a review request from accepted outputs awaiting shutdown. */
+  stepStatus?: "Ready for review" | "Ready to advance" | "Finishing step…";
 }) {
   const pollKey = `${slug ?? ""}\u0000${id}`;
   const prevKind = useRef<{ key: string; kind: ObservationDisplayKind } | null>(null);
@@ -1168,6 +1195,16 @@ export function StatusDot({
     );
   }
 
+  if (stepStatus && !unreadCompletion && (kind === "idle" || kind === "ready_to_advance" || (stepStatus === "Finishing step…" && kind === "exited"))) {
+    const title =
+      stepStatus === "Finishing step…"
+        ? "Outputs accepted; waiting for session shutdown"
+        : stepStatus === "Ready for review"
+          ? "Waiting for your review"
+          : "Ready to continue to the next step";
+    return <StatusMarker kind="ready_to_advance" label={stepStatus} title={title} minimal={minimal} />;
+  }
+
   // An accepted completion the user has not opened outranks the bare "Exited" word.
   if (
     terminalLabel &&
@@ -1195,7 +1232,7 @@ export function StatusDot({
     );
   }
 
-  if (unreadCompletion && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval" && kind !== "failed") {
+  if (unreadCompletion && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval" && kind !== "failed" && kind !== "errored") {
     return (
       <span className="statusdot" title="Completed — not yet opened">
         <span className="ind-wrap" role="img" aria-label="Unread completion">
@@ -1206,7 +1243,8 @@ export function StatusDot({
     );
   }
 
-  return <StatusMarker kind={kind} minimal={minimal} />;
+  const agent = obs?.state?.agent;
+  return <StatusMarker kind={kind} minimal={minimal} title={kind === "errored" && agent?.state === "errored" ? agent.reason || undefined : undefined} />;
 }
 
 /**
@@ -1242,10 +1280,11 @@ export function StatusMarker({
   }
 
   // Compact badges for waits and failures.
-  if (kind === "waiting_for_input" || kind === "waiting_for_approval" || kind === "failed" || kind === "unknown") {
+  if (kind === "waiting_for_input" || kind === "waiting_for_approval" || kind === "failed" || kind === "errored" || kind === "unknown") {
+    const badge = kind === "errored" ? "failed" : kind;
     return (
-      <span className={`statusdot statusdot-badge statusdot-${kind}`} title={title}>
-        <StateIcon state={kind} />
+      <span className={`statusdot statusdot-badge statusdot-${badge}`} title={title}>
+        <StateIcon state={badge} />
         {label}
       </span>
     );

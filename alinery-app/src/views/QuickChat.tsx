@@ -445,6 +445,7 @@ export function QuickChat({
                 status={chat.activity.status}
                 visibility={paneVisibility}
                 atStart={chat.transcript.fileStart === 0}
+                turnRetry={chat.turnRetry}
                 readImage={readThreadImages}
               />
             )}

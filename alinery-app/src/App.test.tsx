@@ -238,6 +238,10 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
     initPickedFolder: vi.fn(),
     accountStatus: vi.fn(async () => ({ signedIn: false, email: null, plan: null, paid: false, unavailable: false })),
     accountRefresh: vi.fn(async () => ({ signedIn: false, email: null, plan: null, paid: false, unavailable: false })),
+    // Event subscriptions return their unlisten; the proxy's default is a rejected promise, which a
+    // useEffect cleanup cannot be.
+    onProviderCallback: vi.fn(() => () => {}),
+    onProviderCallbackExpired: vi.fn(() => () => {}),
   };
   const cache: Record<string, unknown> = {};
   const ipcModule = new Proxy(ipcMocks, {
@@ -457,7 +461,7 @@ function FakeTaskDetail(props: Parameters<typeof TaskDetailComponent>[0]) {
       {sessionOpen &&
         props.renderSession(
           { taskSlug: task.slug, id: "detail-design", cwd: task.worktree, phase: "design", harness: "vinculum", model: "", playbook: "superdevelop", generic: false },
-          { onClose: () => setSessionOpen(false), onOpenPath: () => {} },
+          { active: true, onClose: () => setSessionOpen(false), onOpenPath: () => {}, onOpenSession: () => {} },
         )}
       <button type="button" onClick={props.onNewSession}>
         new task session

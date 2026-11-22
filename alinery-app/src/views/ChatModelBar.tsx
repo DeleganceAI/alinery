@@ -2,6 +2,8 @@ import { Brain, Check, ChevronUp, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { formatContextUsage, formatTokenCount } from "../chat/format";
 import * as ipc from "../ipc";
+import { favoriteAlive } from "../modelFavorites";
+import { providerCatalog } from "../sync/providers";
 
 /**
  * The model and thinking level above the chat composer: two joined buttons, each opening a list upward. The model list is
@@ -9,6 +11,7 @@ import * as ipc from "../ipc";
  */
 export function ChatModelBar({
   model,
+  repoPath,
   title,
   thinkingTitle,
   thinking,
@@ -19,6 +22,11 @@ export function ChatModelBar({
   onProviders,
 }: {
   model: string;
+  /**
+   * The session's repository. Stars are stored per app, not per machine, so a model starred while signed in on another
+   * machine is listed here but cannot run; its daemon says which ones can.
+   */
+  repoPath: string;
   /** Shown while enabled: an in-flight turn says the next turn picks the change up. */
   title?: string;
   thinkingTitle?: string;
@@ -32,13 +40,23 @@ export function ChatModelBar({
 }) {
   const [open, setOpen] = useState<"model" | "thinking" | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
+  /** `provider/id` this machine can run; null while unknown, and unknown never blocks a pick. */
+  const [runnable, setRunnable] = useState<Set<string> | null>(null);
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     if (open === "model") {
-      // Read on every open: stars change in the Providers dialog.
-      void ipc.readModelFavorites("vinculum").then(setFavorites, () => undefined);
+      // Read on every open: stars change in the Providers dialog, and a provider this machine no longer has (a
+      // removed endpoint, a renamed id) must stop offering its models even while its favorites linger in the store.
+      // The same catalog says which models this machine can run, so one it cannot is offered as not signed in here.
+      void Promise.all([ipc.readModelFavorites("vinculum"), providerCatalog(repoPath).catch(() => null)]).then(
+        ([favorites, catalog]) => {
+          setFavorites(favorites.filter((favorite) => favoriteAlive(favorite, catalog)));
+          setRunnable(catalog ? new Set(catalog.models.map((row) => `${row.provider}/${row.id}`)) : null);
+        },
+        () => undefined,
+      );
     }
     const onDown = (e: MouseEvent) => {
       if (!box.current?.contains(e.target as Node)) setOpen(null);
@@ -52,7 +70,7 @@ export function ChatModelBar({
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, repoPath]);
 
   // The stored level always shows, even one this model's list does not name.
   const levels = thinking && thinkingLevels?.length ? (thinkingLevels.includes(thinking) ? thinkingLevels : [...thinkingLevels, thinking]) : [];
@@ -101,19 +119,26 @@ export function ChatModelBar({
             Providers…
           </button>
           {favorites.length === 0 ? <p className="chat-dropup-empty">Star a model under Providers to list it here.</p> : null}
-          {favorites.map((row) => (
-            <button
-              key={row}
-              type="button"
-              role="menuitemradio"
-              aria-checked={row === model}
-              className="account-chip-action chat-dropup-model"
-              onClick={pick(() => onPickModel(row))}
-            >
-              <span className="chat-model-label">{row}</span>
-              {row === model ? <Check size={14} aria-hidden="true" /> : null}
-            </button>
-          ))}
+          {favorites.map((row) => {
+            // A star from another machine cannot run here: say so, and leave the pick that would fail 35ms into a turn undone.
+            const elsewhere = runnable !== null && !runnable.has(row);
+            return (
+              <button
+                key={row}
+                type="button"
+                role="menuitemradio"
+                aria-checked={row === model}
+                className="account-chip-action chat-dropup-model"
+                disabled={elsewhere}
+                title={elsewhere ? `${row} is not signed in on this machine` : undefined}
+                onClick={pick(() => onPickModel(row))}
+              >
+                <span className="chat-model-label">{row}</span>
+                {elsewhere ? <span className="chat-dropup-note">not signed in here</span> : null}
+                {row === model ? <Check size={14} aria-hidden="true" /> : null}
+              </button>
+            );
+          })}
         </div>
       ) : null}
       {open === "thinking" ? (

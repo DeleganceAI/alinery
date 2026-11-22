@@ -52,6 +52,7 @@ import { takeOverEveryOwner } from "../DaemonConflictBanner";
 import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, normalizeGridViews, withGridViewSlots } from "../gridViews";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
+import { NumberField } from "../NumberField";
 import { isRemoteRepo } from "../remoteRepo";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, playbookRefKey, repoName, samePlaybookRef, vinculumDefaultModel } from "../shared";
 import { startupViewOptions } from "../startupView";
@@ -1366,6 +1367,8 @@ export function Settings({
             <ProviderSetupDialog
               mode="manual"
               initialTab="models"
+              // A repository override is that repository's models; the global default has no machine of its own.
+              repo={isGlobal ? undefined : key}
               onPick={(v) => {
                 if (isGlobal) {
                   setGlobal({ ...global, [key]: { ...global[key], harness: "vinculum", model: v } });
@@ -1461,38 +1464,30 @@ export function Settings({
               </div>
               {normalizeCompactionBasis(appearance.chat_compaction_basis) === "tokens" ? (
                 <>
-                  <input
-                    className="field-input"
-                    type="number"
+                  <NumberField
                     min={COMPACTION_TOKENS_MIN}
                     max={COMPACTION_TOKENS_MAX}
-                    step={1}
                     disabled={!isGlobal}
-                    aria-label="Compaction token count"
+                    label="Compaction token count"
                     value={normalizeCompactionTokens(appearance.chat_compaction_tokens)}
                     style={{ maxWidth: 180, marginTop: 8 }}
-                    onChange={(event) => {
-                      const next = Number(event.target.value);
-                      if (isGlobal && Number.isFinite(next)) saveAppearance({ ...appearance, chat_compaction_tokens: normalizeCompactionTokens(next) });
+                    onChange={(next) => {
+                      if (isGlobal) saveAppearance({ ...appearance, chat_compaction_tokens: normalizeCompactionTokens(next) });
                     }}
                   />
                   <span className="dsc">Token count is a maximum. If it is higher than the selected model's context window, that model's maximum is used.</span>
                 </>
               ) : (
                 <>
-                  <input
-                    className="field-input"
-                    type="number"
+                  <NumberField
                     min={COMPACTION_PERCENT_MIN}
                     max={COMPACTION_PERCENT_MAX}
-                    step={1}
                     disabled={!isGlobal}
-                    aria-label="Compaction percent of context"
+                    label="Compaction percent of context"
                     value={normalizeCompactionPercent(appearance.chat_compaction_percent)}
                     style={{ maxWidth: 120, marginTop: 8 }}
-                    onChange={(event) => {
-                      const next = Number(event.target.value);
-                      if (isGlobal && Number.isFinite(next)) saveAppearance({ ...appearance, chat_compaction_percent: normalizeCompactionPercent(next) });
+                    onChange={(next) => {
+                      if (isGlobal) saveAppearance({ ...appearance, chat_compaction_percent: normalizeCompactionPercent(next) });
                     }}
                   />
                   <span className="dsc">Percent of the selected model's context window.</span>

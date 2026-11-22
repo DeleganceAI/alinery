@@ -1,6 +1,8 @@
 // The pane polls this. Pi stores thinking, text, and tool calls as parts on the assistant
 // message, and a tool result as its own message. The reply keeps that shape. A redacted
 // thinking part is only the marker: the signature is for the provider, not the pane.
+import type { TaskId } from "@earendil-works/pi-durable";
+import { WRAP_UP_NUDGE_ENTRY } from "../../../shared/wrapUpNudge.ts";
 
 export type TranscriptSource = {
   id: string;
@@ -8,6 +10,8 @@ export type TranscriptSource = {
   role?: string;
   content?: unknown;
   errorMessage?: string;
+  turnError?: string;
+  nudgeDeliveryId?: string;
   toolName?: string;
   toolCallId?: string;
   isError?: boolean;
@@ -38,8 +42,31 @@ export type TranscriptReply = {
   toolCallId?: string;
   isError?: boolean;
   runningToolIds?: string[];
+  turnError?: string;
+  nudgeDeliveryId?: string;
   at?: number;
 };
+
+export function transcriptEntryId(id: unknown, index: number, length: number): string {
+  return length === 1 ? String(id) : `${id}:${index}`;
+}
+
+export function appendEntryMessages(messages: TranscriptSource[], entry: { id: unknown; model?: unknown; byTaskId?: TaskId; kind?: string; data?: unknown }, lastErrors?: Map<TaskId, TranscriptSource>) {
+  if (!Array.isArray(entry.model)) return;
+  for (const [index, message] of entry.model.entries()) {
+    if (!message || typeof message !== "object") continue;
+    const id = transcriptEntryId(entry.id, index, entry.model.length);
+    const source = transcriptSource(id, message);
+    if (source.role === "user" && entry.kind === WRAP_UP_NUDGE_ENTRY && entry.data && typeof entry.data === "object" && "deliveryId" in entry.data && typeof entry.data.deliveryId === "string") {
+      source.nudgeDeliveryId = entry.data.deliveryId;
+    }
+    messages.push(source);
+    if (entry.byTaskId && source.role === "assistant" && lastErrors) {
+      if ("stopReason" in message && message.stopReason === "error") lastErrors.set(entry.byTaskId, source);
+      else lastErrors.delete(entry.byTaskId);
+    }
+  }
+}
 
 export function transcriptSource(id: string, message: object, streaming = false): TranscriptSource {
   const record = message as {
@@ -185,7 +212,7 @@ export function formatTranscript(messages: readonly TranscriptSource[], tools: r
     if (message.role === "user") {
       const content = promptParts(message.content);
       if (content.length === 0) continue;
-      out.push({ id: message.id, role: "user", content, ...stamp(message) });
+      out.push({ id: message.id, role: "user", content, ...(message.nudgeDeliveryId ? { nudgeDeliveryId: message.nudgeDeliveryId } : {}), ...stamp(message) });
       continue;
     }
     if (message.role === "toolResult") {
@@ -204,12 +231,13 @@ export function formatTranscript(messages: readonly TranscriptSource[], tools: r
     }
     if (message.role !== "assistant") continue;
     const content = assistantParts(message.content, message.streaming === true);
-    if (content.length === 0 && message.errorMessage?.trim()) content.push({ type: "text", text: message.errorMessage.trim() });
-    if (content.length === 0) continue;
+    if (content.length === 0 && !message.turnError && message.errorMessage?.trim()) content.push({ type: "text", text: message.errorMessage.trim() });
+    if (content.length === 0 && !message.turnError) continue;
     const callIds = content.flatMap((part) => (part.type === "toolCall" && part.id && runningIds.has(part.id) ? [part.id] : []));
     out.push({
       id: message.id,
       role: "assistant",
+      ...(message.turnError ? { turnError: message.turnError } : {}),
       ...(message.streaming ? { streaming: true } : {}),
       ...(callIds.length > 0 ? { runningToolIds: callIds } : {}),
       ...stamp(message),

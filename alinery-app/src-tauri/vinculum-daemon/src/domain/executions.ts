@@ -1,21 +1,21 @@
-// The execution entity. It is what `getTaskExecution` returns, so the RPC
-// read and the delta cannot differ: both come from that one builder.
+// The execution entity carries persisted state and the playbook its engine is using.
 import { create, type JsonObject } from "@bufbuild/protobuf";
 import { type Entity, EntitySchema } from "alinery-proto/alinery/v1/entities_pb";
 import type { Parser } from "../sync/parsers/index.ts";
 import { getTaskExecution } from "../tasks.ts";
+import { loadedPlaybook } from "../graph.ts";
 import type { Store } from "../sync/store.ts";
 
 export const executionKey = (slug: string) => `execution/${slug}/${slug}`;
 
 /** The task's execution row as `getTaskExecution` answers it; undefined for a task with no readable state. */
 export function executionEntity(repo: string, slug: string, lane: string, appIdentity: string): Entity | undefined {
-  const reply = getTaskExecution(repo, slug, lane, appIdentity);
-  if (reply.error !== undefined) return undefined;
+  const reply = getTaskExecution(repo, slug, lane, appIdentity, loadedPlaybook(repo, slug, lane, appIdentity));
+  if (!reply.state) return undefined;
   // The generated fields are `JsonObject`: the runtime does the Struct conversion. A `fromJson(StructSchema, …)` here
   // is a message, which the runtime then encodes as JSON, so clients received `{ $typeName, fields }`.
   const json = (v: unknown) => v as JsonObject;
-  return create(EntitySchema, { key: executionKey(slug), value: { case: "execution", value: { slug, state: json(reply.state), definition: json(reply.definition) } } });
+  return create(EntitySchema, { key: executionKey(slug), value: { case: "execution", value: { slug, state: json(reply.state), ...(reply.definition ? { definition: json(reply.definition) } : {}) } } });
 }
 
 /** Commits the task's current execution state. A task with no readable state loses its row. */

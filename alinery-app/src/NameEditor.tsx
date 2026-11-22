@@ -126,7 +126,8 @@ export function awaitingSessionName(
   observation: { lifecycle: { state: string }; state?: { process: { state: string }; agent: { state: string } } | null } | null | undefined,
 ): boolean {
   if (session.name || session.name_error || session.archived || !isVinculumHarness(session.harness ?? "")) return false;
-  return observation?.lifecycle.state === "live" && observation.state?.process.state !== "exited" && observation.state?.agent.state !== "idle";
+  const agent = observation?.state?.agent.state;
+  return observation?.lifecycle.state === "live" && observation.state?.process.state !== "exited" && agent !== "idle" && agent !== "errored";
 }
 
 export function PendingSessionName() {

@@ -141,7 +141,7 @@ export type Task = {
   max_live_sessions?: number;
   launch_defaults?: LaunchChoices;
   auto_advance: string[];
-  /** When true, every playbook step may complete automatically. Absent or false keeps `auto_advance`. */
+  /** When true, intermediate steps continue automatically. Final steps stay open for review. */
   auto_approve_all?: boolean;
   step_models?: Record<string, string>;
   /** M6: true while still being drafted on CreateTaskPage. */
@@ -654,7 +654,8 @@ export type ProcessState = { state: "starting" } | { state: "alive" } | { state:
 // Mirrors alinery-core AgentState
 export type AgentState =
   | { state: "unknown" }
-  | { state: "busy" }
+  | { state: "busy"; correlation_id?: string }
+  | { state: "errored"; correlation_id: string; reason: string }
   | { state: "waiting_for_input"; correlation_id: string }
   | { state: "waiting_for_approval"; correlation_id: string }
   | { state: "idle" };
@@ -684,6 +685,8 @@ export type SemanticCheckpoint = {
 export type SessionTransport = "pty" | "rpc";
 
 export type SessionObservation = {
+  /** Last known state from a disconnected replica. */
+  stale?: boolean;
   lifecycle: LifecycleState;
   state: SessionState | null;
   checkpoint: SemanticCheckpoint;
@@ -703,7 +706,9 @@ export type ChatPart =
 export type ChatMessage = {
   role: "user" | "assistant" | "toolResult";
   content: ChatPart[];
+  nudgeDeliveryId?: string;
   stopReason?: string;
+  turnError?: { reason: string; failedEntryId?: string };
   customType?: string;
   /**
    * Id of the Vinculum journal row this message came from. Present only for messages read off disk;
@@ -897,6 +902,7 @@ export type ExecutionRecord = {
   start_requested: boolean;
   lifecycle: ExecutionLifecycle;
   permission: CompletionPermission;
+  ready?: { revision: number; endpoint: boolean; destinations: string[]; roles: string[] };
   receipt_id: string | null;
   exit_code: number | null;
   shutdown_confirmed: boolean;
@@ -927,6 +933,8 @@ export type TaskExecutionState = {
   auto_approve_all?: boolean;
   /** The records are the old runner's. They show as finished history, with no approve or resume. */
   history_only?: boolean;
+  /** Why the daemon cannot run this task's retained playbook. Its saved records remain readable. */
+  engine_unavailable?: string;
   launch_defaults: LaunchChoices;
   /**
    * The maps below come from the engine block, and `getTaskExecution` merges them only for a

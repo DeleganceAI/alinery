@@ -67,8 +67,9 @@ export interface Launch {
 export type CompletionReply =
   /** Outputs validated and durably recorded. Agent should finish without starting more work. */
   | { kind: 'accepted'; published: string[] }
-  /** The human gate is closed. Session stays interactive; agent waits for direction. */
-  | { kind: 'permission-required' }
+  /** An assessed revision remains open for conversation. Only the owner of this review may continue it. */
+  | { kind: 'ready'; revision: number; endpoint: boolean; destinations: string[] }
+  | { kind: 'stale'; reason: string }
   /**
    * Something assigned was present but invalid (empty file, a directory), or
    * nothing valid was published at all. Nothing was recorded. Fix and call again.
@@ -91,6 +92,8 @@ export type SessionStatus =
    * completion. The engine decides what idle means for this execution.
    */
   | { kind: 'idle' }
+  /** The session needs human input, an approval or explicit recovery. */
+  | { kind: 'waiting' }
   /** Process has exited. Terminal until resumed. */
   | { kind: 'exited'; exitCode: number | null }
   /** Harness could not start the process or lost it abnormally. Terminal until resumed. */
@@ -130,9 +133,10 @@ export interface Harness {
 
   /**
    * Deliver a message into a live session: human steering, or the engine's
-   * "you may wrap up now" after the gate opens.
+   * "you may wrap up now" after the gate opens. For a conditional reminder,
+   * recheck the predicate before admission and reject if busy or awaiting a person.
    */
-  send(id: SessionId, text: string): Promise<void>;
+  send(id: SessionId, text: string, onlyIfIdle?: () => boolean): Promise<void>;
 
   /**
    * Ask the agent to finish and resolve when exit is confirmed. Called by the

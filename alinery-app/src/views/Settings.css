@@ -124,6 +124,12 @@
   font-size: calc(12px * var(--ui-scale));
   background: var(--surface-raised);
   border-color: var(--border);
+  /* Without this the field keeps the browser's default (black) text, which vanishes
+     on the dark raised surface. Same role tokens as every other field in the app. */
+  color: var(--text);
+}
+.settings-nav input.settings-search::placeholder {
+  color: var(--text-muted);
 }
 .settings-search-empty {
   margin: 28px 0;

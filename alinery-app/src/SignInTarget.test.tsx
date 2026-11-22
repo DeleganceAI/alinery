@@ -23,14 +23,21 @@ describe("SignInTarget", () => {
     vi.mocked(ipc.readAppConfig).mockResolvedValue(config("alinery+ssh://box-a1b2c3/home/me/proj"));
     vi.mocked(ipc.remoteHosts).mockResolvedValue([host]);
     render(<SignInTarget />);
-    expect((await screen.findByText(/stored on that host, not on this Mac/)).textContent).toContain("Build box");
+    expect((await screen.findByText(/stored there, not on this Mac/)).textContent).toContain("Build box");
+  });
+
+  it("names the host a session's own repository lives on, not the open one", async () => {
+    vi.mocked(ipc.readAppConfig).mockResolvedValue(config("/Users/me/other"));
+    vi.mocked(ipc.remoteHosts).mockResolvedValue([host]);
+    render(<SignInTarget repo="alinery+ssh://box-a1b2c3/home/me/proj" />);
+    expect((await screen.findByText(/stored there, not on this Mac/)).textContent).toContain("Build box");
   });
 
   it("says nothing for a repository on this Mac", async () => {
     vi.mocked(ipc.readAppConfig).mockResolvedValue(config("/Users/me/proj"));
     render(<SignInTarget />);
     await waitFor(() => expect(ipc.readAppConfig).toHaveBeenCalled());
-    expect(screen.queryByText(/stored on that host/)).toBeNull();
+    expect(screen.queryByText(/stored there, not on this Mac/)).toBeNull();
     expect(ipc.remoteHosts).not.toHaveBeenCalled();
   });
 });

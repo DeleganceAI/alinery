@@ -35,6 +35,7 @@ export function sessionState(session: Session, exitCode: number | null): Row | u
   if (!status) return undefined;
   const agent: Row = { state: status.agent || "unknown" };
   if (status.agentCorrelationId) agent.correlation_id = status.agentCorrelationId;
+  if (status.agentReason) agent.reason = status.agentReason;
   const playbook: Row = { state: status.playbook || "in_progress" };
   if (status.playbookReason) playbook.reason = status.playbookReason;
   const process: Row = { state: status.process };
