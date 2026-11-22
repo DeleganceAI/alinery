@@ -72,7 +72,7 @@ export type ResolvedModel = { provider: string; modelId: string };
  * `alinery/grok-*` stays on disk and is read as xAI. The provider prefix is otherwise kept, and only the first slash splits it.
  */
 export function resolveModel(appConfig: string, requested: string): ResolvedModel | null {
-  if (installed) registerHostedProviders(installed.models, installed.appConfig);
+  refreshHostedProviders();
   const trimmed = requested.trim();
   const slash = trimmed.indexOf("/");
   const prefix = slash > 0 ? trimmed.slice(0, slash) : "";
@@ -86,6 +86,11 @@ export function resolveModel(appConfig: string, requested: string): ResolvedMode
   if (preferred?.id) return { provider: "alinery", modelId: preferred.id };
   const fallback = xaiProvider().getModels()[0]?.id;
   return fallback ? { provider: "xai", modelId: fallback } : null;
+}
+
+/** A team's key can land after the daemon started; its provider exists only once registered. */
+export function refreshHostedProviders() {
+  if (installed) registerHostedProviders(installed.models, installed.appConfig);
 }
 
 export function installAlineryProvider(models: Pick<MutableModels, "setProvider">, appConfig: string) {

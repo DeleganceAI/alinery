@@ -1563,7 +1563,15 @@ pub(crate) async fn account_teams(app: AppHandle) -> DesktopTeamsView {
         let Ok(path) = account_auth_path(&app) else {
             return empty_teams();
         };
-        accounts_value(&path, "GET", "/api/desktop/teams", None).map(parse_teams).unwrap_or_else(|_| empty_teams())
+        let teams = accounts_value(&path, "GET", "/api/desktop/teams", None).map(parse_teams).unwrap_or_else(|_| empty_teams());
+        // A team's models are listed only once its key is on this machine. Without it a member who has not run a team model
+        // yet is offered none, and the personal `alinery/` models need a plan of their own. A cached key costs no request.
+        if let Ok(app_config) = app_config_path(&app) {
+            for team_id in teams.pots.iter().filter_map(|pot| pot.team_id.as_deref()) {
+                let _ = alinery_core::ensure_hosted_pot_for_spawn(&app_config, team_id);
+            }
+        }
+        teams
     })
     .await
     .unwrap_or_else(|_| empty_teams())
