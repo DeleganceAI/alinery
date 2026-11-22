@@ -3,14 +3,17 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadComments } from "./artifactComments.ts";
-import { changedKeys, isShareRel, readCommentCursor, revisionOf, saveTeamComments, type TeamComment } from "./teamShare.ts";
+import { changedKeys, isShareRel, readCommentCursor, revisionOf, saveTeamComments, snapshotShare, type TeamComment } from "./teamShare.ts";
 
 describe("team share", () => {
-  test("a numbered artifact and task.md are share paths; attachments are not", () => {
+  test("task.md and every artifact markdown are share paths, including a step folder", () => {
     expect(isShareRel("tasks/alpha/task.md")).toBe(true);
     expect(isShareRel("tasks/alpha/artifacts/01-notes.md")).toBe(true);
+    expect(isShareRel("tasks/alpha/artifacts/1-story-1/story.md")).toBe(true);
     expect(isShareRel("tasks/alpha/artifacts/attachments/pic.png")).toBe(false);
+    expect(isShareRel("tasks/alpha/artifacts/attachments/note.md")).toBe(false);
     expect(isShareRel("tasks/alpha/artifacts/notes.txt")).toBe(false);
+    expect(isShareRel("tasks/alpha/artifacts/../task.md")).toBe(false);
   });
 
   test("a rename is a delete of the old key plus an insert of the new one", () => {
@@ -28,6 +31,21 @@ describe("team share", () => {
   test("an unchanged revision is not pushed again", () => {
     const same = new Map([["alpha", revisionOf("hello")]]);
     expect(changedKeys(same, same)).toEqual({ upsert: [], deleted: [] });
+  });
+
+  test("a step folder's markdown is shared and an attachment is not", () => {
+    const repo = mkdtempSync(join(tmpdir(), "team-share-"));
+    const artifacts = join(repo, ".alinery", "tasks", "alpha", "artifacts");
+    mkdirSync(join(artifacts, "1-story-1"), { recursive: true });
+    mkdirSync(join(artifacts, "attachments"), { recursive: true });
+    writeFileSync(join(repo, ".alinery", "tasks", "alpha", "task.md"), "# Alpha\n");
+    writeFileSync(join(artifacts, "00-ticket.md"), "ticket\n");
+    writeFileSync(join(artifacts, "1-story-1", "story.md"), "story\n");
+    writeFileSync(join(artifacts, "attachments", "note.md"), "hidden\n");
+    const snap = snapshotShare(repo);
+    expect([...snap.artifacts.keys()].sort()).toEqual(["alpha/00-ticket.md", "alpha/1-story-1/story.md"]);
+    expect(snap.artifacts.get("alpha/1-story-1/story.md")?.body).toBe("story\n");
+    expect(snap.tasks.has("alpha")).toBe(true);
   });
 
   test("a teammate's comment lands in the comments file with its author, once, and moves the cursor", () => {

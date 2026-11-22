@@ -1,16 +1,24 @@
 // One daemon, one team. The shell delivers the sync credential; this process keeps it beside the
-// repo and pushes task.md plus numbered artifact markdown to the accounts service. Teammates'
+// repo and pushes task.md plus every markdown file under artifacts/, step folders included. Teammates'
 // comments come back the other way: the heartbeat only says some wait, and a separate call fetches
 // them into the artifact's comments file. It never opens a Supabase socket.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, type Dirent, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic, writeOwnerOnly } from "../platform/fs.ts";
 import { addComment, loadComments } from "./artifactComments.ts";
 
 const BODY_LIMIT = 1_000_000;
 const TASK = /^tasks\/([^/]+)\/task\.md$/;
-const ARTIFACT = /^tasks\/([^/]+)\/artifacts\/(\d+-.+\.md)$/;
+const RESERVED = new Set(["attachments", "subtasks"]);
+
+/** A markdown file a teammate should see. Attachments and subtasks are not artifacts, and a `..` part never leaves the folder. */
+export function shareArtifactName(name: string): boolean {
+  if (!name.endsWith(".md")) return false;
+  const parts = name.split("/");
+  if (parts.some((part) => part === "" || part === "." || part === "..")) return false;
+  return !RESERVED.has(parts[0]);
+}
 
 export type ShareFile = { team_id: string; name: string; token: string; accounts_url: string };
 
@@ -62,7 +70,7 @@ export function saveTeamComments(repo: string, rows: TeamComment[]): number {
     if (typeof row.created_at === "string" && row.created_at > since) since = row.created_at;
     const author = row.author_email || "a teammate";
     const created_at_ms = Date.parse(row.created_at);
-    if (typeof row.body !== "string" || !ARTIFACT.test(`tasks/${row.task_slug}/artifacts/${row.filename}`) || Number.isNaN(created_at_ms)) continue;
+    if (typeof row.body !== "string" || !shareArtifactName(row.filename) || Number.isNaN(created_at_ms)) continue;
     if (!existsSync(join(repo, ".alinery", "tasks", row.task_slug, "artifacts", row.filename))) continue;
     try {
       const existing = loadComments(repo, row.task_slug, row.filename);
@@ -91,7 +99,8 @@ function accountsOk(url: string): boolean {
 }
 
 export function isShareRel(rel: string): boolean {
-  return TASK.test(rel) || ARTIFACT.test(rel);
+  const nested = /^tasks\/[^/]+\/artifacts\/(.+)$/.exec(rel);
+  return TASK.test(rel) || (nested !== null && shareArtifactName(nested[1]));
 }
 
 export function revisionOf(body: string): string {
@@ -158,21 +167,26 @@ export function snapshotShare(repo: string): { tasks: Map<string, { body: string
     } else {
       tasks.set(slug, { body: taskBody, revision: revisionOf(taskBody) });
     }
-    let names: string[] = [];
-    try {
-      names = readdirSync(join(root, slug, "artifacts"));
-    } catch {
-      continue;
-    }
-    for (const name of names) {
-      if (!/^\d+-.+\.md$/.test(name)) continue;
-      const body = readText(join(root, slug, "artifacts", name));
-      if (body == null) {
-        skipped += 1;
-        continue;
+    const artifactsDir = join(root, slug, "artifacts");
+    const walk = (dir: string, prefix: string) => {
+      let entries: Dirent[] = [];
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
       }
-      artifacts.set(`${slug}/${name}`, { task_slug: slug, filename: name, body, revision: revisionOf(body) });
-    }
+      for (const entry of entries) {
+        const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (!prefix && RESERVED.has(entry.name)) continue;
+        if (entry.isDirectory()) walk(join(dir, entry.name), name);
+        else if (entry.isFile() && shareArtifactName(name)) {
+          const body = readText(join(dir, entry.name));
+          if (body == null) skipped += 1;
+          else artifacts.set(`${slug}/${name}`, { task_slug: slug, filename: name, body, revision: revisionOf(body) });
+        }
+      }
+    };
+    walk(artifactsDir, "");
   }
   return { tasks, artifacts, skipped };
 }
