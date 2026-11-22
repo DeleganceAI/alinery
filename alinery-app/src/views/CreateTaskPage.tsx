@@ -216,6 +216,14 @@ export function CreateTaskPage({
   const [autoAdvance, setAutoAdvance] = useState<string[]>(initialDraft?.auto_advance ?? []);
   // One playbook card shows its description and steps at a time; the rest stay one row tall.
   const [expandedPlaybook, setExpandedPlaybook] = useState<string | null>(null);
+  // The list is longer than its pane, so bring the selected playbook into view: arriving with one
+  // already chosen (from onboarding, a draft) must not look like nothing is selected.
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const selectedPlaybookKey = playbook ? playbookRefKey(playbook) : "";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run when the selection or the loaded list changes
+  useEffect(() => {
+    pickerRef.current?.querySelector(".playbook-picker-card.selected")?.scrollIntoView?.({ block: "nearest" });
+  }, [selectedPlaybookKey, playbooks.length, pickerPreferences]);
   // The result sits at the end of the form while the buttons stay pinned, so bring it into view.
   const resultRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -1505,7 +1513,7 @@ export function CreateTaskPage({
           <div className="playbook-panel-controls">
             <CollectionSearch label="playbooks" query={playbookQuery} onQueryChange={setPlaybookQuery} className="playbook-search" />
             {starError && <InlineStatus tone="error">{starError}</InlineStatus>}
-            <div className="playbook-picker" role="radiogroup" aria-label="Choose playbook">
+            <div className="playbook-picker" role="radiogroup" aria-label="Choose playbook" ref={pickerRef}>
               {visiblePlaybooks.length > 0 ? (
                 visiblePlaybooks.map((item) => {
                   const identity = playbookRefKey(item.source.reference);
