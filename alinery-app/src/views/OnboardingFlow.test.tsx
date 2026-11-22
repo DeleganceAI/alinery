@@ -302,9 +302,6 @@ describe("OnboardingFlow wizard", () => {
     await advanceDemo(6000);
     expect(screen.getByRole("region", { name: "Plan step contract" })).toBeTruthy();
     expect(screen.getByText("Step 4 of 7")).toBeTruthy();
-    const progress = screen.getByRole("progressbar", { name: "Playbook demo" });
-    expect(progress.getAttribute("aria-valuenow")).toBe("4");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Plan, step 4 of 7");
   });
 
   it.each([
@@ -342,7 +339,6 @@ describe("OnboardingFlow wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
     expect(screen.getByRole("region", { name: "Investigate step contract" })).toBeTruthy();
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
-    expect(screen.getByRole("progressbar", { name: "Playbook demo" }).getAttribute("aria-valuetext")).toBe("Investigate, step 2 of 7");
     await advanceDemo(1699);
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
     await advanceDemo(1);
@@ -443,17 +439,10 @@ describe("OnboardingFlow wizard", () => {
     render(<OnboardingFlow {...props} initialStep="playbooks" />);
     await act(async () => {});
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
-    const progress = screen.getByRole("progressbar", { name: "Playbook demo" });
-    expect(progress.getAttribute("aria-valuemin")).toBe("1");
-    expect(progress.getAttribute("aria-valuemax")).toBe("7");
-    expect(progress.getAttribute("aria-valuenow")).toBe("1");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Clarify, step 1 of 7");
     expect(screen.getByRole("button", { name: "Pause demo" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Simulate|Advance step|Approve|Reset/ })).toBeNull();
     await advanceDemo(2600);
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
-    expect(progress.getAttribute("aria-valuenow")).toBe("2");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Investigate, step 2 of 7");
     fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
     await advanceDemo(4000);
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
@@ -472,8 +461,6 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 7 of 7")).toBeTruthy();
     await advanceDemo(3800);
     expect(screen.getByText("Demo complete")).toBeTruthy();
-    expect(progress.getAttribute("aria-valuenow")).toBe("7");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Demo complete");
     await advanceDemo(2799);
     expect(screen.getByText("Demo complete")).toBeTruthy();
     await advanceDemo(1);
@@ -601,6 +588,9 @@ describe("OnboardingFlow wizard", () => {
     expect(within(examples).queryByText("Build a New Playbook")).toBeNull();
     expect(within(examples).getAllByRole("radio")).toHaveLength(4);
     expect(screen.queryByText("Make it your own")).toBeNull();
+    // The dashed card under the examples opens the same form as the footer button.
+    fireEvent.click(screen.getByRole("button", { name: "Build your own playbook" }));
+    expect(props.onOpenCreateWithPlaybook).toHaveBeenCalledTimes(1);
     const footer = screen.getByRole("contentinfo");
     const builderButton = within(footer).getByRole("button", { name: "Build a new playbook" });
     expect(

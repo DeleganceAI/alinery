@@ -1,12 +1,11 @@
 import "../onboarding.css";
-import { ArrowRight, Check, Coffee, Layers, Pause, Play, ShieldCheck, Workflow, Zap } from "lucide-react";
+import { ArrowRight, Check, Coffee, Layers, Pause, Play, Plus, ShieldCheck, Workflow, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import { ORB_SPEED } from "../Indicators";
 import * as ipc from "../ipc";
 import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
-import type { SimulatedStepStatus } from "../PlaybookGraph";
 import { PlaybookRing, PlaybookRingMark, RingReadout } from "../PlaybookRing";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
 import { NoLibraryHost, readPlaybook } from "../sync/playbooks";
@@ -212,21 +211,6 @@ export function OnboardingFlow({
     setPlaying(!reducedMotion && !fromKeyboard);
   };
 
-  const simulatedStatuses = useMemo<Record<string, SimulatedStepStatus>>(() => {
-    if (simStepIndex === null) return {};
-    const statuses: Record<string, SimulatedStepStatus> = {};
-    playbookSteps.forEach((s, index) => {
-      if (index < simStepIndex) {
-        statuses[s.key] = "completed";
-      } else if (index === simStepIndex) {
-        statuses[s.key] = s.auto_advance_default ? "running" : "waiting_for_approval";
-      } else {
-        statuses[s.key] = "idle";
-      }
-    });
-    return statuses;
-  }, [playbookSteps, simStepIndex]);
-
   const currentSimStep = simStepIndex !== null && simStepIndex < playbookSteps.length ? playbookSteps[simStepIndex] : null;
   const simDuration = simStepIndex !== null && simStepIndex >= playbookSteps.length ? 2800 : currentSimStep?.auto_advance_default ? 2600 : 3800;
   // This preview only changes local state; real checkpoint approval remains explicit.
@@ -402,6 +386,18 @@ export function OnboardingFlow({
                   );
                 })}
               </div>
+              {BUILD_ARCHETYPE && (
+                <button
+                  type="button"
+                  className="onboarding-archetype-card onboarding-build-card"
+                  onClick={() => onOpenCreateWithPlaybook(BUILD_ARCHETYPE.reference, BUILD_ARCHETYPE.starterPreset)}
+                >
+                  <div className="onboarding-archetype-top">
+                    <Plus size={18} strokeWidth={1.5} aria-hidden="true" />
+                    <strong>Build your own playbook</strong>
+                  </div>
+                </button>
+              )}
             </div>
 
             {activePlaybook ? (
@@ -412,32 +408,6 @@ export function OnboardingFlow({
                     <h3>{demoComplete && playing ? "Demo complete" : (selectedStep?.title ?? activePlaybook.title)}</h3>
                   </div>
                   <p className="onboarding-sim-copy">{simStatusCopy}</p>
-                  {playbookSteps.length > 0 && (
-                    <div
-                      key={demoRevision}
-                      className="onboarding-demo-progress"
-                      data-reduced-motion={reducedMotion || undefined}
-                      role="progressbar"
-                      aria-label="Playbook demo"
-                      aria-valuemin={1}
-                      aria-valuemax={playbookSteps.length}
-                      aria-valuenow={demoComplete && playing ? playbookSteps.length : selectedStepIndex + 1}
-                      aria-valuetext={demoComplete && playing ? "Demo complete" : `${selectedStep?.title}, step ${selectedStepIndex + 1} of ${playbookSteps.length}`}
-                    >
-                      {playbookSteps.map((item) => (
-                        <span
-                          key={item.key}
-                          data-complete={simulatedStatuses[item.key] === "completed" || undefined}
-                          data-current={item.key === selectedStep?.key || undefined}
-                          data-running={item.key === currentSimStep?.key || undefined}
-                          aria-hidden="true"
-                        >
-                          <span className="onboarding-demo-progress-fill" style={{ animationDuration: `${simDuration}ms`, animationPlayState: playing ? "running" : "paused" }} />
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <span className="onboarding-demo-caption">Demo only · No agents are running.</span>
                 </div>
 
                 <div className="onboarding-graph-frame">

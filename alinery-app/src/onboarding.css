@@ -708,6 +708,19 @@
   background: var(--surface-subtle);
 }
 
+/* Not one of the examples: it opens the form that builds a new playbook. */
+.onboarding-build-card {
+  margin-top: 8px;
+  border-style: dashed;
+  border-color: var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+}
+.onboarding-build-card .onboarding-archetype-top {
+  justify-content: flex-start;
+  min-height: 40px;
+}
+
 .onboarding-archetype-card.selected {
   border-color: var(--accent);
   background: var(--accent-subtle);
@@ -784,43 +797,6 @@
   line-height: 1.4;
   max-width: 68ch;
 }
-.onboarding-demo-progress {
-  display: flex;
-  gap: 5px;
-  height: 3px;
-}
-.onboarding-demo-progress > span {
-  flex: 1;
-  overflow: hidden;
-  border-radius: 2px;
-  background: var(--border);
-}
-.onboarding-demo-progress > [data-current] { background: var(--accent-subtle); }
-.onboarding-demo-progress-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  transform: scaleX(0);
-  transform-origin: left center;
-}
-.onboarding-demo-progress > [data-running] > .onboarding-demo-progress-fill {
-  animation-name: onboarding-progress-fill;
-  animation-timing-function: linear;
-  animation-fill-mode: both;
-}
-.onboarding-demo-progress > [data-complete] > .onboarding-demo-progress-fill {
-  background: var(--success);
-  transform: scaleX(1);
-}
-@keyframes onboarding-progress-fill {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
-}
-.onboarding-demo-progress[data-reduced-motion] > [data-running] > .onboarding-demo-progress-fill {
-  animation: none;
-  transform: scaleX(1);
-}
-.onboarding-demo-caption,
 .onboarding-step-kind {
   color: var(--text-faint);
   font-size: calc(11px * var(--ui-scale));
@@ -1332,10 +1308,6 @@
   .onboarding-card-detail,
   .onboarding-demo-toggle,
   .onboarding-archetype-card { transition: none; }
-  .onboarding-demo-progress > [data-running] > .onboarding-demo-progress-fill {
-    animation: none;
-    transform: scaleX(1);
-  }
   .onboarding-card-detail { transform: none; }
   .onboarding-step-inspector[data-animated] .onboarding-step-content { animation: none; }
 }
