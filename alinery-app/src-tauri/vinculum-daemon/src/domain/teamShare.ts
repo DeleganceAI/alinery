@@ -14,7 +14,8 @@ const RESERVED = new Set(["attachments", "subtasks"]);
 
 /** A markdown file a teammate should see. Attachments and subtasks are not artifacts, and a `..` part never leaves the folder. */
 export function shareArtifactName(name: string): boolean {
-  if (!name.endsWith(".md")) return false;
+  // `<artifact>.comments.md` is the agent's copy of the comments, which travel as comments, not as an artifact.
+  if (!name.endsWith(".md") || name.endsWith(".comments.md")) return false;
   const parts = name.split("/");
   if (parts.some((part) => part === "" || part === "." || part === "..")) return false;
   return !RESERVED.has(parts[0]);
@@ -100,7 +101,9 @@ function accountsOk(url: string): boolean {
 
 export function isShareRel(rel: string): boolean {
   const nested = /^tasks\/[^/]+\/artifacts\/(.+)$/.exec(rel);
-  return TASK.test(rel) || (nested !== null && shareArtifactName(nested[1]));
+  if (nested === null) return TASK.test(rel);
+  const name = nested[1];
+  return shareArtifactName(name) || (name.endsWith(".comments.json") && shareArtifactName(`${name.slice(0, -".comments.json".length)}.md`));
 }
 
 export function revisionOf(body: string): string {
@@ -144,16 +147,60 @@ function readText(path: string): string | null {
 }
 
 /** task slug → revision, and `slug/filename` → revision. Oversized files are left out. */
-export function snapshotShare(repo: string): { tasks: Map<string, { body: string; revision: string }>; artifacts: Map<string, { task_slug: string; filename: string; body: string; revision: string }>; skipped: number } {
+export type ShareComment = {
+  task_slug: string;
+  filename: string;
+  created_at_ms: number;
+  body: string;
+  anchor_id: string;
+  anchor_kind: string;
+  anchor_label: string;
+  anchor_excerpt: string;
+  line_start: number;
+  line_end: number;
+};
+
+/** The owner's own comments on the shared artifacts: a teammate's carries an author and came from the service. */
+function ownComments(repo: string, slug: string, filename: string): ShareComment[] {
+  try {
+    return loadComments(repo, slug, filename)
+      .filter((c) => c.author === undefined)
+      .map((c) => ({
+        task_slug: slug,
+        filename,
+        created_at_ms: c.created_at_ms,
+        body: c.body,
+        anchor_id: c.anchor_id,
+        anchor_kind: c.anchor_kind,
+        anchor_label: c.anchor_label,
+        anchor_excerpt: c.anchor_excerpt,
+        line_start: c.line_start,
+        line_end: c.line_end,
+      }));
+  } catch {
+    return []; // an unreadable comments file is the owner's to see; it must not stop the share
+  }
+}
+
+/** `slug/filename/created_at_ms`: a comment's identity on the service, which has no id of the daemon's. */
+export const commentKey = (c: Pick<ShareComment, "task_slug" | "filename" | "created_at_ms">) => `${c.task_slug}/${c.filename}/${c.created_at_ms}`;
+
+export function snapshotShare(repo: string): {
+  tasks: Map<string, { body: string; revision: string }>;
+  artifacts: Map<string, { task_slug: string; filename: string; body: string; revision: string }>;
+  comments: Map<string, { comment: ShareComment; revision: string }>;
+  skipped: number;
+} {
   const tasks = new Map<string, { body: string; revision: string }>();
   const artifacts = new Map<string, { task_slug: string; filename: string; body: string; revision: string }>();
+  const comments = new Map<string, { comment: ShareComment; revision: string }>();
   let skipped = 0;
   const root = join(repo, ".alinery", "tasks");
   let slugs: string[] = [];
   try {
     slugs = readdirSync(root);
   } catch {
-    return { tasks, artifacts, skipped };
+    return { tasks, artifacts, comments, skipped };
   }
   for (const slug of slugs) {
     const taskBody = readText(join(root, slug, "task.md"));
@@ -182,13 +229,16 @@ export function snapshotShare(repo: string): { tasks: Map<string, { body: string
         else if (entry.isFile() && shareArtifactName(name)) {
           const body = readText(join(dir, entry.name));
           if (body == null) skipped += 1;
-          else artifacts.set(`${slug}/${name}`, { task_slug: slug, filename: name, body, revision: revisionOf(body) });
+          else {
+            artifacts.set(`${slug}/${name}`, { task_slug: slug, filename: name, body, revision: revisionOf(body) });
+            for (const comment of ownComments(repo, slug, name)) comments.set(commentKey(comment), { comment, revision: revisionOf(JSON.stringify(comment)) });
+          }
         }
       }
     };
     walk(artifactsDir, "");
   }
-  return { tasks, artifacts, skipped };
+  return { tasks, artifacts, comments, skipped };
 }
 
 let generation = 0;
@@ -197,6 +247,7 @@ let debounce: ReturnType<typeof setTimeout> | null = null;
 let chain: Promise<void> = Promise.resolve();
 let pushedTasks = new Map<string, string>();
 let pushedArtifacts = new Map<string, string>();
+let pushedComments = new Map<string, string>();
 let lastError: string | null = null;
 
 function stopTimers() {
@@ -211,6 +262,7 @@ export function armTeamShare(repo: string) {
   stopTimers();
   pushedTasks = new Map();
   pushedArtifacts = new Map();
+  pushedComments = new Map();
   lastError = null;
   if (!readShareFile(repo)) return;
   enqueue(() => push(repo, gen));
@@ -238,6 +290,7 @@ export async function clearTeamShare(repo: string): Promise<Record<string, never
   stopTimers();
   pushedTasks = new Map();
   pushedArtifacts = new Map();
+  pushedComments = new Map();
   for (const path of [sharePath(repo), cursorPath(repo)]) {
     try {
       unlinkSync(path);
@@ -304,9 +357,11 @@ async function push(repo: string, gen: number) {
   const artRev = new Map([...snap.artifacts].map(([key, row]) => [key, row.revision]));
   const tasks = changedKeys(pushedTasks, taskRev);
   const artifacts = changedKeys(pushedArtifacts, artRev);
+  const commentRev = new Map([...snap.comments].map(([key, row]) => [key, row.revision]));
+  const comments = changedKeys(pushedComments, commentRev);
   if (snap.skipped > 0) lastError = `${snap.skipped} file(s) were over the share size limit`;
   else if (lastError?.includes("size limit")) lastError = null;
-  if (tasks.upsert.length === 0 && tasks.deleted.length === 0 && artifacts.upsert.length === 0 && artifacts.deleted.length === 0) return;
+  if (tasks.upsert.length === 0 && tasks.deleted.length === 0 && artifacts.upsert.length === 0 && artifacts.deleted.length === 0 && comments.upsert.length === 0 && comments.deleted.length === 0) return;
   const body = {
     tasks: tasks.upsert.map((slug) => {
       const row = snap.tasks.get(slug)!;
@@ -321,12 +376,21 @@ async function push(repo: string, gen: number) {
       const slash = key.indexOf("/");
       return { task_slug: key.slice(0, slash), filename: key.slice(slash + 1) };
     }),
+    comments: comments.upsert.map((key) => snap.comments.get(key)!.comment),
+    // A deleted comment is only a key, and the key is its parts; the last part is the time.
+    deleted_comments: comments.deleted.map((key) => {
+      const at = key.lastIndexOf("/");
+      const name = key.slice(0, at);
+      const slash = name.indexOf("/");
+      return { task_slug: name.slice(0, slash), filename: name.slice(slash + 1), created_at_ms: Number(key.slice(at + 1)) };
+    }),
   };
   try {
     await post(file, "/api/daemon/sync", body);
     if (gen !== generation) return;
     pushedTasks = taskRev;
     pushedArtifacts = artRev;
+    pushedComments = commentRev;
     if (lastError?.startsWith("accounts")) lastError = null;
   } catch (error) {
     lastError = error instanceof Error ? error.message : "sync failed";

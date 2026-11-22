@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadComments } from "./artifactComments.ts";
-import { changedKeys, isShareRel, pullTeamComments, readCommentCursor, revisionOf, saveTeamComments, snapshotShare, type TeamComment, writeShareFile } from "./teamShare.ts";
+import { addComment, loadComments } from "./artifactComments.ts";
+import { changedKeys, commentKey, isShareRel, pullTeamComments, readCommentCursor, revisionOf, saveTeamComments, shareArtifactName, snapshotShare, type TeamComment, writeShareFile } from "./teamShare.ts";
 
 describe("team share", () => {
   test("task.md and every artifact markdown are share paths, including a step folder", () => {
@@ -93,5 +93,23 @@ describe("team share", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  test("the owner's own comments are shared, a teammate's are not, and comments.md is no artifact", () => {
+    const repo = mkdtempSync(join(tmpdir(), "team-own-comments-"));
+    const artifacts = join(repo, ".alinery", "tasks", "alpha", "artifacts");
+    mkdirSync(join(artifacts, "1-roll-1"), { recursive: true });
+    writeFileSync(join(artifacts, "1-roll-1", "roll.md"), "# Roll\n\nA 3.\n");
+    const anchor = { anchor_id: "p:3-3:abc", anchor_kind: "p", anchor_label: "A 3.", anchor_excerpt: "A 3.", line_start: 3, line_end: 3 };
+    addComment(repo, "alpha", "1-roll-1/roll.md", { ...anchor, body: "mine" });
+    addComment(repo, "alpha", "1-roll-1/roll.md", { ...anchor, body: "theirs" }, { author: "bo@example.com", created_at_ms: 1_700_000_000_000 });
+    expect(snapshotShare(repo).artifacts.has("alpha/1-roll-1/roll.comments.md")).toBe(false);
+    expect(shareArtifactName("1-roll-1/roll.comments.md")).toBe(false);
+    const own = [...snapshotShare(repo).comments.values()].map((row) => row.comment);
+    expect(own).toEqual([expect.objectContaining({ task_slug: "alpha", filename: "1-roll-1/roll.md", body: "mine", anchor_id: "p:3-3:abc", line_start: 3 })]);
+    expect(snapshotShare(repo).comments.has(commentKey(own[0]))).toBe(true);
+    expect(isShareRel("tasks/alpha/artifacts/1-roll-1/roll.comments.json")).toBe(true);
+    expect(isShareRel("tasks/alpha/artifacts/1-roll-1/roll.comments.md")).toBe(false);
+    expect(isShareRel("tasks/alpha/artifacts/attachments/x.comments.json")).toBe(false);
   });
 });
