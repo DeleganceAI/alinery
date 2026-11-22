@@ -623,7 +623,6 @@
   gap: 12px;
 }
 
-
 /* The setup screen: a tab per kind of place, then the host and the folder, left-aligned under the centred heading. */
 .setup-focus .remote-field,
 .setup-focus .setup-connect,
@@ -679,7 +678,6 @@
   user-select: all;
 }
 
-
 .onboarding-archetype-list {
   display: flex;
   flex-direction: column;
@@ -725,67 +723,11 @@
 }
 
 .onboarding-archetype-top strong {
+  flex: 1;
+  min-width: 0;
   color: var(--text-strong);
   font-size: calc(13px * var(--ui-scale));
   font-weight: 600;
-}
-
-
-.onboarding-mechanics {
-  padding: 18px 4px 4px;
-  border-top: 1px solid var(--border);
-}
-
-.onboarding-mechanics summary {
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: calc(11px * var(--ui-scale));
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.onboarding-mechanics summary::marker {
-  color: var(--text-muted);
-}
-
-.onboarding-mechanics-list {
-  display: grid;
-  gap: 16px;
-  margin: 16px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.onboarding-mechanic-item {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  align-items: start;
-  gap: 10px;
-}
-
-.onboarding-mechanic-icon {
-  margin-top: 2px;
-  color: var(--text-muted);
-}
-
-.onboarding-mechanic-checkpoint {
-  color: var(--warning);
-}
-
-.onboarding-mechanic-item h4 {
-  margin: 0 0 3px;
-  color: var(--text-strong);
-  font-size: calc(12px * var(--ui-scale));
-  font-weight: 500;
-  line-height: 1.4;
-}
-
-.onboarding-mechanic-item p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: calc(11.5px * var(--ui-scale));
-  line-height: 1.5;
 }
 
 .onboarding-pill-accent {
@@ -889,7 +831,7 @@
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
-  height: clamp(300px, 38vh, 420px);
+  height: clamp(340px, 46vh, 520px);
   padding: 16px;
 }
 .onboarding-demo-toggle {
@@ -920,11 +862,11 @@
   outline-offset: 2px;
 }
 .onboarding-demo-toggle:disabled { opacity: 0.45; cursor: not-allowed; }
-.onboarding-graph-frame .playbook-definition-graph {
+.onboarding-graph-frame .playbook-ring {
   flex: 1;
   min-height: 0;
+  margin: 0 auto;
 }
-.onboarding-graph-frame .playbook-definition-viewport { min-height: 0; }
 .onboarding-step-inspector {
   flex: 1 0 auto;
   min-height: 195px;
@@ -1124,9 +1066,6 @@
   font-size: calc(13px * var(--ui-scale));
   line-height: 1;
 }
-
-
-
 
 .onboarding-footer {
   flex: none;
@@ -1360,43 +1299,7 @@
   color: var(--text-muted);
 }
 .onboarding-step-count { white-space: nowrap; }
-.onboarding-mini-chain {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 0;
-  margin-top: 8px;
-}
-.onboarding-mini-step {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  color: var(--text-muted);
-  font-size: calc(12px * var(--ui-scale));
-}
-.onboarding-mini-step:not(:last-child)::after {
-  content: "";
-  width: 8px;
-  height: 1px;
-  margin: 0 3px;
-  background: var(--border-strong);
-}
-.onboarding-mini-number {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  color: var(--text);
-  font-size: calc(10px * var(--ui-scale));
-  font-variant-numeric: tabular-nums;
-}
-.onboarding-mini-number[data-checkpoint] {
-  color: var(--warning);
-  border-color: var(--warning);
-  background: var(--warning-subtle);
-}
+
 .onboarding-card-detail {
   position: absolute;
   z-index: 3;
@@ -1424,11 +1327,7 @@
   transform: translateY(0);
   transition-delay: 0s;
 }
-.onboarding-mini-number[data-active] {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
+
 @media (prefers-reduced-motion: reduce) {
   .onboarding-card-detail,
   .onboarding-demo-toggle,
@@ -1439,4 +1338,104 @@
   }
   .onboarding-card-detail { transform: none; }
   .onboarding-step-inspector[data-animated] .onboarding-step-content { animation: none; }
+}
+
+/* Building blocks and Agents: the two lessons before the playbook picker (views/PlaybookLessons.tsx). */
+.onboarding-body-learn {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  max-width: 1040px;
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+.onboarding-lesson-intro { display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+.onboarding-lesson-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.onboarding-lesson-card {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+/* A lesson's ring is the diagram itself, so its chords and loop are drawn at full strength, not on hover. */
+.onboarding-lesson-card .playbook-ring .ring-chord,
+.onboarding-lesson-card .playbook-ring .ring-loop { opacity: 1; }
+.onboarding-lesson-note { margin: 0; color: var(--text-muted); font-size: calc(13px * var(--ui-scale)); }
+.onboarding-lesson-card h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: calc(15px * var(--ui-scale));
+  font-weight: 600;
+}
+.onboarding-lesson-card p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.5;
+}
+.onboarding-lesson-card .onboarding-lesson-chain { margin-top: 2px; font-size: calc(12px * var(--ui-scale)); }
+.onboarding-lesson-card .onboarding-lesson-headline { color: var(--text); font-weight: 500; }
+.onboarding-lesson-card .onboarding-lesson-mark { color: var(--text); }
+.onboarding-body-agents { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); }
+.onboarding-agent-copy { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.onboarding-agent-points {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.onboarding-agent-points strong { color: var(--text-strong); font-weight: 600; }
+.onboarding-agent-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+.onboarding-agent-stage > p,
+.onboarding-agent-stage > .btn { margin: 16px; align-self: flex-start; }
+.onboarding-agent-ring { flex: none; padding: 16px 16px 0; }
+.onboarding-agent-ring .playbook-ring-panel { max-width: 240px; }
+.onboarding-agent-hint { margin: 8px 0 0; color: var(--text-muted); font-size: calc(12px * var(--ui-scale)); text-align: center; }
+.onboarding-agent-prompt {
+  flex: 1;
+  min-height: 160px;
+  overflow: auto;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+.onboarding-agent-prompt h3 { margin: 0; color: var(--text-strong); font-size: calc(14px * var(--ui-scale)); font-weight: 600; }
+.onboarding-agent-prompt pre {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+  color: var(--text);
+}
+@media (max-width: 860px) {
+  .onboarding-lesson-grid,
+  .onboarding-body-agents { grid-template-columns: minmax(0, 1fr); }
 }

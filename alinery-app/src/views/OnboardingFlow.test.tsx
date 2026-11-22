@@ -122,7 +122,7 @@ afterEach(() => {
 describe("onboarding step persistence", () => {
   it("persists the step and rejects prototype keys", () => {
     expect(readSavedOnboardingStep()).toBe("models");
-    expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual(["models", "playbooks"]);
+    expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual(["models", "learn", "agents", "playbooks"]);
 
     writeSavedOnboardingStep("playbooks");
     expect(readSavedOnboardingStep()).toBe("playbooks");
@@ -271,9 +271,9 @@ describe("OnboardingFlow wizard", () => {
       />,
     );
     const retry = await screen.findByRole("button", { name: "Retry preview" });
-    expect(screen.queryByRole("region", { name: "Dependency graph canvas" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "SuperDevelop ring" })).toBeNull();
     fireEvent.click(retry);
-    expect(await screen.findByRole("region", { name: "Dependency graph canvas" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "SuperDevelop ring" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Retry preview" })).toBeNull();
   });
 
@@ -290,12 +290,12 @@ describe("OnboardingFlow wizard", () => {
     });
   };
 
-  it("pauses autoplay when selecting a graph node so its contract stays available", async () => {
+  it("pauses autoplay when selecting a ring node so its contract stays available", async () => {
     vi.useFakeTimers();
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
     await act(async () => {});
     await advanceDemo(2600);
-    fireEvent.click(within(screen.getByRole("region", { name: "Dependency graph canvas" })).getByRole("button", { name: "Highlight Plan" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "SuperDevelop ring" })).getByRole("button", { name: "Plan" }));
     expect(screen.getByRole("button", { name: "Resume demo" })).toBeTruthy();
     await advanceDemo(6000);
     expect(screen.getByRole("region", { name: "Plan step contract" })).toBeTruthy();
@@ -334,7 +334,7 @@ describe("OnboardingFlow wizard", () => {
     await act(async () => {});
     await advanceDemo(2600);
     await advanceDemo(900);
-    fireEvent.click(within(screen.getByRole("region", { name: "Dependency graph canvas" })).getByRole("button", { name: "Highlight Plan" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "SuperDevelop ring" })).getByRole("button", { name: "Plan" }));
     expect(screen.getByRole("region", { name: "Plan step contract" })).toBeTruthy();
     await advanceDemo(5000);
     fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
@@ -385,17 +385,22 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
   });
 
-  it("continues through exactly two steps and opens task creation without executing a task", async () => {
+  it("continues through its four steps and opens task creation without executing a task", async () => {
     const props = flowProps();
     const createTask = vi.spyOn(tasks, "createTaskForRepo");
     const createSession = vi.spyOn(sessions, "createSession");
     render(<OnboardingFlow {...props} />);
-    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["01Models", "02Building blocks", "03Agents", "04Playbooks"]);
     expect(screen.queryByText("First task")).toBeNull();
     expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Change repository" }));
     expect(props.onChangeRepo).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByTestId("onboarding-step-learn")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByTestId("onboarding-step-agents")).toBeTruthy();
+    expect(readSavedOnboardingStep()).toBe("agents");
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
     expect(readSavedOnboardingStep()).toBe("playbooks");
@@ -407,7 +412,7 @@ describe("OnboardingFlow wizard", () => {
     expect(createTask).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
+    expect(screen.getByTestId("onboarding-step-agents")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Skip Onboarding" })).toBeTruthy();
   });
   it("makes provider subscriptions and API-key setup visible before the model choice", async () => {
@@ -477,10 +482,10 @@ describe("OnboardingFlow wizard", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Academic Survey/i }));
     expect(screen.getByText("Step 1 of 3")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
-    const graph = screen.getByRole("region", { name: "Dependency graph canvas" });
-    fireEvent.click(within(graph).getByRole("button", { name: /Gather Candidate Sources — example 1/i }));
+    const graph = screen.getByRole("region", { name: "Academic Survey ring" });
+    fireEvent.click(within(graph).getByRole("button", { name: "Gather Candidate Sources" }));
     expect(screen.getByText("each — spawns parallel sessions")).toBeTruthy();
-    fireEvent.click(within(graph).getByRole("button", { name: /Deduplicate and Dispatch Sources/i }));
+    fireEvent.click(within(graph).getByRole("button", { name: "Deduplicate and Dispatch Sources" }));
     expect(screen.getByText("complete — waits for all upstream outputs")).toBeTruthy();
     await advanceDemo(4000);
     expect(screen.getByText("Step 3 of 3")).toBeTruthy();
@@ -521,19 +526,39 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
   });
 
-  it("opens the mechanics guide by default and lets users collapse and reopen it", async () => {
-    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
+  it("teaches the four building blocks, each drawn as its own ring", async () => {
+    render(<OnboardingFlow {...flowProps()} initialStep="learn" />);
     await act(async () => {});
-    const guide = screen.getByLabelText("Core playbook mechanics") as HTMLDetailsElement;
-    expect(guide.open).toBe(true);
-    fireEvent.click(within(guide).getByText("How work moves"));
-    expect(guide.open).toBe(false);
-    fireEvent.click(within(guide).getByText("How work moves"));
-    expect(guide.open).toBe(true);
-    expect(within(guide).getAllByRole("listitem")).toHaveLength(3);
-    expect(within(guide).getByRole("heading", { name: "Auto-advance" })).toBeTruthy();
-    expect(within(guide).getByRole("heading", { name: "Human checkpoint" })).toBeTruthy();
-    expect(within(guide).getByRole("heading", { name: "Parallel agents" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Learning how to use playbooks" })).toBeTruthy();
+    const blocks = within(screen.getByRole("list", { name: "The four building blocks of a playbook" })).getAllByRole("listitem");
+    expect(blocks.map((block) => within(block).getByRole("heading").textContent)).toEqual(["Fan out, then merge", "Parallel steps", "Loop back", "Human checkpoints"]);
+    for (const block of blocks) expect(within(block).getByRole("region", { name: / ring$/ })).toBeTruthy();
+    // A lesson's ring is a picture: its nodes are not buttons.
+    for (const block of blocks) expect(within(block).queryAllByRole("button")).toHaveLength(0);
+    // The loop is drawn only where a block has one, and the hand only where a step waits.
+    expect(blocks.map((block) => block.querySelectorAll(".ring-loop").length)).toEqual([0, 0, 1, 0]);
+    expect(blocks.map((block) => block.querySelectorAll(".ring-hand").length)).toEqual([0, 0, 0, 1]);
+  });
+
+  it("shows the prompt each step's agent follows on a real playbook", async () => {
+    playbookMock.readPlaybook.mockImplementation(async (reference) => {
+      const definition = previewDefinition(reference.key, "SuperDevelop");
+      return {
+        source: { reference, path: null },
+        definition: { ...definition, step: definition.step.map((step) => ({ ...step, prompt: `You are the ${step.title} agent.` })) },
+        source_text: "",
+        modified_at_ms: null,
+      };
+    });
+    render(<OnboardingFlow {...flowProps()} initialStep="agents" />);
+    expect(screen.getByRole("heading", { name: "Every step is its own agent" })).toBeTruthy();
+    const stage = await screen.findByRole("region", { name: "SuperDevelop step prompts" });
+    expect(within(stage).getByRole("heading", { name: "Agent 1 of 7: Clarify" })).toBeTruthy();
+    expect(within(stage).getByText("You are the Clarify agent.")).toBeTruthy();
+    fireEvent.click(within(stage).getByRole("button", { name: "Build" }));
+    expect(within(stage).getByRole("heading", { name: "Agent 6 of 7: Build" })).toBeTruthy();
+    expect(within(stage).getByText("You are the Build agent.")).toBeTruthy();
+    expect(within(stage).queryByText("You are the Clarify agent.")).toBeNull();
   });
 
   it("offers building a new playbook separately through the existing creation form", async () => {

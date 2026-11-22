@@ -1,16 +1,18 @@
 import "../onboarding.css";
-import { ArrowRight, Check, Coffee, GitFork, Hand, Layers, Pause, Play, ShieldCheck, Workflow, Zap } from "lucide-react";
+import { ArrowRight, Check, Coffee, Layers, Pause, Play, ShieldCheck, Workflow, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import { ORB_SPEED } from "../Indicators";
 import * as ipc from "../ipc";
 import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
-import { PlaybookGraph, type SimulatedStepStatus } from "../PlaybookGraph";
+import type { SimulatedStepStatus } from "../PlaybookGraph";
+import { PlaybookRing, PlaybookRingMark, RingReadout } from "../PlaybookRing";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
 import { NoLibraryHost, readPlaybook } from "../sync/playbooks";
 import { readEffectiveConfig, readRepoSettings, writeRepoOverrides } from "../sync/settings";
 import type { AccountStatus, AppConfig, Config, NormalizedPlaybook, PlaybookRef } from "../types";
+import { LearnPlaybooks, StepAgentsLesson } from "./PlaybookLessons";
 
 const INPUT_MODE_LABELS: Record<"single" | "each" | "complete", string> = {
   single: "single",
@@ -350,8 +352,8 @@ export function OnboardingFlow({
         {step === "playbooks" && (
           <div className="onboarding-body onboarding-body-playbooks" data-dir={direction} data-testid="onboarding-step-playbooks">
             <div className="onboarding-playbook-rail">
-              <h2>How playbooks work</h2>
-              <p className="onboarding-lede">A playbook is a fixed sequence of steps. Each step reads and writes named markdown files, and some steps wait for you.</p>
+              <h2>Choose a playbook to start with</h2>
+              <p className="onboarding-lede">Each playbook is drawn as a ring. Read it clockwise from step 1. Choose one to watch how its work moves.</p>
 
               <div
                 className="onboarding-archetype-list"
@@ -390,24 +392,10 @@ export function OnboardingFlow({
                       onClick={() => handleSelectArchetype(archetype.reference.key)}
                     >
                       <div className="onboarding-archetype-top">
+                        {def && <PlaybookRingMark steps={def.step} />}
                         <strong>{def?.title ?? archetype.title}</strong>
                         {def && <span className="onboarding-step-count">{def.step.length} steps</span>}
                       </div>
-                      {def && (
-                        <span className="onboarding-mini-chain" aria-label={def.step.map((item, i) => `${i + 1}. ${item.title}`).join(", ")}>
-                          {def.step.map((item, stepNumber) => (
-                            <span className="onboarding-mini-step" key={item.key} title={`${stepNumber + 1}. ${item.title}${item.auto_advance_default ? "" : " — waits for you"}`}>
-                              <span
-                                className="onboarding-mini-number"
-                                data-checkpoint={!item.auto_advance_default || undefined}
-                                data-active={(selected && item.key === selectedStep?.key) || undefined}
-                              >
-                                {stepNumber + 1}
-                              </span>
-                            </span>
-                          ))}
-                        </span>
-                      )}
                       <span className="onboarding-card-detail">
                         <span>{archetype.checkpointNote}</span>
                       </span>
@@ -415,33 +403,6 @@ export function OnboardingFlow({
                   );
                 })}
               </div>
-
-              <details className="onboarding-mechanics" aria-label="Core playbook mechanics" open>
-                <summary>How work moves</summary>
-                <ul className="onboarding-mechanics-list">
-                  <li className="onboarding-mechanic-item">
-                    <ArrowRight className="onboarding-mechanic-icon" size={16} aria-hidden="true" />
-                    <div>
-                      <h4>Auto-advance</h4>
-                      <p>Moves on when the step’s output is validated.</p>
-                    </div>
-                  </li>
-                  <li className="onboarding-mechanic-item">
-                    <Hand className="onboarding-mechanic-icon onboarding-mechanic-checkpoint" size={16} aria-hidden="true" />
-                    <div>
-                      <h4>Human checkpoint</h4>
-                      <p>Pauses for you to review or comment before continuing.</p>
-                    </div>
-                  </li>
-                  <li className="onboarding-mechanic-item">
-                    <GitFork className="onboarding-mechanic-icon" size={16} aria-hidden="true" />
-                    <div>
-                      <h4>Parallel agents</h4>
-                      <p>Runs an agent per artifact, then brings their results together.</p>
-                    </div>
-                  </li>
-                </ul>
-              </details>
             </div>
 
             {activePlaybook ? (
@@ -493,23 +454,19 @@ export function OnboardingFlow({
                     {playing ? <Pause size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
                     {playing ? "Pause demo" : "Resume demo"}
                   </button>
-                  <PlaybookGraph
+                  <PlaybookRing
                     key={activePlaybook.key}
-                    title={activePlaybook.title}
                     steps={playbookSteps}
-                    variant="definition"
-                    showInspector={false}
-                    hideToolbar={true}
-                    minScale={1}
+                    label={`${activePlaybook.title} ring`}
                     selectedStepKey={selectedStep?.key ?? null}
                     onSelectStep={(key) => {
                       setPlaying(false);
                       setSelectedStepKey(key);
                     }}
-                    simulatedStatuses={simulatedStatuses}
-                    simulationPlaying={playing && !reducedMotion}
-                    onPauseSimulation={() => setPlaying(false)}
-                  />
+                  >
+                    {/* The bar above names the step being shown; the centre keeps the playbook at rest. */}
+                    <RingReadout title={activePlaybook.title} steps={playbookSteps} activeKey={null} />
+                  </PlaybookRing>
                 </div>
 
                 {selectedStep && (
@@ -585,6 +542,18 @@ export function OnboardingFlow({
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {step === "learn" && (
+          <div className="onboarding-body onboarding-body-learn" data-dir={direction} data-testid="onboarding-step-learn">
+            <LearnPlaybooks />
+          </div>
+        )}
+
+        {step === "agents" && (
+          <div className="onboarding-body onboarding-body-agents" data-dir={direction} data-testid="onboarding-step-agents">
+            <StepAgentsLesson playbook={liveDefinitions.superdevelop ?? null} error={definitionErrors.superdevelop} onRetry={() => setDefinitionRefresh((value) => value + 1)} />
           </div>
         )}
 

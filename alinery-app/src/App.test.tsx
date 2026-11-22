@@ -686,7 +686,7 @@ describe("task list starter actions", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "show list guide" }));
     expect(await screen.findByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
-    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
+    expect(screen.getByTestId("onboarding-step-learn")).toBeTruthy();
   });
 });
 
