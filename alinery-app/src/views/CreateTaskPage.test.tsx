@@ -2432,3 +2432,24 @@ describe("clipboard task attachments", () => {
     });
   });
 });
+
+describe("page layout", () => {
+  it("draws a playbook's ring in the picker, pins the launch controls, and opens Additional context when something lands in it", async () => {
+    const withSteps = structuredClone(catalog);
+    withSteps.candidates[0].steps = structuredClone(sources[0].definition.step);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(withSteps);
+    const { container } = render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    // Only the candidate that carries a step graph gets a ring.
+    expect(container.querySelectorAll(".playbook-option .playbook-ring-mark")).toHaveLength(1);
+    const footer = container.querySelector("footer") as HTMLElement;
+    expect(footer.querySelector(".create-actions")?.textContent).toContain("Create task");
+    expect(footer.textContent).toContain("Start eligible sessions after creation");
+    const context = screen.getByText("Additional context").closest("details") as HTMLDetailsElement;
+    expect(context.open).toBe(false);
+    const entry = screen.getByPlaceholderText(/Paste file paths/);
+    fireEvent.change(entry, { target: { value: "/new.png" } });
+    fireEvent.keyDown(entry, { key: "Enter" });
+    await waitFor(() => expect(context.open).toBe(true));
+  });
+});
