@@ -2197,13 +2197,9 @@ main {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.playbook-process-parallel,
-.playbook-process-more {
+.playbook-process-parallel {
   color: var(--text-muted);
   font-size: calc(11px * var(--ui-scale));
-}
-.playbook-process-more {
-  margin: 10px 0 0 18px;
 }
 .playbook-card-process {
   display: flex;

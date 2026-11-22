@@ -1511,6 +1511,9 @@ export function CreateTaskPage({
                   const identity = playbookRefKey(item.source.reference);
                   const selected = samePlaybookRef(playbook, item.source.reference);
                   const starred = starredKeys.has(identity);
+                  // The selected playbook's definition is loaded; any other card lists the steps the catalog sent.
+                  const loaded = selected ? selectedSource : null;
+                  const cardSteps = loaded?.definition.step ?? item.steps ?? [];
                   return (
                     <div className={`playbook-picker-card${selected ? " selected" : ""}${item.diagnostics.length ? " invalid" : ""}`} key={identity}>
                       <label className={`playbook-option${selected ? " selected" : ""}`}>
@@ -1565,30 +1568,26 @@ export function CreateTaskPage({
                         <p className="playbook-option-description" id={`create-playbook-description-${identity}`}>
                           {item.description}
                         </p>
-                        {!(selected && selectedSource) && item.steps && (
-                          <div className="playbook-card-process">
-                            {item.steps.length} {item.steps.length === 1 ? "step" : "steps"}
-                          </div>
-                        )}
-                        {selected && selectedSource && (
-                          <section className="playbook-card-overview" aria-label={`${item.title ?? selectedSource.definition.title} workflow preview`}>
+                        {cardSteps.length > 0 && (
+                          <section className="playbook-card-overview" aria-label={loaded ? `${item.title ?? loaded.definition.title} workflow preview` : undefined}>
                             <ul className="playbook-process-list">
-                              {selectedSource.definition.step.slice(0, 3).map((step) => (
+                              {cardSteps.map((step) => (
                                 <li key={step.key}>
                                   <span>{step.title}</span>
                                   {step.inputs.some((input) => input.mode === "each") && <span className="playbook-process-parallel">Parallel</span>}
                                 </li>
                               ))}
                             </ul>
-                            {selectedSource.definition.step.length > 3 && <div className="playbook-process-more">+{selectedSource.definition.step.length - 3} more steps</div>}
                             <div className="playbook-card-process">
                               <span>
-                                {selectedSource.definition.step.length} {selectedSource.definition.step.length === 1 ? "step" : "steps"}
-                                {selectedSource.definition.step.some((step) => step.inputs.some((input) => input.mode === "each")) && " · Parallel work"}
+                                {cardSteps.length} {cardSteps.length === 1 ? "step" : "steps"}
+                                {cardSteps.some((step) => step.inputs.some((input) => input.mode === "each")) && " · Parallel work"}
                               </span>
-                              <button className="btn ghost small" type="button" onClick={() => setWorkflowPreviewOpen(true)}>
-                                View workflow
-                              </button>
+                              {loaded && (
+                                <button className="btn ghost small" type="button" onClick={() => setWorkflowPreviewOpen(true)}>
+                                  View workflow
+                                </button>
+                              )}
                             </div>
                           </section>
                         )}

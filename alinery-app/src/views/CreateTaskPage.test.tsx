@@ -467,10 +467,12 @@ describe("scoped playbook selection", () => {
     vi.mocked(playbookReads.readPlaybook).mockResolvedValue(source);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const preview = within(await screen.findByRole("region", { name: "SuperDevelop workflow preview" }));
-    expect(preview.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Frame the question", "Gather sources", "Read sourcesParallel"]);
+    // Every step is named, not only the first few.
+    const names = preview.getAllByRole("listitem").map((item) => item.textContent);
+    expect(names).toHaveLength(5);
+    expect(names.slice(0, 3)).toEqual(["Frame the question", "Gather sources", "Read sourcesParallel"]);
     expect(preview.getByText("5 steps · Parallel work")).toBeTruthy();
-    expect(preview.getByText("+2 more steps")).toBeTruthy();
-    expect(preview.queryByText("Review evidence")).toBeNull();
+    expect(preview.getByText("Review evidence")).toBeTruthy();
     expect(screen.queryByRole("region", { name: "SuperDevelop graph" })).toBeNull();
     fireEvent.click(preview.getByRole("button", { name: "View workflow" }));
     const dialog = within(await screen.findByRole("dialog", { name: "SuperDevelop workflow" }));
