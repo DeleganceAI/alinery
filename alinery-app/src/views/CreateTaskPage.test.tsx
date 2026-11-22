@@ -467,10 +467,12 @@ describe("scoped playbook selection", () => {
     vi.mocked(playbookReads.readPlaybook).mockResolvedValue(source);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const preview = within(await screen.findByRole("region", { name: "SuperDevelop workflow preview" }));
-    expect(preview.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Frame the question", "Gather sources", "Read sourcesParallel"]);
+    // Every step is named, not only the first few.
+    const names = preview.getAllByRole("listitem").map((item) => item.textContent);
+    expect(names).toHaveLength(5);
+    expect(names.slice(0, 3)).toEqual(["Frame the question", "Gather sources", "Read sourcesParallel"]);
     expect(preview.getByText("5 steps · Parallel work")).toBeTruthy();
-    expect(preview.getByText("+2 more steps")).toBeTruthy();
-    expect(preview.queryByText("Review evidence")).toBeNull();
+    expect(preview.getByText("Review evidence")).toBeTruthy();
     expect(screen.queryByRole("region", { name: "SuperDevelop graph" })).toBeNull();
     fireEvent.click(preview.getByRole("button", { name: "View workflow" }));
     const dialog = within(await screen.findByRole("dialog", { name: "SuperDevelop workflow" }));
@@ -619,8 +621,13 @@ describe("scoped playbook selection", () => {
     const preview = await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     expect(screen.queryByRole("region", { name: "One-shot workflow preview" })).toBeNull();
     expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop", "global/superdevelop", "repo/broken", "repo/superdevelop"]);
-    if (!preview.parentElement) throw new Error("Preview must be inside the selected card");
-    expect(within(preview.parentElement).getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    const card = preview.closest<HTMLElement>(".playbook-picker-card");
+    if (!card) throw new Error("Preview must be inside the selected card");
+    expect(within(card).getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    // The description and the workflow preview stay folded until the person opens Details.
+    expect(within(card).getByRole("button", { name: "SuperDevelop details" }).getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(within(card).getByRole("button", { name: "SuperDevelop details" }));
+    expect(preview.closest("[data-open]")).toBeTruthy();
     expect(within(preview).getByText("Build")).toBeTruthy();
   });
 
@@ -966,7 +973,10 @@ describe("per-step default model", () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByLabelText("Build model");
     const taskModel = screen.getByLabelText("Task Default Model");
-    const permission = screen.getByText("Step settings");
+    // The task's model sits inside Steering settings, above the per-step choices.
+    const steering = screen.getByRole("heading", { name: /^Steering settings/ }).parentElement as HTMLElement;
+    expect(steering.contains(taskModel)).toBe(true);
+    const permission = within(steering).getByText("After each step");
     expect(taskModel.compareDocumentPosition(permission) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(screen.queryByLabelText("Model")).toBeNull();
   });
@@ -2430,5 +2440,23 @@ describe("clipboard task attachments", () => {
       await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
       expect(submittedBytes()).toEqual([[1], [3], [4], [5]]);
     });
+  });
+});
+
+describe("page layout", () => {
+  it("draws a playbook's ring in the picker, keeps the three sections open, and pins only the buttons", async () => {
+    const withSteps = structuredClone(catalog);
+    withSteps.candidates[0].steps = structuredClone(sources[0].definition.step);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(withSteps);
+    const { container } = render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    // Only the candidate that carries a step graph gets a ring.
+    expect(container.querySelectorAll(".playbook-option .playbook-ring-mark")).toHaveLength(1);
+    const footer = container.querySelector("footer") as HTMLElement;
+    expect(footer.querySelector(".create-actions")?.textContent).toContain("Create task");
+    expect(footer.textContent).not.toContain("Start eligible sessions after creation");
+    for (const title of ["Additional context", "Steering settings", "Workspace settings"]) expect(screen.getByRole("heading", { name: new RegExp(`^${title}`) })).toBeTruthy();
+    const workspace = screen.getByRole("heading", { name: "Workspace settings" }).parentElement as HTMLElement;
+    expect(within(workspace).getByRole("checkbox", { name: "Start eligible sessions after creation" })).toBeTruthy();
   });
 });
