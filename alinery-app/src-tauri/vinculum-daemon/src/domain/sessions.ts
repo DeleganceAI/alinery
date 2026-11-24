@@ -3,7 +3,7 @@
 // exist only while the daemon runs the session. The feed calls `withLive` on every Session it
 // commits, so a watcher event for the meta file cannot overwrite the live state.
 import { clone, create } from "@bufbuild/protobuf";
-import { DaemonStatusSchema, type Entity, EntitySchema, SessionStatusSchema, SessionWaitSchema } from "alinery-proto/alinery/v1/entities_pb";
+import { DaemonStatusSchema, type Entity, EntitySchema, SessionCompactionFailureSchema, SessionCompactionSchema, SessionStatusSchema, SessionWaitSchema } from "alinery-proto/alinery/v1/entities_pb";
 import { lstatSync, openSync, readSync, closeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Feed } from "../sync/feed.ts";
@@ -18,6 +18,8 @@ export type LiveSession = {
   message_adapter: string;
   transport?: string;
   wait?: null | { kind: string; correlationId: string; prompt?: string };
+  compactions?: { reason: string; blocking: boolean; attempt: number; retry?: { at: number; error: string } }[];
+  compaction_failure?: { reason: string; error: string };
 };
 
 /** A Session entity with `status` and `wait` set from the live session, or cleared when there is none. */
@@ -36,6 +38,8 @@ export function withLive(entity: Entity, live: LiveSession | undefined): Entity 
         adapter: live.adapter,
         messageAdapter: live.message_adapter,
         transport: live.transport ?? "",
+        compactions: (live.compactions ?? []).map((c) => create(SessionCompactionSchema, { reason: c.reason, blocking: c.blocking, attempt: c.attempt, retryAt: c.retry ? BigInt(Math.trunc(c.retry.at)) : undefined, retryError: c.retry?.error ?? "" })),
+        compactionFailure: live.compaction_failure ? create(SessionCompactionFailureSchema, { reason: live.compaction_failure.reason, error: live.compaction_failure.error }) : undefined,
       })
     : undefined;
   out.value.value.wait = live?.wait ? create(SessionWaitSchema, { kind: live.wait.kind, correlationId: live.wait.correlationId, prompt: live.wait.prompt }) : undefined;

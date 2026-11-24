@@ -19,6 +19,7 @@ import { writeAtomic } from "./platform/fs.ts";
 import { agentShellEnv, libreOfficeDir, runtimePart, writeShims } from "./agentShell.ts";
 import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
 import { closeFailedOpen, stopOwningHarness } from "./runtime/sessionStop.ts";
+import { handleLiveDocTick } from "./runtime/compactionState.ts";
 import { latestFailedTurn, retryFailedTurn, committedTurnMessages } from "./runtime/failedTurn.ts";
 import { answeredReviewFollowUp, hasSettledAnswer } from "./runtime/reviewFollowUp.ts";
 import { steerWrapUp } from "./runtime/nudge.ts";
@@ -112,6 +113,8 @@ type Live = {
   executionId: string;
   titledBucket: number;
   titleInFlight: boolean;
+  compactions?: { reason: string; blocking: boolean; attempt: number; retry?: { at: number; error: string } }[];
+  compaction_failure?: { reason: string; error: string };
   stopping?: Promise<void>;
   closedControls?: Awaited<ReturnType<typeof sessionControls>>;
   wait?: { kind: string; correlationId: string; prompt?: string };
@@ -473,6 +476,8 @@ function sessionState(row: Live) {
     playbook,
     adapter: "vinculum",
     message_adapter: "unsupported",
+    compactions: row.compactions,
+    compaction_failure: row.compaction_failure,
   };
 }
 
@@ -646,8 +651,7 @@ async function sessionControls(conversation: Conversation) {
 }
 
 function watch(row: Live, harness: OpenedHarness, conversationId: string) {
-  let watchVersion = 0;
-  let lastRunning: boolean | undefined;
+  const liveDoc: Parameters<typeof handleLiveDocTick>[0] = { version: 0, lastRunning: undefined, owedFinish: false, compaction: { signature: undefined } };
   const settledAgent = () => row.failedTurn ? { state: "errored", correlation_id: row.failedTurn.id, reason: row.failedTurn.reason } : { state: "idle" };
   const attach = <T>(pending: Promise<WatchHandle<T> | undefined>, apply: (value: T, initial?: boolean) => void) => {
     pending
@@ -681,29 +685,15 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
     commitSession(row.taskSlug, row.id);
   });
   attach(harness.watchDoc(LiveDoc, conversationId, context), (value) => {
-    const running = Boolean(value?.run);
-    const runId = value?.run?.inputs[0]?.toString();
-    if (lastRunning === running && row.runId === runId) return;
-    const finished = lastRunning === true && !running;
-    lastRunning = running;
-    row.runId = runId;
-    const version = ++watchVersion;
-    row.liveRun = running;
-    if (running) {
-      row.failedTurn = undefined;
-      if (row.agent.state !== "waiting_for_input" && row.agent.state !== "waiting_for_approval") row.agent = { state: "busy" };
-      commitSession(row.taskSlug, row.id);
-      return;
-    }
-    // Read the terminal receipt on initial attachment too, so a daemon restart restores the same failed turn.
-    void conversationFor(row).then(async (conversation) => {
-      const failure = conversation ? await latestFailedTurn(conversation) : undefined;
-      if (watchVersion !== version || live.get(row.id) !== row || row.process === "exited" || row.stopping) return;
-      row.failedTurn = failure;
-      if (row.agent.state !== "waiting_for_input" && row.agent.state !== "waiting_for_approval") row.agent = settledAgent();
-      commitSession(row.taskSlug, row.id);
-      if (finished && !row.taskSlug && !failure) void maybeTitleChat(row);
-    }).catch((error) => console.error(`turn outcome unavailable for ${row.id}: ${error}`));
+    handleLiveDocTick(liveDoc, row, value, {
+      publish: () => commitSession(row.taskSlug, row.id),
+      readFailure: async () => {
+        const conversation = await conversationFor(row);
+        return conversation ? await latestFailedTurn(conversation) : undefined;
+      },
+      title: () => void maybeTitleChat(row),
+      abandoned: () => live.get(row.id) !== row || row.process === "exited" || Boolean(row.stopping),
+    });
   });
   attach(harness.watchDoc(PhaseRequest, conversationId, context), (value, initial) => {
     if (!value?.nonce || value.nonce === row.seenNonce) return;
