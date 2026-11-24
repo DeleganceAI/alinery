@@ -20,10 +20,12 @@ service ChatService {
   // Continues a thread in a new one that resumes its harness conversation.
   rpc ResumeChatThread(ResumeChatThreadRequest) returns (ResumeChatThreadResponse);  // ACT
   // The turn controls of a thread, the chat form of SessionService's: the thread must be a chat thread (a root session).
+  // Compact is another turn control; it returns on admission rather than completion. Abort remains the only turn control without mutation identity.
   rpc PromptChatThread(PromptChatThreadRequest) returns (PromptChatThreadResponse);  // ACT
   rpc AbortChatThread(AbortChatThreadRequest) returns (AbortChatThreadResponse);     // ACT
   rpc SetChatModel(SetChatModelRequest) returns (SetChatModelResponse);              // ACT
   rpc SetChatThinkingLevel(SetChatThinkingLevelRequest) returns (SetChatThinkingLevelResponse);  // ACT
+  rpc CompactChatThread(CompactChatThreadRequest) returns (CompactChatThreadResponse);  // ACT
   // Turns a thread's canvas on for good: the `canvas/_/<id>` row appears and the thread's agent gets the canvas tools.
   // APPROVE, so an agent's token can never call it.
   rpc EnableCanvas(EnableCanvasRequest) returns (EnableCanvasResponse);  // APPROVE
@@ -62,6 +64,13 @@ message SetChatThinkingLevelRequest {
   string thread_id = 2;
   string level = 3;
 }
+// Admits a manual compaction of the thread. Returns when the compaction is admitted, not when the summary lands.
+message CompactChatThreadRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+  string instructions = 3;  // additional summarizer focus; empty means none
+}
+message CompactChatThreadResponse {}
 message SetChatModelResponse { SessionControls controls = 1; }
 message SetChatThinkingLevelResponse { SessionControls controls = 1; }
 

@@ -115,8 +115,23 @@ message NotificationSuppression {
   string notice = 1;  // waiting_for_input, waiting_for_approval or failure
   string occurrence = 2;
 }
-// The live state `sessionState` reports (main.ts): process, agent and playbook axes, as the `list` and
-// `status` ops carry them. Not on disk; the daemon fills it while the session is live.
+// One live compaction task (Pi's LiveDoc.compactions). The task id stays off the wire.
+message SessionCompaction {
+  string reason = 1;    // manual, threshold or overflow
+  bool blocking = 2;    // a generation is waiting for it
+  uint32 attempt = 3;
+  optional uint64 retry_at = 4;  // ms since the epoch, when a summarization retry is scheduled
+  string retry_error = 5;
+}
+// The newest compaction that failed since one last produced a summary; cleared by a successful summary.
+message SessionCompactionFailure {
+  string reason = 1;
+  string error = 2;
+}
+// The live state `sessionState` reports (main.ts). Not on disk; the daemon fills it while the session is live.
+// Process, agent and playbook are the lifecycle axes. The compaction fields are extra live state on the same
+// message — not an agent state, not a process state, not a waiting-for-approval chip. Empty when nothing is
+// compacting and nothing has failed since the last summary.
 message SessionStatus {
   string process = 1;  // starting, alive or exited
   string agent = 2;    // idle, busy, waiting_for_input, waiting_for_approval, ...
@@ -127,6 +142,8 @@ message SessionStatus {
   string adapter = 7;
   string message_adapter = 8;
   string transport = 9;  // pty (a terminal session) or rpc (an agent session), as the `status` op reports it
+  repeated SessionCompaction compactions = 10;
+  SessionCompactionFailure compaction_failure = 11;
 }
 // The Attention doc's `wait`: what the agent is waiting on, a field of the session.
 message SessionWait {

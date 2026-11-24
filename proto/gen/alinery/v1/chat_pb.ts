@@ -18,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/chat.proto.
  */
 export const file_alinery_v1_chat: GenFile = /*@__PURE__*/
-  fileDesc("ChVhbGluZXJ5L3YxL2NoYXQucHJvdG8SCmFsaW5lcnkudjEiUAoTRW5hYmxlQ2FudmFzUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGhyZWFkX2lkGAIgASgJIjwKFEVuYWJsZUNhbnZhc1Jlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiYwoXQ2xvc2VDYW52YXNQYW5lbFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRocmVhZF9pZBgCIAEoCRINCgVwYW5lbBgDIAEoCSJAChhDbG9zZUNhbnZhc1BhbmVsUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCKKAQoXUHJvbXB0Q2hhdFRocmVhZFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRocmVhZF9pZBgCIAEoCRIMCgR0ZXh0GAMgASgJEiYKBmltYWdlcxgEIAMoCzIWLmFsaW5lcnkudjEuRHJhZnRJbWFnZSIaChhQcm9tcHRDaGF0VGhyZWFkUmVzcG9uc2UiKwoWQWJvcnRDaGF0VGhyZWFkUmVxdWVzdBIRCgl0aHJlYWRfaWQYASABKAkiGQoXQWJvcnRDaGF0VGhyZWFkUmVzcG9uc2UiXwoTU2V0Q2hhdE1vZGVsUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGhyZWFkX2lkGAIgASgJEg0KBW1vZGVsGAMgASgJImcKG1NldENoYXRUaGlua2luZ0xldmVsUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGhyZWFkX2lkGAIgASgJEg0KBWxldmVsGAMgASgJIkUKFFNldENoYXRNb2RlbFJlc3BvbnNlEi0KCGNvbnRyb2xzGAEgASgLMhsuYWxpbmVyeS52MS5TZXNzaW9uQ29udHJvbHMiTQocU2V0Q2hhdFRoaW5raW5nTGV2ZWxSZXNwb25zZRItCghjb250cm9scxgBIAEoCzIbLmFsaW5lcnkudjEuU2Vzc2lvbkNvbnRyb2xzImkKF0NyZWF0ZUNoYXRUaHJlYWRSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRINCgVtb2RlbBgCIAEoCRIXCg9jcmVhdGVfd29ya3RyZWUYAyABKAgibQoYQ3JlYXRlQ2hhdFRocmVhZFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSKwoHc3RhcnRlZBgCIAEoCzIaLmFsaW5lcnkudjEuU2Vzc2lvblN0YXJ0ZWQiUwoWU3RhcnRDaGF0VGhyZWFkUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGhyZWFkX2lkGAIgASgJImwKF1N0YXJ0Q2hhdFRocmVhZFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSKwoHc3RhcnRlZBgCIAEoCzIaLmFsaW5lcnkudjEuU2Vzc2lvblN0YXJ0ZWQiYQoUU2V0Q2hhdFBpbm5lZFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRocmVhZF9pZBgCIAEoCRIOCgZwaW5uZWQYAyABKAgiPQoVU2V0Q2hhdFBpbm5lZFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQibgoYQXJjaGl2ZUNoYXRUaHJlYWRSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIRCgl0aHJlYWRfaWQYAiABKAkSFwoPcmVtb3ZlX3dvcmt0cmVlGAMgASgIIkEKGUFyY2hpdmVDaGF0VGhyZWFkUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJWChlSZW1vdmVDaGF0V29ya3RyZWVSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIRCgl0aHJlYWRfaWQYAiABKAkiQgoaUmVtb3ZlQ2hhdFdvcmt0cmVlUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJUChdSZXN1bWVDaGF0VGhyZWFkUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGhyZWFkX2lkGAIgASgJIlYKGFJlc3VtZUNoYXRUaHJlYWRSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEhQKDHN1Y2Nlc3Nvcl9pZBgCIAEoCTLvCAoLQ2hhdFNlcnZpY2USXQoQQ3JlYXRlQ2hhdFRocmVhZBIjLmFsaW5lcnkudjEuQ3JlYXRlQ2hhdFRocmVhZFJlcXVlc3QaJC5hbGluZXJ5LnYxLkNyZWF0ZUNoYXRUaHJlYWRSZXNwb25zZRJaCg9TdGFydENoYXRUaHJlYWQSIi5hbGluZXJ5LnYxLlN0YXJ0Q2hhdFRocmVhZFJlcXVlc3QaIy5hbGluZXJ5LnYxLlN0YXJ0Q2hhdFRocmVhZFJlc3BvbnNlElQKDVNldENoYXRQaW5uZWQSIC5hbGluZXJ5LnYxLlNldENoYXRQaW5uZWRSZXF1ZXN0GiEuYWxpbmVyeS52MS5TZXRDaGF0UGlubmVkUmVzcG9uc2USYAoRQXJjaGl2ZUNoYXRUaHJlYWQSJC5hbGluZXJ5LnYxLkFyY2hpdmVDaGF0VGhyZWFkUmVxdWVzdBolLmFsaW5lcnkudjEuQXJjaGl2ZUNoYXRUaHJlYWRSZXNwb25zZRJjChJSZW1vdmVDaGF0V29ya3RyZWUSJS5hbGluZXJ5LnYxLlJlbW92ZUNoYXRXb3JrdHJlZVJlcXVlc3QaJi5hbGluZXJ5LnYxLlJlbW92ZUNoYXRXb3JrdHJlZVJlc3BvbnNlEl0KEFJlc3VtZUNoYXRUaHJlYWQSIy5hbGluZXJ5LnYxLlJlc3VtZUNoYXRUaHJlYWRSZXF1ZXN0GiQuYWxpbmVyeS52MS5SZXN1bWVDaGF0VGhyZWFkUmVzcG9uc2USXQoQUHJvbXB0Q2hhdFRocmVhZBIjLmFsaW5lcnkudjEuUHJvbXB0Q2hhdFRocmVhZFJlcXVlc3QaJC5hbGluZXJ5LnYxLlByb21wdENoYXRUaHJlYWRSZXNwb25zZRJaCg9BYm9ydENoYXRUaHJlYWQSIi5hbGluZXJ5LnYxLkFib3J0Q2hhdFRocmVhZFJlcXVlc3QaIy5hbGluZXJ5LnYxLkFib3J0Q2hhdFRocmVhZFJlc3BvbnNlElEKDFNldENoYXRNb2RlbBIfLmFsaW5lcnkudjEuU2V0Q2hhdE1vZGVsUmVxdWVzdBogLmFsaW5lcnkudjEuU2V0Q2hhdE1vZGVsUmVzcG9uc2USaQoUU2V0Q2hhdFRoaW5raW5nTGV2ZWwSJy5hbGluZXJ5LnYxLlNldENoYXRUaGlua2luZ0xldmVsUmVxdWVzdBooLmFsaW5lcnkudjEuU2V0Q2hhdFRoaW5raW5nTGV2ZWxSZXNwb25zZRJRCgxFbmFibGVDYW52YXMSHy5hbGluZXJ5LnYxLkVuYWJsZUNhbnZhc1JlcXVlc3QaIC5hbGluZXJ5LnYxLkVuYWJsZUNhbnZhc1Jlc3BvbnNlEl0KEENsb3NlQ2FudmFzUGFuZWwSIy5hbGluZXJ5LnYxLkNsb3NlQ2FudmFzUGFuZWxSZXF1ZXN0GiQuYWxpbmVyeS52MS5DbG9zZUNhbnZhc1BhbmVsUmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common, file_alinery_v1_sessions, file_alinery_v1_tasks]);
+  fileDesc("ChVhbGluZXJ5L3YxL2NoYXQucHJvdG8SCmFsaW5lcnkudjEiUAoTRW5hYmxlQ2FudmFzUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGhyZWFkX2lkGAIgASgJIjwKFEVuYWJsZUNhbnZhc1Jlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiYwoXQ2xvc2VDYW52YXNQYW5lbFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRocmVhZF9pZBgCIAEoCRINCgVwYW5lbBgDIAEoCSJAChhDbG9zZUNhbnZhc1BhbmVsUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCKKAQoXUHJvbXB0Q2hhdFRocmVhZFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRocmVhZF9pZBgCIAEoCRIMCgR0ZXh0GAMgASgJEiYKBmltYWdlcxgEIAMoCzIWLmFsaW5lcnkudjEuRHJhZnRJbWFnZSIaChhQcm9tcHRDaGF0VGhyZWFkUmVzcG9uc2UiKwoWQWJvcnRDaGF0VGhyZWFkUmVxdWVzdBIRCgl0aHJlYWRfaWQYASABKAkiGQoXQWJvcnRDaGF0VGhyZWFkUmVzcG9uc2UiXwoTU2V0Q2hhdE1vZGVsUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGhyZWFkX2lkGAIgASgJEg0KBW1vZGVsGAMgASgJImcKG1NldENoYXRUaGlua2luZ0xldmVsUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGhyZWFkX2lkGAIgASgJEg0KBWxldmVsGAMgASgJImsKGENvbXBhY3RDaGF0VGhyZWFkUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGhyZWFkX2lkGAIgASgJEhQKDGluc3RydWN0aW9ucxgDIAEoCSIbChlDb21wYWN0Q2hhdFRocmVhZFJlc3BvbnNlIkUKFFNldENoYXRNb2RlbFJlc3BvbnNlEi0KCGNvbnRyb2xzGAEgASgLMhsuYWxpbmVyeS52MS5TZXNzaW9uQ29udHJvbHMiTQocU2V0Q2hhdFRoaW5raW5nTGV2ZWxSZXNwb25zZRItCghjb250cm9scxgBIAEoCzIbLmFsaW5lcnkudjEuU2Vzc2lvbkNvbnRyb2xzImkKF0NyZWF0ZUNoYXRUaHJlYWRSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRINCgVtb2RlbBgCIAEoCRIXCg9jcmVhdGVfd29ya3RyZWUYAyABKAgibQoYQ3JlYXRlQ2hhdFRocmVhZFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSKwoHc3RhcnRlZBgCIAEoCzIaLmFsaW5lcnkudjEuU2Vzc2lvblN0YXJ0ZWQiUwoWU3RhcnRDaGF0VGhyZWFkUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGhyZWFkX2lkGAIgASgJImwKF1N0YXJ0Q2hhdFRocmVhZFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSKwoHc3RhcnRlZBgCIAEoCzIaLmFsaW5lcnkudjEuU2Vzc2lvblN0YXJ0ZWQiYQoUU2V0Q2hhdFBpbm5lZFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRocmVhZF9pZBgCIAEoCRIOCgZwaW5uZWQYAyABKAgiPQoVU2V0Q2hhdFBpbm5lZFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQibgoYQXJjaGl2ZUNoYXRUaHJlYWRSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIRCgl0aHJlYWRfaWQYAiABKAkSFwoPcmVtb3ZlX3dvcmt0cmVlGAMgASgIIkEKGUFyY2hpdmVDaGF0VGhyZWFkUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJWChlSZW1vdmVDaGF0V29ya3RyZWVSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIRCgl0aHJlYWRfaWQYAiABKAkiQgoaUmVtb3ZlQ2hhdFdvcmt0cmVlUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJUChdSZXN1bWVDaGF0VGhyZWFkUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGhyZWFkX2lkGAIgASgJIlYKGFJlc3VtZUNoYXRUaHJlYWRSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEhQKDHN1Y2Nlc3Nvcl9pZBgCIAEoCTLRCQoLQ2hhdFNlcnZpY2USXQoQQ3JlYXRlQ2hhdFRocmVhZBIjLmFsaW5lcnkudjEuQ3JlYXRlQ2hhdFRocmVhZFJlcXVlc3QaJC5hbGluZXJ5LnYxLkNyZWF0ZUNoYXRUaHJlYWRSZXNwb25zZRJaCg9TdGFydENoYXRUaHJlYWQSIi5hbGluZXJ5LnYxLlN0YXJ0Q2hhdFRocmVhZFJlcXVlc3QaIy5hbGluZXJ5LnYxLlN0YXJ0Q2hhdFRocmVhZFJlc3BvbnNlElQKDVNldENoYXRQaW5uZWQSIC5hbGluZXJ5LnYxLlNldENoYXRQaW5uZWRSZXF1ZXN0GiEuYWxpbmVyeS52MS5TZXRDaGF0UGlubmVkUmVzcG9uc2USYAoRQXJjaGl2ZUNoYXRUaHJlYWQSJC5hbGluZXJ5LnYxLkFyY2hpdmVDaGF0VGhyZWFkUmVxdWVzdBolLmFsaW5lcnkudjEuQXJjaGl2ZUNoYXRUaHJlYWRSZXNwb25zZRJjChJSZW1vdmVDaGF0V29ya3RyZWUSJS5hbGluZXJ5LnYxLlJlbW92ZUNoYXRXb3JrdHJlZVJlcXVlc3QaJi5hbGluZXJ5LnYxLlJlbW92ZUNoYXRXb3JrdHJlZVJlc3BvbnNlEl0KEFJlc3VtZUNoYXRUaHJlYWQSIy5hbGluZXJ5LnYxLlJlc3VtZUNoYXRUaHJlYWRSZXF1ZXN0GiQuYWxpbmVyeS52MS5SZXN1bWVDaGF0VGhyZWFkUmVzcG9uc2USXQoQUHJvbXB0Q2hhdFRocmVhZBIjLmFsaW5lcnkudjEuUHJvbXB0Q2hhdFRocmVhZFJlcXVlc3QaJC5hbGluZXJ5LnYxLlByb21wdENoYXRUaHJlYWRSZXNwb25zZRJaCg9BYm9ydENoYXRUaHJlYWQSIi5hbGluZXJ5LnYxLkFib3J0Q2hhdFRocmVhZFJlcXVlc3QaIy5hbGluZXJ5LnYxLkFib3J0Q2hhdFRocmVhZFJlc3BvbnNlElEKDFNldENoYXRNb2RlbBIfLmFsaW5lcnkudjEuU2V0Q2hhdE1vZGVsUmVxdWVzdBogLmFsaW5lcnkudjEuU2V0Q2hhdE1vZGVsUmVzcG9uc2USaQoUU2V0Q2hhdFRoaW5raW5nTGV2ZWwSJy5hbGluZXJ5LnYxLlNldENoYXRUaGlua2luZ0xldmVsUmVxdWVzdBooLmFsaW5lcnkudjEuU2V0Q2hhdFRoaW5raW5nTGV2ZWxSZXNwb25zZRJgChFDb21wYWN0Q2hhdFRocmVhZBIkLmFsaW5lcnkudjEuQ29tcGFjdENoYXRUaHJlYWRSZXF1ZXN0GiUuYWxpbmVyeS52MS5Db21wYWN0Q2hhdFRocmVhZFJlc3BvbnNlElEKDEVuYWJsZUNhbnZhcxIfLmFsaW5lcnkudjEuRW5hYmxlQ2FudmFzUmVxdWVzdBogLmFsaW5lcnkudjEuRW5hYmxlQ2FudmFzUmVzcG9uc2USXQoQQ2xvc2VDYW52YXNQYW5lbBIjLmFsaW5lcnkudjEuQ2xvc2VDYW52YXNQYW5lbFJlcXVlc3QaJC5hbGluZXJ5LnYxLkNsb3NlQ2FudmFzUGFuZWxSZXNwb25zZWIGcHJvdG8z", [file_alinery_v1_common, file_alinery_v1_sessions, file_alinery_v1_tasks]);
 
 /**
  * @generated from message alinery.v1.EnableCanvasRequest
@@ -235,6 +235,50 @@ export const SetChatThinkingLevelRequestSchema: GenMessage<SetChatThinkingLevelR
   messageDesc(file_alinery_v1_chat, 9);
 
 /**
+ * Admits a manual compaction of the thread. Returns when the compaction is admitted, not when the summary lands.
+ *
+ * @generated from message alinery.v1.CompactChatThreadRequest
+ */
+export type CompactChatThreadRequest = Message<"alinery.v1.CompactChatThreadRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string thread_id = 2;
+   */
+  threadId: string;
+
+  /**
+   * additional summarizer focus; empty means none
+   *
+   * @generated from field: string instructions = 3;
+   */
+  instructions: string;
+};
+
+/**
+ * Describes the message alinery.v1.CompactChatThreadRequest.
+ * Use `create(CompactChatThreadRequestSchema)` to create a new message.
+ */
+export const CompactChatThreadRequestSchema: GenMessage<CompactChatThreadRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_chat, 10);
+
+/**
+ * @generated from message alinery.v1.CompactChatThreadResponse
+ */
+export type CompactChatThreadResponse = Message<"alinery.v1.CompactChatThreadResponse"> & {
+};
+
+/**
+ * Describes the message alinery.v1.CompactChatThreadResponse.
+ * Use `create(CompactChatThreadResponseSchema)` to create a new message.
+ */
+export const CompactChatThreadResponseSchema: GenMessage<CompactChatThreadResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_chat, 11);
+
+/**
  * @generated from message alinery.v1.SetChatModelResponse
  */
 export type SetChatModelResponse = Message<"alinery.v1.SetChatModelResponse"> & {
@@ -249,7 +293,7 @@ export type SetChatModelResponse = Message<"alinery.v1.SetChatModelResponse"> & 
  * Use `create(SetChatModelResponseSchema)` to create a new message.
  */
 export const SetChatModelResponseSchema: GenMessage<SetChatModelResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 10);
+  messageDesc(file_alinery_v1_chat, 12);
 
 /**
  * @generated from message alinery.v1.SetChatThinkingLevelResponse
@@ -266,7 +310,7 @@ export type SetChatThinkingLevelResponse = Message<"alinery.v1.SetChatThinkingLe
  * Use `create(SetChatThinkingLevelResponseSchema)` to create a new message.
  */
 export const SetChatThinkingLevelResponseSchema: GenMessage<SetChatThinkingLevelResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 11);
+  messageDesc(file_alinery_v1_chat, 13);
 
 /**
  * @generated from message alinery.v1.CreateChatThreadRequest
@@ -293,7 +337,7 @@ export type CreateChatThreadRequest = Message<"alinery.v1.CreateChatThreadReques
  * Use `create(CreateChatThreadRequestSchema)` to create a new message.
  */
 export const CreateChatThreadRequestSchema: GenMessage<CreateChatThreadRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 12);
+  messageDesc(file_alinery_v1_chat, 14);
 
 /**
  * @generated from message alinery.v1.CreateChatThreadResponse
@@ -315,7 +359,7 @@ export type CreateChatThreadResponse = Message<"alinery.v1.CreateChatThreadRespo
  * Use `create(CreateChatThreadResponseSchema)` to create a new message.
  */
 export const CreateChatThreadResponseSchema: GenMessage<CreateChatThreadResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 13);
+  messageDesc(file_alinery_v1_chat, 15);
 
 /**
  * @generated from message alinery.v1.StartChatThreadRequest
@@ -337,7 +381,7 @@ export type StartChatThreadRequest = Message<"alinery.v1.StartChatThreadRequest"
  * Use `create(StartChatThreadRequestSchema)` to create a new message.
  */
 export const StartChatThreadRequestSchema: GenMessage<StartChatThreadRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 14);
+  messageDesc(file_alinery_v1_chat, 16);
 
 /**
  * @generated from message alinery.v1.StartChatThreadResponse
@@ -359,7 +403,7 @@ export type StartChatThreadResponse = Message<"alinery.v1.StartChatThreadRespons
  * Use `create(StartChatThreadResponseSchema)` to create a new message.
  */
 export const StartChatThreadResponseSchema: GenMessage<StartChatThreadResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 15);
+  messageDesc(file_alinery_v1_chat, 17);
 
 /**
  * @generated from message alinery.v1.SetChatPinnedRequest
@@ -386,7 +430,7 @@ export type SetChatPinnedRequest = Message<"alinery.v1.SetChatPinnedRequest"> & 
  * Use `create(SetChatPinnedRequestSchema)` to create a new message.
  */
 export const SetChatPinnedRequestSchema: GenMessage<SetChatPinnedRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 16);
+  messageDesc(file_alinery_v1_chat, 18);
 
 /**
  * @generated from message alinery.v1.SetChatPinnedResponse
@@ -403,7 +447,7 @@ export type SetChatPinnedResponse = Message<"alinery.v1.SetChatPinnedResponse"> 
  * Use `create(SetChatPinnedResponseSchema)` to create a new message.
  */
 export const SetChatPinnedResponseSchema: GenMessage<SetChatPinnedResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 17);
+  messageDesc(file_alinery_v1_chat, 19);
 
 /**
  * @generated from message alinery.v1.ArchiveChatThreadRequest
@@ -430,7 +474,7 @@ export type ArchiveChatThreadRequest = Message<"alinery.v1.ArchiveChatThreadRequ
  * Use `create(ArchiveChatThreadRequestSchema)` to create a new message.
  */
 export const ArchiveChatThreadRequestSchema: GenMessage<ArchiveChatThreadRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 18);
+  messageDesc(file_alinery_v1_chat, 20);
 
 /**
  * @generated from message alinery.v1.ArchiveChatThreadResponse
@@ -447,7 +491,7 @@ export type ArchiveChatThreadResponse = Message<"alinery.v1.ArchiveChatThreadRes
  * Use `create(ArchiveChatThreadResponseSchema)` to create a new message.
  */
 export const ArchiveChatThreadResponseSchema: GenMessage<ArchiveChatThreadResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 19);
+  messageDesc(file_alinery_v1_chat, 21);
 
 /**
  * @generated from message alinery.v1.RemoveChatWorktreeRequest
@@ -469,7 +513,7 @@ export type RemoveChatWorktreeRequest = Message<"alinery.v1.RemoveChatWorktreeRe
  * Use `create(RemoveChatWorktreeRequestSchema)` to create a new message.
  */
 export const RemoveChatWorktreeRequestSchema: GenMessage<RemoveChatWorktreeRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 20);
+  messageDesc(file_alinery_v1_chat, 22);
 
 /**
  * @generated from message alinery.v1.RemoveChatWorktreeResponse
@@ -486,7 +530,7 @@ export type RemoveChatWorktreeResponse = Message<"alinery.v1.RemoveChatWorktreeR
  * Use `create(RemoveChatWorktreeResponseSchema)` to create a new message.
  */
 export const RemoveChatWorktreeResponseSchema: GenMessage<RemoveChatWorktreeResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 21);
+  messageDesc(file_alinery_v1_chat, 23);
 
 /**
  * @generated from message alinery.v1.ResumeChatThreadRequest
@@ -508,7 +552,7 @@ export type ResumeChatThreadRequest = Message<"alinery.v1.ResumeChatThreadReques
  * Use `create(ResumeChatThreadRequestSchema)` to create a new message.
  */
 export const ResumeChatThreadRequestSchema: GenMessage<ResumeChatThreadRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 22);
+  messageDesc(file_alinery_v1_chat, 24);
 
 /**
  * @generated from message alinery.v1.ResumeChatThreadResponse
@@ -532,7 +576,7 @@ export type ResumeChatThreadResponse = Message<"alinery.v1.ResumeChatThreadRespo
  * Use `create(ResumeChatThreadResponseSchema)` to create a new message.
  */
 export const ResumeChatThreadResponseSchema: GenMessage<ResumeChatThreadResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_chat, 23);
+  messageDesc(file_alinery_v1_chat, 25);
 
 /**
  * Taskless chat threads. The read side is the chat scope: `chat/_/<id>` (ChatThread) beside `session/_/<id>`.
@@ -610,6 +654,7 @@ export const ChatService: GenService<{
   },
   /**
    * The turn controls of a thread, the chat form of SessionService's: the thread must be a chat thread (a root session).
+   * Compact is another turn control; it returns on admission rather than completion. Abort remains the only turn control without mutation identity.
    *
    * ACT
    *
@@ -649,6 +694,16 @@ export const ChatService: GenService<{
     methodKind: "unary";
     input: typeof SetChatThinkingLevelRequestSchema;
     output: typeof SetChatThinkingLevelResponseSchema;
+  },
+  /**
+   * ACT
+   *
+   * @generated from rpc alinery.v1.ChatService.CompactChatThread
+   */
+  compactChatThread: {
+    methodKind: "unary";
+    input: typeof CompactChatThreadRequestSchema;
+    output: typeof CompactChatThreadResponseSchema;
   },
   /**
    * Turns a thread's canvas on for good: the `canvas/_/<id>` row appears and the thread's agent gets the canvas tools.

@@ -25,11 +25,13 @@ service SessionService {
   rpc ReadVinculumWindow(ReadVinculumWindowRequest) returns (ReadVinculumWindowResponse); // VIEW
   rpc ArtifactReady(ArtifactReadyRequest) returns (ArtifactReadyResponse);                // VIEW
   // The turn controls of a live harness session (they replaced the JSON-lines prompt, abort, set_model and set_thinking_level ops).
+  // Compact is another turn control; it returns on admission rather than completion. Abort remains the only turn control without mutation identity.
   rpc PromptSession(PromptSessionRequest) returns (PromptSessionResponse);                // ACT
   rpc RetryTurn(RetryTurnRequest) returns (RetryTurnResponse);                           // ACT
   rpc AbortSession(AbortSessionRequest) returns (AbortSessionResponse);                   // ACT
   rpc SetSessionModel(SetSessionModelRequest) returns (SetSessionModelResponse);          // ACT
   rpc SetSessionThinkingLevel(SetSessionThinkingLevelRequest) returns (SetSessionThinkingLevelResponse);  // ACT
+  rpc CompactSession(CompactSessionRequest) returns (CompactSessionResponse);  // ACT
 }
 
 // The session is named by id alone: a live session's id is unique in its daemon, and a chat thread has no task.
@@ -61,6 +63,13 @@ message SetSessionThinkingLevelRequest {
   string session_id = 2;
   string level = 3;
 }
+// Admits a manual compaction of the session. Returns when the compaction is admitted, not when the summary lands.
+message CompactSessionRequest {
+  MutationMeta meta = 1;
+  string session_id = 2;
+  string instructions = 3;  // additional summarizer focus; empty means none
+}
+message CompactSessionResponse {}
 message SetSessionModelResponse { SessionControls controls = 1; }
 message SetSessionThinkingLevelResponse { SessionControls controls = 1; }
 
@@ -221,10 +230,10 @@ message SessionControls {
 
 // One message of the pane, as `formatTranscript` builds it (transcript.ts). Pi stores thinking, text and
 // tool calls as parts on the assistant message, a prompt's images as parts on the user message, and a tool
-// result as its own message.
+// result as its own message. A compaction row is the pane's presentation of a stored compaction entry, not a fourth thing Pi stores as its own role.
 message TranscriptItem {
   string id = 1;
-  string role = 2;  // user, assistant or toolResult
+  string role = 2;  // user, assistant, toolResult or compaction
   bool streaming = 3;
   repeated TranscriptPart content = 4;
   string tool_name = 5;
@@ -234,6 +243,7 @@ message TranscriptItem {
   int64 at = 9;  // ms since the epoch when the message was complete (a reply's start plus its duration); 0 when unknown
   string turn_error = 10;  // Final provider failure on this assistant entry after automatic retries have stopped.
   string nudge_delivery_id = 11;  // The original click's mutation_id when this prompt is a placed wrap-up nudge.
+  string compaction_reason = 12;  // Set when role is compaction: why that compaction ran (manual, threshold or overflow).
 }
 
 message TranscriptPart {
