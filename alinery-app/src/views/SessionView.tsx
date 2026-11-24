@@ -1103,6 +1103,10 @@ export function SessionView({
   };
 
   const chatVisibility = useMemo(() => chatVisibilityFromAppearance(appearance), [appearance]);
+  const compactionState = useMemo(
+    () => (observation?.state ? { compactions: observation.state.compactions, failure: observation.state.compactionFailure } : undefined),
+    [observation?.state],
+  );
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
@@ -1659,6 +1663,7 @@ export function SessionView({
                         deliveryNotice={deliveryNotice}
                         wrapUpPrompt={nudge.prompt}
                         status={chatStatus}
+                        compactionState={compactionState}
                         visibility={chatVisibility}
                         onLoadOlder={loadOlder}
                         loadingOlder={loadingOlder}
@@ -1691,6 +1696,7 @@ export function SessionView({
                             deliveryNotice={deliveryNotice}
                             wrapUpPrompt={nudge.prompt}
                             status={chatStatus}
+                            compactionState={compactionState}
                             turnRetry={turnRetry}
                             stepActivity={finishingStep ? "Finishing step…" : readyEndpoint && agentState !== "errored" ? "Ready for review" : undefined}
                             visibility={chatVisibility}
@@ -1819,6 +1825,7 @@ export function SessionView({
                             deliveryNotice={deliveryNotice}
                             wrapUpPrompt={nudge.prompt}
                             status="idle"
+                            compactionState={compactionState}
                             visibility={chatVisibility}
                             onLoadOlder={loadOlder}
                             loadingOlder={loadingOlder}

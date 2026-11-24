@@ -236,6 +236,10 @@ export function QuickChat({
       writeStoredTab(key);
     },
   });
+  const compactionState = useMemo(
+    () => (chat.observation?.state ? { compactions: chat.observation.state.compactions, failure: chat.observation.state.compactionFailure } : undefined),
+    [chat.observation?.state],
+  );
 
   // A prompt's images are the thread's own copies, read back by name. The scope names the thread, so a
   // cached read from one thread is never served to another.
@@ -443,6 +447,7 @@ export function QuickChat({
               <ChatPane
                 entries={chat.transcript.entries}
                 status={chat.activity.status}
+                compactionState={compactionState}
                 visibility={paneVisibility}
                 atStart={chat.transcript.fileStart === 0}
                 turnRetry={chat.turnRetry}

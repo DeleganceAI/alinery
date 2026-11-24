@@ -20,6 +20,8 @@ const running = (agent: "busy" | "idle" | "waiting_for_input" = "busy", correlat
     playbook: { state: "in_progress" },
     adapter: "vinculum",
     message_adapter: "vinculum_bracketed_paste",
+    compactions: [],
+    compactionFailure: null,
   },
   checkpoint: { phase_completed_at: null, vinculum_session_id: null, vinculum_turn_id: null },
   transport: "rpc",
@@ -59,6 +61,30 @@ describe("observationOf", () => {
 
   it("calls a session with no entity never started", () => {
     expect(observationOf(undefined).lifecycle).toEqual({ state: "never_started" });
+  });
+
+  it("maps every in-flight compaction and an absent failure to null", () => {
+    const base = running();
+    const baseState = base.state;
+    if (!baseState) throw new Error("running observation has no state");
+    const o: SessionObservation = {
+      ...base,
+      state: {
+        ...baseState,
+        compactions: [
+          { reason: "threshold", blocking: true, attempt: 1 },
+          { reason: "manual", blocking: false, attempt: 2, retryAt: 1_700_000_000_000, retryError: "later" },
+        ],
+        compactionFailure: { reason: "overflow", error: "prompt is too long" },
+      },
+    };
+    expect(observationOf(sessionEntity("t", "s", o)).state).toMatchObject({
+      compactions: o.state?.compactions,
+      compactionFailure: o.state?.compactionFailure,
+    });
+    const quiet = observationOf(sessionEntity("t", "s", running()));
+    expect(quiet.state?.compactions).toEqual([]);
+    expect(quiet.state?.compactionFailure).toBeNull();
   });
 });
 

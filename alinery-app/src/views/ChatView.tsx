@@ -212,6 +212,10 @@ function ChatViewBody({
     },
   });
   const { transcript, observation, connection, activity } = chat;
+  const compactionState = useMemo(
+    () => (observation?.state ? { compactions: observation.state.compactions, failure: observation.state.compactionFailure } : undefined),
+    [observation?.state],
+  );
   const error = chat.error;
   // A prompt's images are the thread's own copies: read back by name, so they survive a reload of the pane.
   // The scope names the thread, so a cached read from one thread is never served to another.
@@ -625,6 +629,7 @@ function ChatViewBody({
             status={activity.status}
             visibility={visibility}
             atStart={transcript.fileStart === 0}
+            compactionState={compactionState}
             turnRetry={chat.turnRetry}
             readImage={readThreadImages}
           />

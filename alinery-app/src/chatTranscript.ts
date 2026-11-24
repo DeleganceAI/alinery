@@ -221,9 +221,14 @@ function toolResultEntry(message: ChatMessage) {
 export function mapHydratedMessage(raw: unknown, rowId?: string): ChatMessage | null {
   const message = asRecord(raw);
   if (!message) return null;
-  const role = message.role === "user" || message.role === "assistant" ? message.role : message.role === "toolResult" ? "toolResult" : null;
+  const role =
+    message.role === "user" || message.role === "assistant" ? message.role : message.role === "toolResult" ? "toolResult" : message.role === "compaction" ? "compaction" : null;
   if (!role) return null;
-  const mapped: ChatMessage = { role, content: mapContent(message.content) };
+  const mapped: ChatMessage = {
+    role,
+    content: mapContent(message.content),
+    ...(role === "compaction" && typeof message.compactionReason === "string" ? { compactionReason: message.compactionReason } : {}),
+  };
   if (typeof message.stopReason === "string") mapped.stopReason = message.stopReason;
   if (role === "assistant" && mapped.stopReason === "error" && typeof message.errorMessage === "string" && message.errorMessage.trim()) {
     mapped.turnError = { reason: message.errorMessage };
@@ -532,6 +537,12 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
       entries.push({ id: alloc(), at: message.at, ...toolResultEntry(message) });
       continue;
     }
+    // A compaction summary is one row. It is not a prompt: no trailer parse, no attachment chips, no "you".
+    if (message.role === "compaction") {
+      const text = message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+      entries.push({ id: alloc(), at: message.at, actor: ACTOR.vinculum, type: "compaction", text, ...(message.compactionReason ? { reason: message.compactionReason } : {}) });
+      continue;
+    }
     if (message.role === "assistant") {
       const keys: Record<string, string> = {};
       const exploded = explodeAssistantParts(
@@ -572,6 +583,8 @@ export type VinculumMessage = {
   turnError?: string;
   nudgeDeliveryId?: string;
   runningToolIds?: string[];
+  /** Present when this item is a compaction summary. */
+  compactionReason?: string;
   /** When the message was complete, ms since the epoch. */
   at?: number;
 };

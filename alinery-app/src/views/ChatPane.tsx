@@ -7,6 +7,7 @@ import { collectLiveSubagents } from "../chat/subagents";
 import { ACTOR, type ChatEntry, type SessionChatStatus, type WrapUpPrompt } from "../chat/types";
 import { type ChatPrefs, chatActivityLabel, DEFAULT_CHAT_VISIBILITY, isChatEntryVisible, visibleChatEntries, workRailDefaultExpanded } from "../chat/visibility";
 import { IdleDot, RunningIndicator } from "../Indicators";
+import type { SessionCompactionLive } from "../types";
 import type { TurnRetryControl } from "../useTurnRetry";
 import { ChatEntryRow } from "./ChatEntryRow";
 import { ChatWorkStrip } from "./ChatWorkStrip";
@@ -20,6 +21,7 @@ function ChatPaneImpl({
   turnRetry,
   wrapUpPrompt,
   deliveryNotice,
+  compactionState,
   readImage,
   visibility = DEFAULT_CHAT_VISIBILITY,
   onLoadOlder,
@@ -33,6 +35,8 @@ function ChatPaneImpl({
   turnRetry?: TurnRetryControl;
   wrapUpPrompt?: WrapUpPrompt;
   deliveryNotice?: ReactNode;
+  /** Live compaction rows from the session observation. Not part of the transcript, so a frame cannot wipe them. */
+  compactionState?: { compactions: SessionCompactionLive[]; failure: { reason: string; error: string } | null };
   /** Where this pane's attached images are read back from: its chat thread's directory, or its task session's. */
   readImage?: PromptImageSource;
   visibility?: ChatPrefs;
@@ -83,9 +87,15 @@ function ChatPaneImpl({
     el.scrollTop = el.scrollHeight;
   }, [visibility.autoScroll]);
 
+  // Length, reasons, attempts, retry times, and the failure error. A tail that appears below the
+  // already-scrolled transcript must follow the reader only while they are stuck to the bottom.
+  const compactionTail = compactionState
+    ? `${compactionState.compactions.length}:${compactionState.compactions.map((item) => `${item.reason}:${item.attempt}:${item.retryAt ?? ""}`).join(",")}:${compactionState.failure?.error ?? ""}`
+    : "";
+
   useEffect(() => {
     scrollToEnd();
-  }, [shown, activity, deliveryNotice, scrollToEnd]);
+  }, [shown, activity, deliveryNotice, compactionTail, scrollToEnd]);
 
   const requestOlder = useCallback(() => {
     const el = scroller.current;
@@ -186,6 +196,21 @@ function ChatPaneImpl({
             {deliveryNotice ? (
               <li className="chat-journal-item" data-node="error">
                 {deliveryNotice}
+              </li>
+            ) : null}
+            {compactionState?.compactions.map((item, index) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: the wire has no task id and the row has no local state
+              <li key={`compaction-${index}`} className="chat-journal-item" data-node="meta">
+                <p className="chat-work-meta">
+                  {`Compacting context · ${item.reason} · attempt ${item.attempt}`}
+                  {item.retryAt !== undefined ? ` · retrying at ${new Date(item.retryAt).toISOString()}` : ""}
+                  {item.retryError ? ` · ${item.retryError}` : ""}
+                </p>
+              </li>
+            ))}
+            {compactionState?.failure ? (
+              <li key="compaction-failure" className="chat-journal-item" data-node="meta">
+                <p className="chat-work-meta">{`Compaction failed: ${compactionState.failure.error}. The conversation is unchanged.`}</p>
               </li>
             ) : null}
           </ol>

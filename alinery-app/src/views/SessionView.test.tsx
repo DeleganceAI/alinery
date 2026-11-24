@@ -772,6 +772,8 @@ function liveObservation(transport: "rpc" | "pty", agent: AgentState = { state: 
       playbook: { state: "in_progress" },
       adapter: "vinculum",
       message_adapter: "vinculum_bracketed_paste",
+      compactions: [],
+      compactionFailure: null,
     },
     checkpoint: {},
   };

@@ -257,3 +257,28 @@ describe("DEL-722 block-local streaming", () => {
     view.unmount();
   });
 });
+
+describe("compaction row", () => {
+  const entry: ChatEntry = { id: "c1", actor: ACTOR.vinculum, type: "compaction", text: "the folded summary body", reason: "manual" };
+
+  it("stays collapsed until toggled, reports aria-expanded, and does not move scroll", () => {
+    const scroller = document.createElement("div");
+    scroller.scrollTop = 40;
+    document.body.append(scroller);
+    const view = render(<ChatEntryRow entry={entry} />, { container: scroller });
+    const button = screen.getByRole("button", { name: "Context compacted · manual" });
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(view.container.textContent).not.toContain("the folded summary body");
+    button.focus();
+    expect(document.activeElement).toBe(button);
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    expect(view.container.textContent).toContain("the folded summary body");
+    expect(scroller.scrollTop).toBe(40);
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(view.container.textContent).not.toContain("the folded summary body");
+    view.unmount();
+    scroller.remove();
+  });
+});

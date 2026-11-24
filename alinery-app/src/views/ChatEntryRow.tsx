@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react";
 import { memo, type ReactNode, useState } from "react";
 import { ChatMarkdown, CopyChatMessageButton } from "../chat/CopyMessage";
 import { type ChatStampParts, formatChatStamp, formatIso } from "../chat/format";
@@ -7,7 +8,7 @@ import type { TurnRetryControl } from "../useTurnRetry";
 
 function kindFace(type: ChatEntryType): string {
   if (type === "prompt" || type === "follow_up") return "chat-face-strong";
-  if (type === "slash" || type === "harness") return "chat-face-meta";
+  if (type === "slash" || type === "harness" || type === "compaction") return "chat-face-meta";
   if (type === "error" || type === "abort") return "chat-face-danger";
   return "";
 }
@@ -54,9 +55,35 @@ function copyTextForEntry(entry: ChatEntry): string {
       return `Turn ${entry.turn} ${entry.phase}${entry.stopReason ? ` · ${entry.stopReason}` : ""}`;
     case "harness":
       return [entry.event, entry.text].filter(Boolean).join("\n");
+    case "compaction":
+      return entry.text;
     case "redacted_thinking":
       return "";
   }
+}
+
+function CompactionRow({
+  entry,
+  stamp,
+  showActorLabels,
+  copyText,
+}: {
+  entry: Extract<ChatEntry, { type: "compaction" }>;
+  stamp: ChatStampParts;
+  showActorLabels?: boolean;
+  copyText?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = entry.reason ? `Context compacted · ${entry.reason}` : "Context compacted";
+  return (
+    <Msg at={entry.at} actor={entry.actor} type="compaction" stamp={stamp} copyText={open ? copyText : undefined} showActorLabels={showActorLabels} kicker={null}>
+      <button type="button" className="chat-compaction-toggle chat-work-meta" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <ChevronRight size={14} aria-hidden="true" data-open={open ? "true" : "false"} />
+        <span>{label}</span>
+      </button>
+      {open ? <pre className="chat-work-pre chat-work-meta">{entry.text}</pre> : null}
+    </Msg>
+  );
 }
 
 function Msg({
@@ -322,6 +349,8 @@ function ChatEntryRowImpl({
           {entry.text ? <pre className="chat-work-pre chat-work-meta">{entry.text}</pre> : null}
         </Msg>
       );
+    case "compaction":
+      return <CompactionRow entry={entry} stamp={stamp} showActorLabels={showActorLabels} copyText={copyText} />;
     default:
       return null;
   }

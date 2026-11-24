@@ -138,6 +138,8 @@ function observed(agent: "unknown" | "idle" | "busy" | "waiting_for_input", proc
       playbook: { state: "in_progress" },
       adapter: "vinculum",
       message_adapter: "vinculum_bracketed_paste",
+      compactions: [],
+      compactionFailure: null,
     },
   };
 }

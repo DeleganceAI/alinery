@@ -92,6 +92,8 @@ function observed(agent: AgentState = { state: "idle" }): SessionObservation {
       playbook: { state: "in_progress" },
       adapter: "vinculum",
       message_adapter: "vinculum_bracketed_paste",
+      compactions: [],
+      compactionFailure: null,
     },
   };
 }

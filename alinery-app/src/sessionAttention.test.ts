@@ -54,6 +54,8 @@ const observation = (over: Partial<SessionObservation> = {}): SessionObservation
     playbook: { state: "in_progress" },
     adapter: "vinculum",
     message_adapter: "unsupported",
+    compactions: [],
+    compactionFailure: null,
   },
   checkpoint: {},
   ...over,
@@ -67,6 +69,8 @@ const live = (agent: "busy" | "waiting_for_input" | "waiting_for_approval"): Ses
       playbook: { state: "in_progress" },
       adapter: "vinculum",
       message_adapter: "unsupported",
+      compactions: [],
+      compactionFailure: null,
     },
   });
 
@@ -87,6 +91,8 @@ describe("session attention classification", () => {
             playbook: { state: "in_progress" },
             adapter: "unsupported",
             message_adapter: "unsupported",
+            compactions: [],
+            compactionFailure: null,
           },
         }),
       ),
@@ -98,6 +104,8 @@ describe("session attention classification", () => {
         playbook: { state: "in_progress" },
         adapter: "vinculum",
         message_adapter: "unsupported",
+        compactions: [],
+        compactionFailure: null,
       },
     });
     const unsupported = observation({
@@ -107,6 +115,8 @@ describe("session attention classification", () => {
         playbook: { state: "in_progress" },
         adapter: "unsupported",
         message_adapter: "unsupported",
+        compactions: [],
+        compactionFailure: null,
       },
     });
     expect(sessionAttentionTier(session(), loading)).toBe(3);
@@ -154,6 +164,8 @@ describe("session attention classification", () => {
         playbook: { state: "failed", reason: "StaleSource" },
         adapter: "vinculum",
         message_adapter: "unsupported",
+        compactions: [],
+        compactionFailure: null,
       },
     });
     expect(sessionAttentionTier(session(), staleFailure)).toBe(3);
@@ -173,6 +185,8 @@ describe("session attention classification", () => {
             playbook: { state: "failed", reason: "boom" },
             adapter: "vinculum",
             message_adapter: "unsupported",
+            compactions: [],
+            compactionFailure: null,
           },
         }),
       ),
@@ -194,6 +208,8 @@ describe("session attention classification", () => {
             playbook: { state: "failed", reason: "StaleSource" },
             adapter: "vinculum",
             message_adapter: "unsupported",
+            compactions: [],
+            compactionFailure: null,
           },
         }),
       ),
@@ -214,6 +230,8 @@ describe("session attention classification", () => {
           playbook,
           adapter,
           message_adapter: "unsupported",
+          compactions: [],
+          compactionFailure: null,
         },
       });
     const inputA = state("alive", { state: "waiting_for_input", correlation_id: "a" }, { state: "in_progress" });
@@ -409,6 +427,8 @@ describe("notification occurrence and clear projection", () => {
       playbook: { state: "failed", reason: "boom" },
       adapter: "vinculum",
       message_adapter: "unsupported",
+      compactions: [],
+      compactionFailure: null,
     },
   });
 

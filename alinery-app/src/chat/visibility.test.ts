@@ -6,6 +6,7 @@ const thinking: ChatEntry = { id: "1", actor: ACTOR.agent, type: "thinking", tex
 const tool: ChatEntry = { id: "2", actor: ACTOR.agent, type: "tool_call", tool: "read", status: "ok" };
 const text: ChatEntry = { id: "3", actor: ACTOR.agent, type: "text", text: "hi" };
 const harness: ChatEntry = { id: "4", actor: ACTOR.vinculum, type: "harness", event: "model_changed", text: "xai/grok" };
+const compaction: ChatEntry = { id: "7", actor: ACTOR.vinculum, type: "compaction", text: "folded summary", reason: "threshold" };
 const turn: ChatEntry = { id: "5", actor: ACTOR.vinculum, type: "turn_marker", turn: 1, phase: "end" };
 const subRow: ChatEntry = {
   id: "6",
@@ -32,6 +33,19 @@ describe("visibleChatEntries", () => {
     expect(visibleChatEntries(all, { ...DEFAULT_CHAT_VISIBILITY, showHarness: false }).map((e) => e.type)).toEqual(["subagent_status", "text"]);
     expect(visibleChatEntries(all, { ...DEFAULT_CHAT_VISIBILITY, showTurnMarkers: true }).map((e) => e.type)).toEqual(["harness", "turn_marker", "subagent_status", "text"]);
     expect(visibleChatEntries(all, { ...DEFAULT_CHAT_VISIBILITY, showSubagentRows: false }).map((e) => e.type)).toEqual(["harness", "text"]);
+  });
+
+  it("keeps a compaction row visible when harness and every other filter are off", () => {
+    const hidden = {
+      ...DEFAULT_CHAT_VISIBILITY,
+      showHarness: false,
+      showThinking: false,
+      showTools: false,
+      showTurnMarkers: false,
+      showSubagentRows: false,
+      showMeta: false,
+    };
+    expect(visibleChatEntries([harness, compaction, text], hidden).map((e) => e.type)).toEqual(["compaction", "text"]);
   });
 });
 

@@ -33,7 +33,8 @@ export type ChatEntryType =
   | "turn_marker"
   | "error"
   | "abort"
-  | "harness";
+  | "harness"
+  | "compaction";
 
 type Base = {
   id: string;
@@ -104,7 +105,8 @@ export type ChatEntry =
   | (Base & { type: "turn_marker"; turn: number; phase: "start" | "end"; stopReason?: string })
   | (Base & { type: "error"; text: string; failedEntryId?: string })
   | (Base & { type: "abort"; text: string })
-  | (Base & { type: "harness"; event: string; text: string });
+  | (Base & { type: "harness"; event: string; text: string })
+  | (Base & { type: "compaction"; text: string; reason?: string });
 
 export type SessionChatStatus = "idle" | "running" | "waiting_approval";
 
@@ -160,6 +162,7 @@ export const TYPE_LABEL: Record<ChatEntryType, string> = {
   error: "Error",
   abort: "Abort",
   harness: "Harness",
+  compaction: "Compaction",
 };
 
 export const SOURCE_GROUPS: CommandSource[] = ["builtin", "skill", "extension", "custom", "mcp_prompt", "file"];
