@@ -25,6 +25,7 @@ import { answeredReviewFollowUp, hasSettledAnswer } from "./runtime/reviewFollow
 import { steerWrapUp } from "./runtime/nudge.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { modelMessages, seedPrompt, userMessageCount } from "./conversationCounts.ts";
+import { compactionFocus } from "./rpc/sessions.ts";
 import { serveRpc } from "./rpc/server.ts";
 import { removeBoxRecord, writeBoxRecord } from "./domain/boxRegistry.ts";
 import { commitJoinRequests, Members } from "./domain/members.ts";
@@ -916,7 +917,7 @@ async function harnessSession(id: string): Promise<{ row: Live; conversation: Co
 }
 
 /** The turn controls of a live harness session: SessionService and ChatService call these (they were the `prompt`, `abort`, `set_model`
- * and `set_thinking_level` ops of the JSON-lines wire). */
+ * and `set_thinking_level` ops of the JSON-lines wire). Compact is another turn control; it admits and returns, and abort remains the write with no mutation identity. */
 const rawTurns: TurnControl = {
   async retry(id, failedEntryId) {
     const { row, conversation } = await harnessSession(id);
@@ -980,6 +981,11 @@ const rawTurns: TurnControl = {
     await changeThinkingLevel(conversation, level, catalog, context);
     return sessionControls(conversation);
   },
+  async compact(id, instructions) {
+    const { conversation } = await harnessSession(id);
+    const focus = compactionFocus(instructions);
+    await conversation.compact(focus, context);
+  },
 };
 /** What the harness refuses (a model it does not have, a thinking level it does not offer) reaches the caller as a failed precondition with its text. */
 const refused = async <T>(run: () => Promise<T>): Promise<T> => {
@@ -995,6 +1001,7 @@ const turns: TurnControl = {
   abort: (id) => refused(() => rawTurns.abort(id)),
   setModel: (id, model) => refused(() => rawTurns.setModel(id, model)),
   setThinkingLevel: (id, level) => refused(() => rawTurns.setThinkingLevel(id, level)),
+  compact: (id, instructions) => refused(() => rawTurns.compact(id, instructions)),
 };
 
 async function resumeInterrupted() {
