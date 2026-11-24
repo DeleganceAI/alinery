@@ -39,7 +39,7 @@ export function planChatSend(raw: string, catalog: ChatCommand[], busy: boolean)
   if (routed.kind === "hatch") {
     return { dispatch: routed, invokesModel: false, optimisticKind: "slash", slash, notice: routed.reason };
   }
-  if (routed.kind === "prompt" || routed.kind === "mcp-prompt" || routed.kind === "compact-mode") {
+  if (routed.kind === "prompt" || routed.kind === "mcp-prompt") {
     return {
       dispatch: routed,
       invokesModel: invokesAgent(parsed?.name, catalog),

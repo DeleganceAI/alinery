@@ -44,7 +44,6 @@ export type SessionChatMeta = {
   /** The levels the current model offers, `off` first; `[]` when it offers none. Absent until a model is known. */
   thinkingLevels?: string[];
   contextUsage?: { tokens: number; contextWindow: number; percent?: number };
-  isCompacting?: boolean;
   autoCompactionEnabled?: boolean;
   dumpTools?: DumpTool[];
   models?: ChatModelOption[];
@@ -427,7 +426,6 @@ function applySessionMeta(state: ChatTranscriptState, data: Record<string, unkno
   else if (levels) delete sessionMeta.thinking;
   const usage = mapContextUsage(data.contextUsage);
   if (usage) sessionMeta.contextUsage = usage;
-  if (typeof data.isCompacting === "boolean") sessionMeta.isCompacting = data.isCompacting;
   if (typeof data.autoCompactionEnabled === "boolean") sessionMeta.autoCompactionEnabled = data.autoCompactionEnabled;
   if (typeof data.queuedMessageCount === "number") sessionMeta.queuedMessageCount = data.queuedMessageCount;
 
@@ -1043,16 +1041,13 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
           : event.type === "thinking_level_changed"
             ? (asString(event.thinkingLevel) ?? eventText(event))
             : eventText(event);
+    // Retired auto-compaction events still append a harness row for an old journal. They do not drive live state.
     const nextMeta =
       event.type === "model_changed" && text
         ? { ...state.sessionMeta, model: text }
         : event.type === "thinking_level_changed"
           ? { ...state.sessionMeta, thinking: text || undefined }
-          : event.type === "auto_compaction_start"
-            ? { ...state.sessionMeta, isCompacting: true }
-            : event.type === "auto_compaction_end"
-              ? { ...state.sessionMeta, isCompacting: false }
-              : state.sessionMeta;
+          : state.sessionMeta;
     return appendEntry({ ...state, sessionMeta: nextMeta }, { actor: ACTOR.vinculum, type: "harness", event: event.type, text, at: Date.now() });
   }
 

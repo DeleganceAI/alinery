@@ -15,8 +15,6 @@ export const promptCommand = (message: string, id = nextId(), images?: ImageCont
 export const followUpCommand = (message: string, id = nextId(), images?: ImageContent[]) =>
   images && images.length > 0 ? { id, type: "follow_up" as const, message, images } : { id, type: "follow_up" as const, message };
 export const getStateCommand = (id = nextId()) => ({ id, type: "get_state" as const });
-export const compactCommand = (customInstructions?: string, id = nextId()) =>
-  customInstructions ? { id, type: "compact" as const, customInstructions } : { id, type: "compact" as const };
 export const abortAndPromptCommand = (message: string, id = nextId(), images?: ImageContent[]) =>
   images && images.length > 0 ? { id, type: "abort_and_prompt" as const, message, images } : { id, type: "abort_and_prompt" as const, message };
 

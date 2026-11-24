@@ -36,10 +36,11 @@ describe("routeSlash", () => {
     expect(routeSlash("/tools", catalog)).toEqual({ kind: "get-tools" });
   });
 
-  it("compacts with typed RPC unless a slash mode is present", () => {
+  it("compacts with the remainder as instructions, including a former mode word", () => {
     expect(routeSlash("/compact", catalog)).toEqual({ kind: "compact" });
     expect(routeSlash("/compact keep the API", catalog)).toEqual({ kind: "compact", customInstructions: "keep the API" });
-    expect(routeSlash("/compact snapcompact", catalog)).toEqual({ kind: "compact-mode", message: "/compact snapcompact" });
+    expect(routeSlash("/compact soft focus", catalog)).toEqual({ kind: "compact", customInstructions: "soft focus" });
+    expect(routeSlash("/compact snapcompact", catalog)).toEqual({ kind: "compact", customInstructions: "snapcompact" });
   });
 
   it("lists MCP, prompts mutations, and hatches TUI-only verbs", () => {

@@ -199,6 +199,11 @@ export async function promptChatThread(repo: string, threadId: string, text: str
   await call(() => chatApi.chat(repo).promptChatThread({ meta: newMutationMeta(), threadId, text, images: promptImages(images) }));
 }
 
+/** Admits a manual compaction; returns when it is admitted, not when the summary lands. */
+export async function compactChatThread(repo: string, threadId: string, instructions?: string): Promise<void> {
+  await call(() => chatApi.chat(repo).compactChatThread({ meta: newMutationMeta(), threadId, ...(instructions?.trim() ? { instructions } : {}) }));
+}
+
 export async function abortChatThread(repo: string, threadId: string): Promise<void> {
   await call(() => chatApi.chat(repo).abortChatThread({ threadId }));
 }

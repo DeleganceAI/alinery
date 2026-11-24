@@ -169,6 +169,11 @@ export async function promptSession(repo: string, id: string, text: string, imag
   await call(() => sessionApi.sessions(repo).promptSession({ meta: newMutationMeta(), sessionId: id, text, images: promptImages(images) }));
 }
 
+/** Admits a manual compaction; returns when it is admitted, not when the summary lands. */
+export async function compactSession(repo: string, id: string, instructions?: string): Promise<void> {
+  await call(() => sessionApi.sessions(repo).compactSession({ meta: newMutationMeta(), sessionId: id, ...(instructions?.trim() ? { instructions } : {}) }));
+}
+
 export async function abortSession(repo: string, id: string): Promise<void> {
   await call(() => sessionApi.sessions(repo).abortSession({ sessionId: id }));
 }

@@ -2,6 +2,7 @@ import { ArrowDownRight, ArrowUpRight, MessageSquare, X } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, type UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
+import { withLocalBuiltins } from "../chat/commands";
 import type { ChatPrefs } from "../chat/visibility";
 import * as ipc from "../ipc";
 import { readChatThreadImage, useChatThreads, useOpenChatRepos } from "../sync/chat";
@@ -471,7 +472,7 @@ export function QuickChat({
               <ChatComposer
                 body={chat.draft}
                 status={chat.activity.status}
-                catalog={chat.transcript.commands}
+                catalog={withLocalBuiltins(chat.transcript.commands)}
                 sending={chat.sending}
                 showHints={visibility.showComposerHints}
                 attachments={chat.attachments}
