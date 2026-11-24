@@ -397,7 +397,8 @@ const PART_MAX = 4000;
 
 const clip = (value: string) => (value.length > PART_MAX ? `${value.slice(0, PART_MAX)}… [${value.length - PART_MAX} more characters]` : value);
 
-/** One transcript item for a model to read: its text, thinking and tool calls as strings, each clipped, and only the fields it has. */
+/** One transcript item for a model to read: its text, thinking and tool calls as strings, each clipped, and only the fields it has.
+ *  A `compaction` role is the context-compaction summary, unwrapped and clipped like any other long text — not a user prompt. */
 export function itemJson(item: TranscriptItem): Args {
   const of = (kind: "text" | "thinking") => item.content.flatMap((p) => (p.kind.case === kind ? [p.kind.value] : [])).join("\n");
   const calls = item.content.flatMap((p) =>

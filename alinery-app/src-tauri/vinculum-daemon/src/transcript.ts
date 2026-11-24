@@ -4,6 +4,12 @@
 import type { TaskId } from "@earendil-works/pi-durable";
 import { WRAP_UP_NUDGE_ENTRY } from "../../../shared/wrapUpNudge.ts";
 
+// The harness's compaction entry kind and summary envelope (pi-durable harness/compaction.js).
+// Not exported by the installed package, so they live here, beside the one formatter both reads use.
+export const COMPACTION_ENTRY = "pi.compaction";
+const SUMMARY_PREFIX = "The conversation history before this point was compacted into the following summary:\n\n<summary>\n";
+const SUMMARY_SUFFIX = "\n</summary>";
+
 export type TranscriptSource = {
   id: string;
   streaming?: boolean;
@@ -15,6 +21,8 @@ export type TranscriptSource = {
   toolName?: string;
   toolCallId?: string;
   isError?: boolean;
+  /** Set when this user row is a compaction entry that carries a head marker. */
+  compaction?: { reason: string };
   /** When the message was complete, ms since the epoch. */
   at?: number;
 };
@@ -35,7 +43,7 @@ export type TranscriptPart =
 
 export type TranscriptReply = {
   id: string;
-  role: "user" | "assistant" | "toolResult";
+  role: "user" | "assistant" | "toolResult" | "compaction";
   streaming?: boolean;
   content: TranscriptPart[];
   toolName?: string;
@@ -44,14 +52,32 @@ export type TranscriptReply = {
   runningToolIds?: string[];
   turnError?: string;
   nudgeDeliveryId?: string;
+  compactionReason?: string;
   at?: number;
 };
+
+type SpokenEntry = { kind?: string; model?: readonly { role?: string }[] | null };
+
+/** Drop compaction summaries. They are the harness's words, not the person's (HD-1). */
+export function withoutCompactionEntries<T extends { kind?: string }>(entries: readonly T[]): T[] {
+  return entries.filter((entry) => entry.kind !== COMPACTION_ENTRY);
+}
+
+/** User-role model messages that are the person's, the count `userMessageCount` takes. */
+export function spokenUserCount(entries: readonly SpokenEntry[]): number {
+  return withoutCompactionEntries(entries).reduce((count, entry) => count + (entry.model ?? []).filter((message) => message.role === "user").length, 0);
+}
+
+/** Whether someone already spoke. A compaction summary's user-role payload does not count. */
+export function hasSpoken(entries: readonly SpokenEntry[]): boolean {
+  return withoutCompactionEntries(entries).some((entry) => entry.kind === "pi.user" || (entry.model ?? []).some((message) => message.role === "user"));
+}
 
 export function transcriptEntryId(id: unknown, index: number, length: number): string {
   return length === 1 ? String(id) : `${id}:${index}`;
 }
 
-export function appendEntryMessages(messages: TranscriptSource[], entry: { id: unknown; model?: unknown; byTaskId?: TaskId; kind?: string; data?: unknown }, lastErrors?: Map<TaskId, TranscriptSource>) {
+export function appendEntryMessages(messages: TranscriptSource[], entry: { id: unknown; model?: unknown; byTaskId?: TaskId; kind?: string; data?: unknown; head?: unknown }, lastErrors?: Map<TaskId, TranscriptSource>) {
   if (!Array.isArray(entry.model)) return;
   for (const [index, message] of entry.model.entries()) {
     if (!message || typeof message !== "object") continue;
@@ -59,6 +85,10 @@ export function appendEntryMessages(messages: TranscriptSource[], entry: { id: u
     const source = transcriptSource(id, message);
     if (source.role === "user" && entry.kind === WRAP_UP_NUDGE_ENTRY && entry.data && typeof entry.data === "object" && "deliveryId" in entry.data && typeof entry.data.deliveryId === "string") {
       source.nudgeDeliveryId = entry.data.deliveryId;
+    }
+    // A compaction entry without a head marker stays a plain user row, so a malformed entry cannot hide text.
+    if (source.role === "user" && entry.kind === COMPACTION_ENTRY && entry.head) {
+      source.compaction = { reason: String((entry.data as { reason?: unknown } | undefined)?.reason ?? "") };
     }
     messages.push(source);
     if (entry.byTaskId && source.role === "assistant" && lastErrors) {
@@ -202,6 +232,26 @@ function runningResult(slot: TranscriptToolSlot): TranscriptReply {
 
 const stamp = (message: TranscriptSource) => (message.at !== undefined ? { at: message.at } : {});
 
+/** The first text part. A compaction entry carries exactly one; a string payload is that text. */
+function textOf(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    const record = part as { type?: unknown; text?: unknown };
+    if (record.type === "text" && typeof record.text === "string") return record.text;
+  }
+  return "";
+}
+
+/** Strip the harness envelope when both ends are present; otherwise the stored text, unchanged. */
+function unwrapSummary(text: string): string {
+  if (text.startsWith(SUMMARY_PREFIX) && text.endsWith(SUMMARY_SUFFIX) && text.length >= SUMMARY_PREFIX.length + SUMMARY_SUFFIX.length) {
+    return text.slice(SUMMARY_PREFIX.length, text.length - SUMMARY_SUFFIX.length);
+  }
+  return text;
+}
+
 export function formatTranscript(messages: readonly TranscriptSource[], tools: readonly TranscriptToolSlot[] = []): TranscriptReply[] {
   const running = tools.filter((slot) => slot.status === "pending" || slot.status === "running");
   const runningIds = new Set(running.map((slot) => slot.callId));
@@ -209,6 +259,11 @@ export function formatTranscript(messages: readonly TranscriptSource[], tools: r
   const emittedResults = new Set<string>();
 
   for (const message of messages) {
+    if (message.compaction) {
+      const text = message.compaction ? unwrapSummary(textOf(message.content)) : "";
+      out.push({ id: message.id, role: "compaction", content: [{ type: "text", text }], compactionReason: message.compaction.reason, ...stamp(message) });
+      continue;
+    }
     if (message.role === "user") {
       const content = promptParts(message.content);
       if (content.length === 0) continue;

@@ -56,6 +56,7 @@ export function toItem(item: TranscriptReply): Item {
     at: BigInt(Math.trunc(item.at ?? 0)),
     turnError: item.turnError,
     nudgeDeliveryId: item.nudgeDeliveryId,
+    compactionReason: item.compactionReason,
   };
 }
 

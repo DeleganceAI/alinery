@@ -23,6 +23,7 @@ import { latestFailedTurn, retryFailedTurn, committedTurnMessages } from "./runt
 import { answeredReviewFollowUp, hasSettledAnswer } from "./runtime/reviewFollowUp.ts";
 import { steerWrapUp } from "./runtime/nudge.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
+import { modelMessages, seedPrompt, userMessageCount } from "./conversationCounts.ts";
 import { serveRpc } from "./rpc/server.ts";
 import { removeBoxRecord, writeBoxRecord } from "./domain/boxRegistry.ts";
 import { commitJoinRequests, Members } from "./domain/members.ts";
@@ -582,15 +583,6 @@ function removedTools(taskSlug: string, id: string) {
   return canvasEnabled(repo, id) ? [sessionNameTool] : [sessionNameTool, ...canvas.tools];
 }
 
-async function seedPrompt(conversation: Conversation, prompt: string) {
-  if (!prompt) return;
-  const page = await conversation.entries({ order: "ascending" }, 200, undefined, context);
-  const hasUser = page.items.some((entry) => entry.kind === "pi.user" || (entry.model ?? []).some((message) => message.role === "user"));
-  if (hasUser) return;
-  // Admission only. The model run continues after this returns.
-  await conversation.submit({ type: "input", content: prompt, whenBusy: "followUp" }, context);
-}
-
 // conversation.context() is the next model request. It drops assistant messages whose stop reason is error, aborted, or deferred, so a failed turn never reaches the pane. The transcript is the stored entries, plus the in-flight partial. Nested tool slots stay out.
 
 async function transcriptMessages(row: Live, conversation: Conversation): Promise<{ messages: TranscriptSource[]; tools: TranscriptToolSlot[] }> {
@@ -604,22 +596,6 @@ async function transcriptMessages(row: Live, conversation: Conversation): Promis
   } finally {
     live?.dispose();
   }
-}
-
-async function modelMessages(conversation: Conversation) {
-  const messages: Awaited<ReturnType<Conversation["context"]>>["messages"] = [];
-  let cursor: Awaited<ReturnType<Conversation["entries"]>>["next"];
-  for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-    const page = await conversation.entries({ order: "ascending" }, 200, cursor, context);
-    for (const entry of page.items) messages.push(...(entry.model ?? []));
-    cursor = page.next;
-    if (!cursor) break;
-  }
-  return messages;
-}
-
-async function userMessageCount(conversation: Conversation): Promise<number> {
-  return (await modelMessages(conversation)).filter((message) => message.role === "user").length;
 }
 
 async function maybeTitleChat(row: Live) {
