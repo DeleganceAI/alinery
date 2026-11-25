@@ -38,7 +38,14 @@
   flex: 1 1 0;
   min-width: 0;
 }
+/* A step's line stays at the top of the scroll while its conversation is under it, like a frozen header row, and the
+   next step's line takes its place as that one arrives: sticky stops at the end of its own row. */
 .rollout-mark {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding-block: 4px;
+  background: var(--surface);
   display: flex;
   align-items: center;
   gap: 10px;
