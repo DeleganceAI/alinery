@@ -1,5 +1,5 @@
 import { ArrowLeft, ChevronDown, ChevronUp, List, ListTree, Network, Pencil, Square } from "lucide-react";
-import type { KeyboardEvent, ReactNode } from "react";
+import type { KeyboardEvent, ReactNode, PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactCommentAnchor } from "../ArtifactMarkdown";
@@ -105,10 +105,12 @@ import type {
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
+import { usePointerDrag } from "../usePointerDrag";
 import { useSessionSort } from "../useSessionSort";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 import { isVinculumHarness, sessionTerminalLabel } from "../vinculumHarness";
 import { FileView, richPreview } from "./CanvasFiles";
+import type { SessionBare } from "./SessionView";
 import { TaskSpecsPin } from "./TaskSpecsPin";
 
 function taskActivityLabel(activity: TaskActivitySummary): string {
@@ -150,6 +152,7 @@ function readStoredTaskSessionView(): "graph" | "list" {
 
 /** Rollout is a third way to read the sessions pane, kept apart from graph/list so leaving it returns to the one chosen there. */
 const TASK_ROLLOUT_KEY = "alinery.taskRollout";
+const TASK_ROLLOUT_WIDTH_KEY = "alinery.taskRolloutWidth";
 function readStoredRollout(): boolean {
   try {
     return localStorage.getItem(TASK_ROLLOUT_KEY) === "1";
@@ -233,6 +236,7 @@ export function TaskDetail({
       onClose: () => void;
       onOpenPath: (target: string, keep?: boolean) => void;
       onOpenSession: (session: SessionMeta, intent?: "history" | "attach") => void;
+      bare?: SessionBare;
     },
   ) => ReactNode;
   onNewSession: () => void;
@@ -317,6 +321,31 @@ export function TaskDetail({
   const [showArchived, setShowArchived] = useState(false);
   const [sessionView, setSessionView] = useState(readStoredTaskSessionView);
   const [rollout, setRollout] = useState(readStoredRollout);
+  // The rollout's share of the main pane while a file is open beside it; dragged like the files pane's divider.
+  const [rolloutWidth, setRolloutWidth] = useState(() => {
+    try {
+      return Number(localStorage.getItem(TASK_ROLLOUT_WIDTH_KEY)) || 560;
+    } catch {
+      return 560;
+    }
+  });
+  const rolloutDrag = usePointerDrag();
+  const startRolloutResize = (ev: ReactPointerEvent<HTMLElement>) => {
+    const startX = ev.clientX;
+    const room = ev.currentTarget.parentElement?.clientWidth ?? 1200;
+    const width = (clientX: number) => Math.max(320, Math.min(room - 320, rolloutWidth + clientX - startX));
+    rolloutDrag.start(ev, {
+      onMove: (moveEv) => setRolloutWidth(width(moveEv.clientX)),
+      onComplete: (completeEv) => {
+        setRolloutWidth(width(completeEv.clientX));
+        try {
+          localStorage.setItem(TASK_ROLLOUT_WIDTH_KEY, String(width(completeEv.clientX)));
+        } catch {
+          // The width still holds for this view.
+        }
+      },
+    });
+  };
   const [sessionSort, setSessionSort] = useSessionSort(
     controlledSessionSort !== undefined && onSessionSortChange !== undefined ? { sort: controlledSessionSort, onChange: onSessionSortChange } : undefined,
     DEFAULT_TASK_SESSION_SORT,
@@ -1455,7 +1484,10 @@ export function TaskDetail({
           )}
         </aside>
         <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
-        <main className={`detailmain${rollout && activeArtifactTab ? " rollout-split" : ""}`}>
+        <main
+          className={`detailmain${rollout && activeArtifactTab ? " rollout-split" : ""}`}
+          style={rollout && activeArtifactTab ? { gridTemplateColumns: `${rolloutWidth}px 8px minmax(0, 1fr)` } : undefined}
+        >
           <MainTabs
             pinned="Sessions"
             tabs={fileTabs.tabs.map((tab) => (tab.session ? { ...tab, label: sessions.find((s) => s.id === tab.session?.id)?.name || tab.label } : tab))}
@@ -1463,6 +1495,18 @@ export function TaskDetail({
             onSelect={fileTabs.select}
             onClose={fileTabs.close}
           />
+          {rollout && activeArtifactTab && (
+            // biome-ignore lint/a11y/useSemanticElements: the divider is a drag handle, as PaneResizer's is
+            <div
+              className="artifact-resizer rollout-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize rollout"
+              aria-valuenow={rolloutWidth}
+              tabIndex={0}
+              onPointerDown={startRolloutResize}
+            />
+          )}
           {selectedDiff ? (
             <div className="artifactpane task-artifact-view">
               <div className="artifacthead">
@@ -1716,24 +1760,31 @@ export function TaskDetail({
                 </InlineStatus>
               )}
               {rollout ? (
-                <div className="task-rollout-scroll">
+                <div className="task-rollout">
                   {!sessionsLoaded && <p className="dim">Loading sessions…</p>}
                   {sessionsLoaded && (
                     <TaskRollout
-                      rows={buildRollout(rolloutSessions, executionView?.state, steps, (session) => {
-                        const state = observationsById[session.id]?.lifecycle.state;
-                        return state === "live" || state === "live_exited";
-                      })}
+                      rows={buildRollout(
+                        rolloutSessions,
+                        executionView?.state,
+                        steps,
+                        (session) => {
+                          const state = observationsById[session.id]?.lifecycle.state;
+                          return state === "live" || state === "live_exited";
+                        },
+                        (path) => Boolean(findOwnedArtifactNode(artifactTree, path)),
+                      )}
                       observations={observationsById}
                       repoPath={repoPath}
                       slug={slug}
                       now={sessionNow}
                       onOpenSession={openRolloutSession}
                       onOpenArtifact={(path) => openArtifactTab(path, findOwnedArtifactNode(artifactTree, path) ?? null)}
-                      renderSession={(session, collapse) => {
+                      renderSession={(session, bare, collapse) => {
                         const owner = sessionOwnerSlug(session);
                         return renderSession(sessionTarget(owner, session, lineageSessionIntent(executionView?.state, session)), {
                           active: true,
+                          bare,
                           onClose: collapse,
                           onOpenPath: (path, keep) => openSessionPath(session.id, path, keep),
                           onOpenSession: (other, intent) => openSession(owner, other, intent),

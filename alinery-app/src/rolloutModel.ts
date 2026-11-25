@@ -26,6 +26,8 @@ export function buildRollout(
   state: TaskExecutionState | null | undefined,
   steps: NormalizedStep[],
   isLive: (session: SessionDisplayMeta) => boolean,
+  /** Whether a file is on disk. A step waiting for review has written its file before the engine records it as published. */
+  exists: (path: string) => boolean = () => false,
 ): RolloutRow[] {
   const executions = Object.values(state?.executions ?? {});
   const occurrences = Object.values(state?.occurrences ?? {});
@@ -45,7 +47,7 @@ export function buildRollout(
         }
         if (!execution.receipt_id) {
           for (const output of execution.outputs) {
-            if (!artifacts.some((item) => item.path === output.relative_path)) artifacts.push({ path: output.relative_path, pending: true });
+            if (!artifacts.some((item) => item.path === output.relative_path)) artifacts.push({ path: output.relative_path, pending: !exists(output.relative_path) });
           }
         }
       }

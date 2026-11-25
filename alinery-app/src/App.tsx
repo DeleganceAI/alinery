@@ -101,6 +101,7 @@ import { Playbooks } from "./views/Playbooks";
 import { ProviderSetupDialog } from "./views/ProviderSetupDialog";
 import { focusQuickChatComposer, QuickChat } from "./views/QuickChat";
 import { SessionsList } from "./views/SessionsList";
+import type { SessionBare } from "./views/SessionView";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
 import { SetupScreen, type SetupTab } from "./views/SetupScreen";
 import { TaskList } from "./views/TaskList";
@@ -1045,6 +1046,7 @@ export default function App() {
     nav: {
       onBack: () => void;
       embedded?: boolean;
+      bare?: SessionBare;
       active?: boolean;
       onOpenPath?: (target: string, keep?: boolean) => void;
       onOpenSession?: (session: SessionMeta, intent?: "history" | "attach") => void;
@@ -1080,6 +1082,7 @@ export default function App() {
         onNameCommitted={onNameCommitted}
         onBack={nav.onBack}
         embedded={nav.embedded}
+        bare={nav.bare}
         active={nav.active}
         follow={sessionFollow}
         onOpenSession={
@@ -1732,11 +1735,12 @@ export default function App() {
                   onSessionSortChange={onTaskSessionSortChange}
                   onNameCommitted={onNameCommitted}
                   onBack={goBack}
-                  renderSession={(target, { onClose, onOpenPath, active, onOpenSession }) => (
+                  renderSession={(target, { onClose, onOpenPath, active, onOpenSession, bare }) => (
                     <Suspense fallback={<LoadingState label="Opening session…" />}>
                       {sessionViewFor(view.repoPath || appConfig.active_repo, target, view, {
                         onBack: onClose,
                         embedded: true,
+                        bare,
                         active,
                         onOpenPath: target.taskSlug === view.slug ? onOpenPath : undefined,
                         onOpenSession,

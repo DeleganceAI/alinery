@@ -1,34 +1,72 @@
+/* The rollout is one conversation: no cards, no boxes. A step is a line in the stream, the way a turn is. */
+.task-rollout {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+}
 .rollout {
   display: flex;
+  flex: 1 1 0;
+  min-height: 0;
   flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
+}
+.rollout-stream {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+}
+.rollout-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 4px 10px 16px;
+  box-sizing: border-box;
   list-style: none;
 }
 /* The focused session takes the row; the others it ran beside are thin bars to its right. */
 .rollout-row {
   display: flex;
   align-items: stretch;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
-.rollout-step {
+.rollout-turn {
   flex: 1 1 0;
   min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
 }
-.rollout-step-head {
+.rollout-mark {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  min-height: 28px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.rollout-mark .statusdot {
+  font-size: 12px;
+}
+/* The line beside a step is its progress bar. */
+.rollout-rule {
+  flex: 1 1 0;
+  min-width: 12px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: var(--border);
+}
+.rollout-rule-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 400ms ease;
 }
 .rollout-toggle {
   display: flex;
-  flex: 1 1 0;
+  flex: 0 1 auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -37,19 +75,12 @@
   background: none;
   color: var(--text);
   font: inherit;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
 .rollout-toggle:disabled {
   cursor: default;
-}
-.rollout-chevron {
-  flex: none;
-  color: var(--text-muted);
-  transition: transform 120ms;
-}
-.rollout-step.open .rollout-chevron {
-  transform: rotate(90deg);
 }
 .rollout-step-title {
   font-weight: 600;
@@ -57,6 +88,7 @@
 }
 .rollout-step-name {
   overflow: hidden;
+  color: var(--text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -64,13 +96,26 @@
   flex: none;
   font-variant-numeric: tabular-nums;
 }
+.rollout-open {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  cursor: pointer;
+}
+.rollout-open:hover:not(:disabled) {
+  color: var(--text);
+  text-decoration: underline;
+}
 .rollout-bubble {
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border: 1.5px solid var(--accent);
   border-radius: 50%;
   color: var(--text-strong);
@@ -104,7 +149,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 0 10px 8px 54px;
+  padding: 6px 0 0 30px;
 }
 .rollout-artifact {
   display: inline-flex;
@@ -114,7 +159,7 @@
   padding: 2px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface-subtle);
+  background: none;
   color: var(--text);
   font: inherit;
   font-size: 12px;
@@ -125,23 +170,73 @@
 }
 .rollout-artifact:disabled {
   border-style: dashed;
-  background: none;
   color: var(--text-faint);
   cursor: default;
 }
-/* ponytail: a fixed share of the window, the session scrolls inside it. A drag handle if people want it taller. */
-.rollout-session {
-  display: flex;
-  flex-direction: column;
-  height: 60vh;
-  min-height: 320px;
-  border-top: 1px solid var(--border);
-}
-.rollout-session > .sessionview {
-  flex: 1 1 auto;
+
+/* The session inside a row: its conversation only, sized by its content, scrolled by the rollout. Every wrapper
+   between the row and the messages gives up its own height, scroll and background. */
+.rollout .sessionview.bare,
+.rollout .sessionview.bare :is(.sessionbody, .session-main, .session-main-body, .termhost, .terminal-frame, .chat-pane, .chat-list) {
+  display: block;
   height: auto;
   min-height: 0;
+  overflow: visible;
+  background: none;
 }
+.rollout .sessionview.bare .termhost[hidden] {
+  display: none;
+}
+.rollout .sessionview.bare > .sessionhd,
+.rollout .sessionview.bare :is(.chat-meta, .chat-older, .chat-activity) {
+  display: none;
+}
+.rollout .sessionview.bare .session-view-loading {
+  position: static;
+}
+/* A terminal session has no content height of its own. */
+.rollout .sessionview.bare .terminal-frame:not(:has(.chat-pane)) {
+  height: 50vh;
+}
+.rollout .sessionview.bare .chat-journal {
+  max-width: none;
+  padding-inline: 0;
+}
+/* Collapsed: the one line stands in for everything else the session would draw. */
+.rollout .sessionview.bare.preview .termhost > :not(.rollout-preview) {
+  display: none;
+}
+.rollout-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 0 0 30px;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.rollout-preview:hover {
+  color: var(--text);
+}
+.rollout-preview > :is(svg, .ind-orb) {
+  flex: none;
+}
+.rollout-preview-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rollout-preview-time {
+  flex: none;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .rollout-bars {
   display: flex;
   flex: 0 1 auto;
@@ -150,23 +245,22 @@
 }
 .rollout-bar {
   display: flex;
-  flex: 0 1 32px;
+  flex: 0 1 28px;
   flex-direction: column;
   align-items: center;
   gap: 6px;
   min-width: 12px;
-  padding: 8px 4px;
+  padding: 4px 2px;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
-  color: var(--text-muted);
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: none;
+  color: var(--text-faint);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 .rollout-bar:hover {
-  border-color: var(--border-strong);
   color: var(--text);
 }
 .rollout-bar-title {
@@ -175,17 +269,40 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.task-rollout-scroll {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
+
+/* One box for the whole task, at the bottom the whole time. The running session renders its composer into it. */
+.rollout-composer {
+  flex: none;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
+.rollout-to {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.rollout-to select {
+  min-width: 0;
+  max-width: 100%;
+}
+.rollout-composer-slot:empty::before {
+  display: block;
+  padding: 12px 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+  content: attr(data-empty);
+}
+
 /* Rollout with a file open: the tab strip on top, the rollout on the left, the one open file on the right. */
 .detailmain.rollout-split {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  /* The columns come from the dragged width (TaskDetail). */
   grid-template-rows: auto minmax(0, 1fr);
-  column-gap: 12px;
 }
 .detailmain.rollout-split > :first-child {
   grid-column: 1 / -1;
@@ -193,8 +310,11 @@
 .detailmain.rollout-split > .task-sessions-tab {
   grid-area: 2 / 1;
 }
-.detailmain.rollout-split > .task-artifact-view {
+.detailmain.rollout-split > .rollout-resizer {
   grid-area: 2 / 2;
+}
+.detailmain.rollout-split > .task-artifact-view {
+  grid-area: 2 / 3;
   min-width: 0;
   min-height: 0;
 }

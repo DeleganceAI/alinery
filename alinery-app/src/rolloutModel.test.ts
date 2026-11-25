@@ -63,6 +63,12 @@ it("keeps a retry and a consuming step sequential even when the earlier session 
   expect(rows.map((row) => row[0].artifacts)).toEqual([[], [{ path: "1-out.md", pending: false }], [{ path: "research/2-result-10.md", pending: true }]]);
 });
 
+it("treats an owed file that is already on disk as written", () => {
+  const reply = executionReply([executionRecord({ owner_session_id: "s" })]);
+  const rows = buildRollout([session("s", 1, null)], reply.state, reply.definition.step, live(["s"]), (path) => path === "research/2-result-10.md");
+  expect(rows[0][0].artifacts).toEqual([{ path: "research/2-result-10.md", pending: false }]);
+});
+
 it("focuses the session waiting on the user, else the newest; and formats elapsed time", () => {
   const [row] = buildRollout([session("a", 1, null), session("b", 2, null)], null, [], live(["a", "b"]));
   expect(defaultFocus(row, () => false)).toBe("b");
