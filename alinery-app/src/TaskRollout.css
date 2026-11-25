@@ -298,23 +298,3 @@
   content: attr(data-empty);
 }
 
-/* Rollout with a file open: the tab strip on top, the rollout on the left, the one open file on the right. */
-.detailmain.rollout-split {
-  display: grid;
-  /* The columns come from the dragged width (TaskDetail). */
-  grid-template-rows: auto minmax(0, 1fr);
-}
-.detailmain.rollout-split > :first-child {
-  grid-column: 1 / -1;
-}
-.detailmain.rollout-split > .task-sessions-tab {
-  grid-area: 2 / 1;
-}
-.detailmain.rollout-split > .rollout-resizer {
-  grid-area: 2 / 2;
-}
-.detailmain.rollout-split > .task-artifact-view {
-  grid-area: 2 / 3;
-  min-width: 0;
-  min-height: 0;
-}

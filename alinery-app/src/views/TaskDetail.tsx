@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronDown, ChevronUp, List, ListTree, Network, Pencil, Square } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, ChevronDown, ChevronUp, Columns2, List, ListTree, Network, Pencil, Square } from "lucide-react";
 import type { KeyboardEvent, ReactNode, PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -152,7 +152,23 @@ function readStoredTaskSessionView(): "graph" | "list" {
 
 /** Rollout is a third way to read the sessions pane, kept apart from graph/list so leaving it returns to the one chosen there. */
 const TASK_ROLLOUT_KEY = "alinery.taskRollout";
-const TASK_ROLLOUT_WIDTH_KEY = "alinery.taskRolloutWidth";
+const TASK_TWO_PANE_KEY = "alinery.taskTwoPane";
+const TASK_SESSIONS_SIDE_KEY = "alinery.taskSessionsSide";
+const TASK_SESSIONS_WIDTH_KEY = "alinery.taskSessionsWidth";
+function readStored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writeStored(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // The choice still holds for this view.
+  }
+}
 function readStoredRollout(): boolean {
   try {
     return localStorage.getItem(TASK_ROLLOUT_KEY) === "1";
@@ -321,28 +337,22 @@ export function TaskDetail({
   const [showArchived, setShowArchived] = useState(false);
   const [sessionView, setSessionView] = useState(readStoredTaskSessionView);
   const [rollout, setRollout] = useState(readStoredRollout);
-  // The rollout's share of the main pane while a file is open beside it; dragged like the files pane's divider.
-  const [rolloutWidth, setRolloutWidth] = useState(() => {
-    try {
-      return Number(localStorage.getItem(TASK_ROLLOUT_WIDTH_KEY)) || 560;
-    } catch {
-      return 560;
-    }
-  });
-  const rolloutDrag = usePointerDrag();
-  const startRolloutResize = (ev: ReactPointerEvent<HTMLElement>) => {
+  // One pane or two. With two, Sessions keeps one side and every opened file or session tab shows in the other,
+  // so a file opened from the sessions pane lands beside it. Sessions exists once: it holds the live session views.
+  const [twoPane, setTwoPane] = useState(() => readStored(TASK_TWO_PANE_KEY) === "1");
+  const [sessionsRight, setSessionsRight] = useState(() => readStored(TASK_SESSIONS_SIDE_KEY) === "right");
+  const [sessionsWidth, setSessionsWidth] = useState(() => Number(readStored(TASK_SESSIONS_WIDTH_KEY)) || 560);
+  const paneDrag = usePointerDrag();
+  const startPaneResize = (ev: ReactPointerEvent<HTMLElement>) => {
     const startX = ev.clientX;
     const room = ev.currentTarget.parentElement?.clientWidth ?? 1200;
-    const width = (clientX: number) => Math.max(320, Math.min(room - 320, rolloutWidth + clientX - startX));
-    rolloutDrag.start(ev, {
-      onMove: (moveEv) => setRolloutWidth(width(moveEv.clientX)),
+    // Dragging away from the sessions pane's own edge grows it.
+    const width = (clientX: number) => Math.max(320, Math.min(room - 320, sessionsWidth + (sessionsRight ? startX - clientX : clientX - startX)));
+    paneDrag.start(ev, {
+      onMove: (moveEv) => setSessionsWidth(width(moveEv.clientX)),
       onComplete: (completeEv) => {
-        setRolloutWidth(width(completeEv.clientX));
-        try {
-          localStorage.setItem(TASK_ROLLOUT_WIDTH_KEY, String(width(completeEv.clientX)));
-        } catch {
-          // The width still holds for this view.
-        }
+        setSessionsWidth(width(completeEv.clientX));
+        writeStored(TASK_SESSIONS_WIDTH_KEY, String(width(completeEv.clientX)));
       },
     });
   };
@@ -411,6 +421,13 @@ export function TaskDetail({
   // another repo) starts on Sessions.
   const fileTabs = useOpenTabs<OpenArtifactTab>(`${repoPath}\0${slug}`);
   const activeArtifactTab = fileTabs.current?.kind === "session" ? undefined : fileTabs.current;
+  const split = twoPane && fileTabs.tabs.length > 0;
+  // With two panes there is no Sessions tab to fall back to: the other pane always shows one of its tabs.
+  const lastTabKey = fileTabs.tabs[fileTabs.tabs.length - 1]?.key;
+  const selectTab = fileTabs.select;
+  useEffect(() => {
+    if (split && !fileTabs.current && lastTabKey) selectTab(lastTabKey);
+  }, [split, fileTabs.current, lastTabKey, selectTab]);
   const selectedArtifact = activeArtifactTab?.name ?? "";
   const selectedArtifactNode = activeArtifactTab?.node ?? null;
   const artifactMode = activeArtifactTab?.mode ?? "preview";
@@ -1485,26 +1502,62 @@ export function TaskDetail({
         </aside>
         <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
         <main
-          className={`detailmain${rollout && activeArtifactTab ? " rollout-split" : ""}`}
-          style={rollout && activeArtifactTab ? { gridTemplateColumns: `${rolloutWidth}px 8px minmax(0, 1fr)` } : undefined}
+          className={`detailmain${split ? ` two-pane${sessionsRight ? " sessions-right" : ""}` : ""}`}
+          style={split ? { gridTemplateColumns: sessionsRight ? `minmax(0, 1fr) 8px ${sessionsWidth}px` : `${sessionsWidth}px 8px minmax(0, 1fr)` } : undefined}
         >
-          <MainTabs
-            pinned="Sessions"
-            tabs={fileTabs.tabs.map((tab) => (tab.session ? { ...tab, label: sessions.find((s) => s.id === tab.session?.id)?.name || tab.label } : tab))}
-            active={fileTabs.active}
-            onSelect={fileTabs.select}
-            onClose={fileTabs.close}
-          />
-          {rollout && activeArtifactTab && (
+          {split && (
+            <div className="task-pane-bar pane-bar-sessions">
+              <div className="task-main-tabs">
+                <div className="task-main-tab on">
+                  <span className="task-main-tab-label">Sessions</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn ghost small task-pane-toggle"
+                aria-label="Move Sessions to the other side"
+                title="Move Sessions to the other side"
+                onClick={() => {
+                  setSessionsRight(!sessionsRight);
+                  writeStored(TASK_SESSIONS_SIDE_KEY, sessionsRight ? "left" : "right");
+                }}
+              >
+                <ArrowLeftRight size={14} aria-hidden="true" />
+              </button>
+            </div>
+          )}
+          <div className="task-pane-bar pane-bar-files">
+            <MainTabs
+              pinned={split ? undefined : "Sessions"}
+              tabs={fileTabs.tabs.map((tab) => (tab.session ? { ...tab, label: sessions.find((s) => s.id === tab.session?.id)?.name || tab.label } : tab))}
+              active={fileTabs.active}
+              onSelect={fileTabs.select}
+              onClose={fileTabs.close}
+            />
+            <button
+              type="button"
+              className={`btn ghost small task-pane-toggle${twoPane ? " on" : ""}`}
+              aria-pressed={twoPane}
+              aria-label="Two panes"
+              title={twoPane ? "Show one pane" : "Show Sessions and an open file side by side"}
+              onClick={() => {
+                setTwoPane(!twoPane);
+                writeStored(TASK_TWO_PANE_KEY, twoPane ? "0" : "1");
+              }}
+            >
+              <Columns2 size={14} aria-hidden="true" />
+            </button>
+          </div>
+          {split && (
             // biome-ignore lint/a11y/useSemanticElements: the divider is a drag handle, as PaneResizer's is
             <div
-              className="artifact-resizer rollout-resizer"
+              className="artifact-resizer pane-resizer"
               role="separator"
               aria-orientation="vertical"
-              aria-label="Resize rollout"
-              aria-valuenow={rolloutWidth}
+              aria-label="Resize panes"
+              aria-valuenow={sessionsWidth}
               tabIndex={0}
-              onPointerDown={startRolloutResize}
+              onPointerDown={startPaneResize}
             />
           )}
           {selectedDiff ? (
@@ -1649,7 +1702,7 @@ export function TaskDetail({
               </div>
             );
           })}
-          <div className="task-sessions-tab" hidden={rollout ? fileTabs.current?.kind === "session" : !!fileTabs.current}>
+          <div className="task-sessions-tab" hidden={!split && !!fileTabs.current}>
             <section className="task-panel task-sessions-panel">
               <div className="task-panel-head">
                 <div className="task-sessions-heading">
