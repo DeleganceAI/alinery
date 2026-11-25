@@ -15,7 +15,7 @@
 //! treats a failed arm as "fall back to pasting the address bar".
 
 use crate::*;
-use std::io::{ErrorKind, Read, Write};
+use std::io::ErrorKind;
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
@@ -37,7 +37,6 @@ const CALLBACK_PORTS: &[u16] = &[1455, 1456, 53692];
 /// otherwise read a port nothing holds as "in use" and fall back to pasting for no reason.
 const BIND_RETRY_WINDOW: Duration = Duration::from_millis(1500);
 const BIND_RETRY_PAUSE: Duration = Duration::from_millis(50);
-const REQUEST_LINE_LIMIT: usize = 8 * 1024;
 
 /// One armed listener at a time: the daemon's login broker aborts an older sign-in when a new one
 /// starts, so two listeners would only ever be one live one plus a leak.
@@ -175,15 +174,15 @@ fn answer_connection(mut stream: TcpStream, path: &str, origin: &str, delivered:
         return;
     }
     let Ok(line) = read_request_line(&mut stream) else {
-        write_callback_page(&mut stream, false);
+        write_loopback_page(&mut stream, false);
         return;
     };
     match callback_url(&line, origin, path) {
         Some(url) => {
-            write_callback_page(&mut stream, true);
+            write_loopback_page(&mut stream, true);
             let _ = delivered.send(url);
         }
-        None => write_callback_page(&mut stream, false),
+        None => write_loopback_page(&mut stream, false),
     }
 }
 
@@ -210,41 +209,4 @@ pub(crate) fn callback_url(request_line: &str, origin: &str, path: &str) -> Opti
 /// `?code=ac_2&state=s1` has a `state`. Keys only: the daemon parses the values.
 fn query_has(query: &str, key: &str) -> bool {
     query.split('&').any(|pair| pair.split('=').next() == Some(key))
-}
-
-fn read_request_line(stream: &mut TcpStream) -> Result<String, ()> {
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 256];
-    loop {
-        match stream.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => {
-                buf.extend_from_slice(&chunk[..n]);
-                if let Some(end) = buf.iter().position(|&b| b == b'\n') {
-                    buf.truncate(end + 1);
-                    return Ok(String::from_utf8_lossy(&buf).into_owned());
-                }
-                if buf.len() >= REQUEST_LINE_LIMIT {
-                    return Err(());
-                }
-            }
-            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-            Err(_) => return Err(()),
-        }
-    }
-    if buf.is_empty() {
-        Err(())
-    } else {
-        Ok(String::from_utf8_lossy(&buf).into_owned())
-    }
-}
-
-fn write_callback_page(stream: &mut TcpStream, ok: bool) {
-    let body = loopback_html(ok);
-    let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    let _ = stream.write_all(response.as_bytes());
 }

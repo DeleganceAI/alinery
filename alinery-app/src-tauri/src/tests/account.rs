@@ -659,6 +659,24 @@ fn wait_accepts_a_fragmented_request_line() {
 }
 
 #[test]
+fn wait_rejects_a_request_line_cut_off_by_a_half_close() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let waiter = std::thread::spawn(move || wait_for_desktop_login_callback_until(listener, "n", &SignInAttempt::fresh(), Instant::now() + Duration::from_secs(5)));
+    // The nonce matches, so before the fix the fragment came back as the code "ri".
+    let mut cut = TcpStream::connect(addr).unwrap();
+    cut.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    cut.write_all(b"GET /?nonce=n&code=ri").unwrap();
+    cut.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut page = String::new();
+    cut.read_to_string(&mut page).unwrap();
+    assert!(page.contains(&loopback_html(false)), "a cut-off request line must get the failure page: {page}");
+    let mut real = TcpStream::connect(addr).unwrap();
+    real.write_all(b"GET /?nonce=n&code=right HTTP/1.1\r\n\r\n").unwrap();
+    assert_eq!(waiter.join().unwrap().unwrap(), "right");
+}
+
+#[test]
 fn wait_caps_a_stalled_client_to_the_deadline() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();

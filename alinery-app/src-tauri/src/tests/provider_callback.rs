@@ -109,6 +109,25 @@ fn an_idle_connection_does_not_stall_the_redirect() {
 }
 
 #[test]
+fn a_redirect_cut_off_by_a_half_close_is_refused_and_the_wait_continues() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let stop = AtomicBool::new(false);
+    let waiter = std::thread::spawn(move || wait_for_provider_callback(listener, "/auth/callback", &stop, deadline_in(5)));
+    // It carries `state` and a `code`, so before the fix this fragment was delivered as the redirect.
+    let mut cut = TcpStream::connect(address).unwrap();
+    cut.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    cut.write_all(b"GET /auth/callback?state=s1&code=ac").unwrap();
+    cut.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut page = String::new();
+    cut.read_to_string(&mut page).unwrap();
+    assert!(page.contains(&loopback_html(false)), "a cut-off redirect must get the failure page: {page}");
+    get(address, "/auth/callback?state=s1&code=ac_2");
+    let url = waiter.join().unwrap().unwrap().expect("the full redirect after the cut-off one was not delivered");
+    assert_eq!(url, format!("http://127.0.0.1:{}/auth/callback?state=s1&code=ac_2", address.port()));
+}
+
+#[test]
 fn rearming_the_same_port_waits_for_the_disarmed_listener_to_let_go() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
