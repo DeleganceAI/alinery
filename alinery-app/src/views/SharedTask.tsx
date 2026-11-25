@@ -1,7 +1,8 @@
 import { ArrowLeft, MessageSquare } from "lucide-react";
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { type ArtifactCommentAnchor, ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
+import { ArtifactCommentsPanel, CommentsPanelToggle, focusCommentOpener, useCommentsPanel } from "../ArtifactCommentsPanel";
+import { type ArtifactCommentAnchor, ArtifactMarkdown } from "../ArtifactMarkdown";
 import { CopyArtifactButton } from "../chat/CopyMessage";
 import { ListToolbar } from "../ListToolbar";
 import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
@@ -179,6 +180,7 @@ export function SharedTaskView({
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  const commentsPanel = useCommentsPanel();
   const current = tabs.current;
   const filename = current?.name ?? "";
   const artifact = task.artifacts.find((row) => row.filename === filename);
@@ -291,6 +293,12 @@ export function SharedTaskView({
                   </div>
                   <div className="btn-group">
                     <CopyArtifactButton text={text} />
+                    <CommentsPanelToggle
+                      open={commentsPanel.open || Boolean(anchor)}
+                      count={comments.length}
+                      // A comment here is not autosaved, so the panel stays while one is being written.
+                      onToggle={anchor ? undefined : () => commentsPanel.setOpen(!commentsPanel.open)}
+                    />
                     <button
                       type="button"
                       className={`btn ghost small${current.mode === "preview" ? " on" : ""}`}
@@ -314,25 +322,26 @@ export function SharedTaskView({
                     The comment was not saved.
                   </InlineStatus>
                 )}
-                <div className="artifactviewer">
-                  {current.mode === "raw" ? (
-                    <pre className="artifactraw">{text}</pre>
-                  ) : (
-                    <article className="md artifactmd">
-                      <ArtifactMarkdown text={text} artifactPath={filename} comments={comments} onAddComment={openComment} />
-                    </article>
-                  )}
-                </div>
-                {anchor && (
-                  <div className="artifact-comment-composer">
-                    <div className="artifact-comment-title">{formatArtifactCommentTarget(anchor)}</div>
-                    <textarea
-                      ref={inputRef}
-                      className="field-input artifact-comment-input"
-                      value={draft}
-                      rows={2}
+                <div className="artifact-review">
+                  <div className="artifactviewer">
+                    {current.mode === "raw" ? (
+                      <pre className="artifactraw">{text}</pre>
+                    ) : (
+                      <article className="md artifactmd">
+                        <ArtifactMarkdown text={text} artifactPath={filename} comments={comments} onAddComment={openComment} onOpenThread={commentsPanel.openThread} />
+                      </article>
+                    )}
+                  </div>
+                  {(commentsPanel.open || anchor) && (
+                    <ArtifactCommentsPanel
+                      comments={comments}
+                      active={anchor}
+                      body={draft}
+                      canSave={!busy && Boolean(draft.trim())}
                       placeholder={`Comment for ${share.name}...`}
-                      onChange={(event) => setDraft(event.target.value)}
+                      inputRef={inputRef}
+                      focused={commentsPanel.focused}
+                      onBodyChange={setDraft}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                           event.preventDefault();
@@ -340,27 +349,19 @@ export function SharedTaskView({
                         }
                         if (event.key === "Escape") {
                           event.preventDefault();
-                          openerRef.current?.focus();
+                          focusCommentOpener(openerRef.current);
                         }
                       }}
+                      onSave={save}
+                      onDiscard={() => {
+                        setAnchor(null);
+                        setDraft("");
+                      }}
+                      onOpen={openComment}
+                      onClose={anchor ? undefined : () => commentsPanel.setOpen(false)}
                     />
-                    <div className="artifact-comment-actions">
-                      <button type="button" className="btn small" disabled={busy || !draft.trim()} onClick={save}>
-                        Save comment
-                      </button>
-                      <button
-                        type="button"
-                        className="btn ghost small"
-                        onClick={() => {
-                          setAnchor(null);
-                          setDraft("");
-                        }}
-                      >
-                        Discard draft
-                      </button>
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             ) : (
               <div className="list list-empty session-artifact-view">

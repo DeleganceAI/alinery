@@ -103,40 +103,59 @@ describe("ArtifactMarkdown draft updates", () => {
     expect(originalBlock.isConnected).toBe(true);
   });
 
-  it("renders existing comment counts as named buttons tied to the note without opening the composer", () => {
+  it("marks a commented block with a count that opens its thread, with no popover and no composer", () => {
     const onAddComment = vi.fn((_anchor: ArtifactCommentAnchor) => {});
-    const { rerender } = render(<ArtifactMarkdown text={TEXT} comments={[]} draftAnchorIds={[]} onAddComment={onAddComment} />);
+    const onOpenThread = vi.fn((_anchorId: string) => {});
+    const { rerender } = render(<ArtifactMarkdown text={TEXT} comments={[]} draftAnchorIds={[]} onAddComment={onAddComment} onOpenThread={onOpenThread} />);
 
     fireEvent.click(commentableBlock());
     const anchor = onAddComment.mock.calls[0][0];
     onAddComment.mockClear();
-    const comment: ArtifactComment = {
-      id: "c1",
-      artifact: "artifact.md",
-      ...anchor,
-      body: "Existing review note",
-      created_at_ms: 1,
-    };
+    const comment: ArtifactComment = { id: "c1", artifact: "artifact.md", ...anchor, body: "Existing review note", created_at_ms: 1 };
+    // A comment on selected text belongs to the block its selection starts in.
+    const onText: ArtifactComment = { ...comment, id: "c2", anchor_id: `text:abc@${anchor.anchor_id}`, anchor_kind: "text", anchor_excerpt: "commentable" };
 
-    rerender(<ArtifactMarkdown text={TEXT} comments={[comment]} draftAnchorIds={[]} onAddComment={onAddComment} />);
+    rerender(<ArtifactMarkdown text={TEXT} comments={[comment, onText]} draftAnchorIds={[]} onAddComment={onAddComment} onOpenThread={onOpenThread} />);
 
-    const count = screen.getByRole("button", { name: "1 comment" });
-    const noteId = count.getAttribute("aria-describedby");
-    const note = noteId ? document.getElementById(noteId) : null;
-    expect(note?.getAttribute("role")).toBe("note");
-    expect(note?.textContent).toContain("Existing review note");
-
-    count.focus();
-    fireEvent.focusIn(count);
-    expect(document.activeElement).toBe(count);
-    expect(count.getAttribute("aria-expanded")).toBe("true");
-    expect(commentableBlock().classList.contains("comments-open")).toBe(true);
-    fireEvent.click(count);
-    expect(count.getAttribute("aria-expanded")).toBe("true");
-    fireEvent.keyDown(count, { key: "Escape" });
-    expect(count.getAttribute("aria-expanded")).toBe("false");
-    expect(commentableBlock().classList.contains("comments-open")).toBe(false);
+    expect(commentableBlock().textContent).not.toContain("Existing review note");
+    fireEvent.click(screen.getByRole("button", { name: "2 comments" }));
+    expect(onOpenThread).toHaveBeenCalledWith(anchor.anchor_id);
     expect(onAddComment).not.toHaveBeenCalled();
+  });
+
+  it("offers a comment on exactly the selected text", async () => {
+    const onAddComment = vi.fn((_anchor: ArtifactCommentAnchor) => {});
+    render(
+      <article>
+        <ArtifactMarkdown text={"# Title\n\nFirst line here.\n"} comments={[]} draftAnchorIds={[]} onAddComment={onAddComment} />
+      </article>,
+    );
+    const paragraph = screen.getByText("First line here.");
+    const range = document.createRange();
+    range.setStart(paragraph.firstChild as Text, 6);
+    range.setEnd(paragraph.firstChild as Text, 10);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    fireEvent.mouseUp(paragraph);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Comment" }));
+    expect(onAddComment).toHaveBeenCalledWith(expect.objectContaining({ anchor_kind: "text", anchor_excerpt: "line", line_start: 3, line_end: 3 }));
+    expect(onAddComment.mock.calls[0][0].anchor_id).toMatch(/^text:[0-9a-f]{8}\.0@p:3-3:/);
+    // A repeated phrase: the id says which occurrence in the block was selected.
+    const text = paragraph.firstChild as Text;
+    const second = document.createRange();
+    second.setStart(text, text.data.lastIndexOf("e"));
+    second.setEnd(text, text.data.lastIndexOf("e") + 1);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(second);
+    fireEvent.mouseUp(paragraph);
+    fireEvent.click(await screen.findByRole("button", { name: "Comment" }));
+    expect(onAddComment.mock.calls[1][0].anchor_id).toMatch(/^text:[0-9a-f]{8}\.2@p:3-3:/);
+    // The click that ends a selection is not a comment on the whole block.
+    onAddComment.mockClear();
+    fireEvent.click(paragraph);
+    expect(onAddComment).not.toHaveBeenCalled();
+    window.getSelection()?.removeAllRanges();
   });
 });
 
