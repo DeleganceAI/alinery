@@ -49,25 +49,28 @@ it("shows a preview line per running session, opens one in place, and addresses 
       onOpenArtifact={vi.fn()}
     />,
   );
-  // Each row's line is its progress: nothing written yet is a sliver, never empty; a finished row with nothing owed is full.
-  expect(screen.getAllByRole("progressbar").map((el) => (el.firstElementChild as HTMLElement).style.width)).toEqual(["100%", "6%"]);
+  // Each line is a progress bar: the finished row with nothing owed is full; the group, and each session in it, has
+  // written nothing yet and still shows a sliver, never empty.
+  expect(screen.getAllByRole("progressbar").map((el) => (el.firstElementChild as HTMLElement).style.width)).toEqual(["100%", "6%", "6%", "6%"]);
 
-  // The running step is mounted collapsed, as its preview, and owns the composer; the finished session is a line only.
+  // Sessions that ran together are a group: the step's line with a count, then a line each, named by the session.
+  expect(screen.getByText("2 agents")).toBeTruthy();
+  // Every running session is mounted collapsed, as its preview; the newest playbook step owns the composer. The finished one is a line only.
   expect(screen.getByText("preview of step with composer")).toBeTruthy();
+  expect(screen.getByText("preview of aux")).toBeTruthy();
   expect(screen.queryByText(/of done/)).toBeNull();
-  expect(screen.queryByText(/of aux/)).toBeNull();
 
-  // Bringing the auxiliary session forward (bar or the To menu) moves the composer to it.
-  fireEvent.click(screen.getByRole("button", { name: "Show Auxiliary, name-aux" }));
+  // The To menu, or opening a running session, moves the composer to it.
+  fireEvent.change(screen.getByRole("combobox"), { target: { value: "aux" } });
   expect(screen.getByText("preview of aux with composer")).toBeTruthy();
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "step" } });
-  expect(screen.getByText("preview of step with composer")).toBeTruthy();
+  expect(screen.getByText("preview of step")).toBeTruthy();
 
   // The running step's owed output is listed but cannot be opened yet.
   expect((screen.getByRole("button", { name: /2-result-10\.md/ }) as HTMLButtonElement).disabled).toBe(true);
 
   fireEvent.click(screen.getByText("name-step"));
   expect(screen.getByText("conversation of step with composer")).toBeTruthy();
+  expect(screen.getByText("preview of aux")).toBeTruthy();
   fireEvent.click(screen.getAllByRole("button", { name: "Open session" })[1]);
   expect(onOpenSession).toHaveBeenCalledWith(expect.objectContaining({ id: "step" }));
 });

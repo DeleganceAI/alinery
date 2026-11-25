@@ -27,12 +27,33 @@
   box-sizing: border-box;
   list-style: none;
 }
-/* The focused session takes the row; the others it ran beside are thin bars to its right. */
 .rollout-row {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
   min-width: 0;
+}
+/* Sessions that ran at the same time: the step's own line, then a line per session under it. */
+.rollout-group > .rollout-turn.member {
+  padding-left: 30px;
+}
+.rollout-group-mark .rollout-toggle {
+  cursor: default;
+}
+/* The group's line is the frozen header; a member's line freezes just under it. */
+.rollout-turn.member > .rollout-mark {
+  top: 36px;
+  z-index: 2;
+  min-height: 24px;
+}
+.rollout-turn.member .rollout-bubble {
+  width: 12px;
+  height: 12px;
+  font-size: 0;
+}
+.rollout-turn.member .rollout-step-title {
+  font-weight: 500;
+}
+/* The finished ones step back so the ones still working or stuck stand out. */
+.rollout-turn.member .rollout-toggle:has(.rollout-bubble.done) {
+  opacity: 0.55;
 }
 .rollout-turn {
   flex: 1 1 0;
@@ -133,6 +154,10 @@
 .rollout-bubble.needs-user {
   border-color: var(--warning);
   background: var(--warning-subtle);
+}
+.rollout-bubble.failed {
+  border-color: var(--danger);
+  background: var(--danger-subtle);
 }
 @media (prefers-reduced-motion: no-preference) {
   .rollout-bubble.running {
@@ -236,38 +261,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.rollout-bars {
-  display: flex;
-  flex: 0 1 auto;
-  gap: 4px;
-  max-width: 20%;
-}
-.rollout-bar {
-  display: flex;
-  flex: 0 1 28px;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  min-width: 12px;
-  padding: 4px 2px;
-  overflow: hidden;
-  border: 0;
-  border-left: 1px solid var(--border);
-  background: none;
-  color: var(--text-faint);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.rollout-bar:hover {
-  color: var(--text);
-}
-.rollout-bar-title {
-  writing-mode: vertical-rl;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* One box for the whole task, at the bottom the whole time. The running session renders its composer into it. */
 .rollout-composer {
