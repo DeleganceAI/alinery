@@ -681,10 +681,15 @@ export function applyVinculumTranscript(reply: VinculumMessage[] | VinculumTrans
   const base = Array.isArray(reply) ? state : applySessionControls(state, transcript);
   // The delivery race: the send answered `queued`, and this same fold appended the one user message the line became. A
   // genuine append is one new message at the end of what the client held: a replace fold or a replay is not one, and the
-  // message another window's line became is never this client's to remove.
+  // message another window's line became is never this client's to remove. Everything the client held except its last
+  // entry must be unchanged at the same indices — the held last entry is the streaming partial that may settle in this
+  // very frame (a real turn boundary coalesces both into one), so it is the one entry allowed to differ. The delivery
+  // match below is what actually identifies the line, so a loose guess cannot drop a line this message did not become.
   const held = previous?.messages ?? [];
   const appended =
-    previous !== undefined && page.messages.length === held.length + 1 && messageSignature(page.messages[page.messages.length - 2]) === messageSignature(held[held.length - 1])
+    previous !== undefined &&
+    page.messages.length === held.length + 1 &&
+    held.slice(0, -1).every((message, index) => messageSignature(page.messages[index]) === messageSignature(message))
       ? page.messages[page.messages.length - 1]
       : undefined;
   const delivered = appended?.role === "user" ? deliveryOf(appended) : undefined;
@@ -752,16 +757,18 @@ function isDeliveryOf(line: QueuedPanelLine, delivered: DeliveredMessage): boole
  *  - an id the queue omits is gone when the server made it (delivered or withdrawn — the thread shows which), and when
  *    this client's own line was already `stale`;
  *  - the one line the fold's appended user message became is gone at once (the delivery race), and no other line with it;
- *  - an authoritative frame drops a client line it omits instead of marking it stale;
+ *  - an authoritative frame drops the server lines it omits (the ghosts of a queue that is gone) but still only marks a
+ *    line this client made `stale` — a read that lands before the send's commit cannot make the line blink, and the
+ *    ordinary stale-then-drop rule owns it from there;
  *  - otherwise a pending line only turns `stale`, so a frame read before the send's commit cannot make it blink.
  */
 export function reconcileQueued(lines: readonly QueuedPanelLine[], queued: QueuedLine[] | undefined, delivered?: DeliveredMessage, authoritative = false): QueuedPanelLine[] {
-  if (queued === undefined) return authoritative ? [] : [...lines];
+  if (queued === undefined) return authoritative ? reconcileQueued(lines, [], delivered, false) : [...lines];
   const held = new Set(queued.map((item) => item.id));
   const next: QueuedPanelLine[] = queued.map((item) => ({ ...item, origin: "server", stale: false }));
   let deliveredLine = false;
   for (const line of lines) {
-    if (held.has(line.id) || line.origin === "server" || line.stale || authoritative) continue;
+    if (held.has(line.id) || line.origin === "server" || line.stale) continue;
     if (!deliveredLine && delivered !== undefined && isDeliveryOf(line, delivered)) {
       deliveredLine = true;
       continue;

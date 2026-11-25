@@ -1,7 +1,17 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canStage, chatThreadAttachmentDir, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
-import { applySendPlan, type ChatSendPlan, dropQueuedLine, planChatSend, queuedLineOf, queueOptimisticLine, removeQueuedAndRestore, restoreQueuedLine } from "../chat/send";
+import {
+  applySendPlan,
+  type ChatSendPlan,
+  dropQueuedLine,
+  planChatSend,
+  queuedLineOf,
+  queueOptimisticLine,
+  removeQueuedAndRestore,
+  restoreAfterRejectedAbort,
+  restoreQueuedLine,
+} from "../chat/send";
 import type { McpServerRow, ProvidersDialogTab } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
 import {
@@ -869,6 +879,9 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       const row = prepared ? draftToRowAttachments(prepared.copied) : undefined;
       // Abort can withdraw the queue inside the coalesce window, so no frame will say it is empty. Drop the lines here.
       // The cue is this abort's own: it is raised here and settled when the call answers, resolved or rejected.
+      // Captured before the cue is raised: a fold while the abort is in flight empties the panel, and that is the list
+      // a rejected abort must put back — read it after the call settles and the restore is a no-op exactly when needed.
+      const held = transcriptRef.current.queued;
       queueCue.current.withdrawn = true;
       queueCue.current.settled = false;
       let aborted = false;
@@ -880,10 +893,9 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       } finally {
         queueCue.current.settled = true;
       }
-      const held = transcriptRef.current.queued;
       updateTranscript((current) => {
         const cleared = withoutQueued(current);
-        return aborted ? cleared : held.reduce((state, line) => restoreQueuedLine(state, line), cleared);
+        return aborted ? cleared : restoreAfterRejectedAbort(queueCue.current, cleared, held);
       });
       await writeSend(
         prepared?.message ?? text,
@@ -909,7 +921,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     void abortChatThread(repo, id)
       .catch((cause: unknown) => {
         registry.setError(String(cause));
-        updateTranscript((current) => held.reduce((state, line) => restoreQueuedLine(state, line), current));
+        updateTranscript((current) => restoreAfterRejectedAbort(queueCue.current, current, held));
       })
       .finally(() => {
         queueCue.current.settled = true;

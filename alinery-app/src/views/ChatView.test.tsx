@@ -472,6 +472,60 @@ describe("ChatView", () => {
     expect(screen.getByText("Queued · 2")).toBeTruthy();
   });
 
+  it("Send now whose abort call rejects after a frame folded in between puts the lines back", async () => {
+    const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
+    fakeChat.set([row]);
+    for (const id of THREADS) showChat(id, observed("busy", "alive", "rpc"));
+    let rejectAbort: (error: Error) => void = () => {};
+    mocks.chatAbort.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectAbort = reject;
+      }),
+    );
+    mocks.chatPrompt.mockResolvedValueOnce({ submissionId: "8", status: "queued" });
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
+    await screen.findByText("seeded");
+    await act(async () => {
+      setTranscripts({
+        messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }],
+        queued: [{ id: "7", mode: "followUp", text: "wait for me", images: [] }],
+      });
+    });
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Send after this turn…|Message or \/command/), { target: { value: "send this now" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(mocks.chatAbort).toHaveBeenCalledWith("/repo", "s-new"));
+    // A frame folds while the abort call is still in flight — the coalesce window hides the emptied queue. The list it
+    // must put back after a rejection is the one from before the cue was raised, not whatever this fold leaves.
+    await act(async () => {
+      setTranscripts({
+        messages: [
+          { id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] },
+          { id: "m1", role: "assistant", content: [{ type: "text", text: "streaming" }] },
+        ],
+      });
+    });
+    await act(async () => {
+      rejectAbort(new Error("the daemon would not abort"));
+    });
+    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalled());
+    // The abort withdrew nothing: the line the server still holds is back, and the new one waits with it.
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    expect(screen.getByText("send this now", { selector: ".queued-panel-text" })).toBeTruthy();
+    // And no later queue-less frame takes the lines again.
+    await act(async () => {
+      setTranscripts({
+        messages: [
+          { id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] },
+          { id: "m1", role: "assistant", content: [{ type: "text", text: "streaming more" }] },
+        ],
+      });
+    });
+    expect(screen.getByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    expect(screen.getByText("Queued · 2")).toBeTruthy();
+  });
+
   it("shows the transcript and sends through Vinculum without a Vinculum attach", async () => {
     const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
     fakeChat.set([row]);

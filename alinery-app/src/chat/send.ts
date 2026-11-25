@@ -1,4 +1,4 @@
-import { appendHarnessNotice, appendOptimisticUser, type ChatTranscriptState, type OptimisticKind, type QueuedPanelLine } from "../chatTranscript";
+import { appendHarnessNotice, appendOptimisticUser, type ChatTranscriptState, type OptimisticKind, type QueueAbortCue, type QueuedPanelLine } from "../chatTranscript";
 import type { UserRowAttachment } from "./attachments";
 import { findCommand, parseSlash } from "./commands";
 import { routeSlash, type SlashDispatch } from "./slash";
@@ -119,4 +119,14 @@ export function restoreQueuedLine(state: ChatTranscriptState, line: QueuedPanelL
   if (state.queued.some((item) => item.id === line.id)) return state;
   const queued = [...state.queued, line];
   return { ...state, queued, sessionMeta: { ...state.sessionMeta, queuedMessageCount: queued.length } };
+}
+
+/**
+ * The abort call rejected: it withdrew nothing. Retract the cue's claim before putting the lines back, or the first
+ * fold after the call settles takes them again — and the daemon will never re-send a queue it never changed. Every
+ * rejection path goes through here; a successful abort keeps the claim and the fold empties the panel for it.
+ */
+export function restoreAfterRejectedAbort(cue: QueueAbortCue, state: ChatTranscriptState, held: readonly QueuedPanelLine[]): ChatTranscriptState {
+  cue.withdrawn = false;
+  return held.reduce((current, line) => restoreQueuedLine(current, line), state);
 }

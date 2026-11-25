@@ -75,7 +75,7 @@ import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
 // The same number as PROTOCOL_VERSION in alinery-core/src/protocol.rs. The app refuses a daemon that reports another.
-const PROTOCOL = 58;
+const PROTOCOL = 59;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({

@@ -105,6 +105,30 @@ describe("watchSessionTranscript", () => {
     expect(got[2]?.model).toBe("p/m"); // controls are kept until a frame changes them
   });
 
+  it("a queue-only change folds as an empty append at the client's own index: no replay, and the queue lands", async () => {
+    // What the daemon really emits when only the inbox changed: an empty item list, no replace, the client's own next
+    // index. The fake daemon always sends the full list with replace set, so this shape is the one a real busy submit
+    // produces and the fold must take it without re-reading anything.
+    const requests = serve(async function* (_req, _call, signal) {
+      yield frame([item("u1", "hi"), item("live", "He")], 2);
+      yield create(WatchTranscriptResponseSchema, {
+        items: [],
+        nextItem: 2n,
+        replace: false,
+        queued: { items: [{ id: "7", mode: "followUp", text: "later", images: [] }] },
+      });
+      await untilAborted(signal);
+    });
+    const { got, apply } = replies();
+    const stop = watchSessionTranscript("/repo", { taskSlug: "t", id: "s1" }, apply);
+    await until(() => got.length === 2);
+    stop();
+    // No replay: the same list as before — same rows, no restart from 0, one request — and the queue is applied.
+    expect(got[1]?.messages.map((m) => m.id)).toEqual(["u1", "live"]);
+    expect(got[1]?.queued).toEqual([{ id: "7", mode: "followUp", text: "later", images: [] }]);
+    expect(requests).toHaveLength(1);
+  });
+
   it("after a drop it reconnects from the end of its list and keeps what it had", async () => {
     const requests = serve(async function* (_req, call, signal) {
       if (call === 0) {

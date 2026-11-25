@@ -25,7 +25,7 @@ import type { ModelRolesMap } from "../chat/modelRoles";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
 import { useProviderAccess } from "../chat/providerAccess";
 import { shouldOfferProviderSetup } from "../chat/providers";
-import { dropQueuedLine, queuedLineOf, queueOptimisticLine, removeQueuedAndRestore, restoreQueuedLine } from "../chat/send";
+import { dropQueuedLine, queuedLineOf, queueOptimisticLine, removeQueuedAndRestore, restoreAfterRejectedAbort, restoreQueuedLine } from "../chat/send";
 import type { ProvidersDialogTab } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
 import { decodeVinculumPage } from "../chat/vinculumFile";
@@ -839,10 +839,11 @@ export function SessionView({
         // reads them back from the same directory, so they stay visible after the turn ends.
         const row = prepared ? draftToRowAttachments(prepared.copied) : [];
         // Waiting or delivered is the daemon's answer, not a guess: a waiting input is a panel line and no thread row,
-        // and a delivered one is a message even if a turn looked open when it left.
+        // and a delivered one is a message even if a turn looked open when it left. The line carries the prepared
+        // message — file trailer and all — like every other surface, so its text never corrects itself later.
         const next =
           admitted?.status === "queued" && admitted.submissionId !== ""
-            ? queueOptimisticLine(chatRef.current, queuedLineOf(admitted, caption, prepared?.images ?? []), { invokesModel: true })
+            ? queueOptimisticLine(chatRef.current, queuedLineOf(admitted, prepared?.message ?? caption, prepared?.images ?? []), { invokesModel: true })
             : appendOptimisticUser(chatRef.current, caption, "prompt", undefined, row.length > 0 ? row : undefined);
         chatRef.current = next;
         setChat(next);
@@ -877,10 +878,21 @@ export function SessionView({
       const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
       // Abort can withdraw the queue inside the coalesce window, so no frame will say it is empty. Drop the lines here.
       // The cue is this abort's own: it is raised here and settled when the call answers, resolved or rejected.
+      // Captured before the cue is raised: a fold while the abort is in flight empties the panel, and that is the list
+      // a rejected abort must put back.
+      const held = chatRef.current.queued;
       queueCue.current.withdrawn = true;
       queueCue.current.settled = false;
       try {
         await abortSession(repoPath, id);
+      } catch (cause) {
+        // The daemon refused the abort and withdrew nothing: the lines it still holds are put back before the error.
+        setChat((current) => {
+          const next = restoreAfterRejectedAbort(queueCue.current, current, held);
+          chatRef.current = next;
+          return next;
+        });
+        throw cause;
       } finally {
         queueCue.current.settled = true;
       }
@@ -891,7 +903,7 @@ export function SessionView({
       const base = withoutQueued(chatRef.current);
       const next =
         admitted?.status === "queued" && admitted.submissionId !== ""
-          ? queueOptimisticLine(base, queuedLineOf(admitted, caption, prepared?.images ?? []), { invokesModel: true })
+          ? queueOptimisticLine(base, queuedLineOf(admitted, prepared?.message ?? caption, prepared?.images ?? []), { invokesModel: true })
           : appendOptimisticUser(base, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
       chatRef.current = next;
       setChat(next);
@@ -1139,7 +1151,7 @@ export function SessionView({
     } catch (error) {
       setMessageError(`Couldn't interrupt the session: ${String(error)}`);
       setChat((current) => {
-        const next = held.reduce((state, line) => restoreQueuedLine(state, line), current);
+        const next = restoreAfterRejectedAbort(queueCue.current, current, held);
         chatRef.current = next;
         return next;
       });
@@ -1912,18 +1924,7 @@ export function SessionView({
                   </>
                 )}
                 {readingHistory && vinculum && (!navHistory || !liveRpc) && (
-                  <ChatComposer
-                    body=""
-                    status="idle"
-                    catalog={[]}
-                    showHints={false}
-                    readOnly
-                    queued={chat.queued}
-                    onRemoveQueued={removeQueued}
-                    onBodyChange={() => undefined}
-                    onSend={() => undefined}
-                    onAbort={() => undefined}
-                  />
+                  <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
                 )}
                 {modelDialog && (
                   <ChatModelDialog

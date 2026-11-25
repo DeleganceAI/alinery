@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildPromptMessage } from "./chat/attachments";
-import { queuedLineOf } from "./chat/send";
+import { queuedLineOf, restoreAfterRejectedAbort } from "./chat/send";
 import { collectLiveSubagents } from "./chat/subagents";
 import type { ChatEntry } from "./chat/types";
 import {
@@ -796,13 +796,33 @@ describe("queued panel reconciliation", () => {
     expect(untouched.sessionMeta.queuedMessageCount).toBe(1);
   });
 
-  it("an authoritative frame drops a client line the queue omits instead of marking it stale", () => {
+  it("an authoritative frame drops the server lines it omits but marks this client's own line stale", () => {
     const held = applyVinculumTranscript({ messages: [], queued: [waiting] });
+    // The ghosts the rule exists for are server lines: the queue they described is gone.
     const dropped = applyVinculumTranscript({ messages: [], queued: [], queueAuthoritative: true }, held);
     expect(dropped.queued).toEqual([]);
     expect(dropped.sessionMeta.queuedMessageCount).toBe(0);
+    // A line this client made and the daemon has not confirmed is spared instead: a reconnect's first read can land
+    // before the send's commit, and dropping it would make the line blink out and back — what the no-blink rule prevents.
+    const sent: ChatTranscriptState = { ...emptyTranscript(), queued: [pending], sessionMeta: { queuedMessageCount: 1 } };
+    const spared = applyVinculumTranscript({ messages: [], queued: [], queueAuthoritative: true }, sent);
+    expect(spared.queued).toEqual([{ ...pending, stale: true }]);
+    expect(spared.sessionMeta.queuedMessageCount).toBe(1);
+    // The ordinary stale-then-drop rule owns it from there: the next omission drops it.
+    const gone = applyVinculumTranscript({ messages: [], queued: [], queueAuthoritative: true }, spared);
+    expect(gone.queued).toEqual([]);
     // A frame that arrives while the send is still in flight still only marks the line stale.
     expect(reconcileQueued([pending], [])).toEqual([{ ...pending, stale: true }]);
+  });
+
+  it("an authoritative frame that carries no queue spares the same pending line and drops the same ghosts", () => {
+    // Absence on the first frame of a connection means empty — but only the server's lines are the ghosts.
+    const held = applyVinculumTranscript({ messages: [], queued: [waiting] });
+    const cleared = applyVinculumTranscript({ messages: [], queueAuthoritative: true }, held);
+    expect(cleared.queued).toEqual([]);
+    const sent: ChatTranscriptState = { ...emptyTranscript(), queued: [pending], sessionMeta: { queuedMessageCount: 1 } };
+    const spared = applyVinculumTranscript({ messages: [], queueAuthoritative: true }, sent);
+    expect(spared.queued).toEqual([{ ...pending, stale: true }]);
   });
 
   it("drops the panel on a queue-less frame once the session reads as ended", () => {
@@ -849,15 +869,28 @@ describe("queued panel reconciliation", () => {
     const inflight = applyVinculumTranscript({ messages: [] }, held, consumeQueueCue(cue));
     expect(inflight.queued).toEqual([]);
     expect(cue.withdrawn).toBe(true);
-    // The abort call rejected. Its `finally` settles the cue either way, and the first fold after that consumes it.
+    // The abort call rejected: it withdrew nothing, so every rejection path retracts the claim and puts the lines the
+    // server still holds back. Its `finally` settles the cue either way.
+    const restored = restoreAfterRejectedAbort(cue, inflight, held.queued);
     cue.settled = true;
-    const own = applyVinculumTranscript({ messages: [] }, inflight, consumeQueueCue(cue));
-    expect(own.queued).toEqual([]);
+    expect(restored.queued).toEqual([{ ...waiting, origin: "server", stale: false }]);
     expect(cue.withdrawn).toBe(false);
-    // The daemon still holds the item: a frame that carries the queue says so, and a later queue-less frame leaves it.
-    const back = applyVinculumTranscript({ messages: [], queued: [waiting] }, own, consumeQueueCue(cue));
-    const later = applyVinculumTranscript({ messages: [{ role: "user", content: [{ type: "text", text: "later" }] }] }, back);
+    // No frame will ever say the queue emptied — a rejected abort changes nothing, so the daemon sends none. Every
+    // frame from here is queue-less, and none may take the lines back out.
+    const later = applyVinculumTranscript({ messages: [{ role: "user", content: [{ type: "text", text: "later" }] }] }, restored, consumeQueueCue(cue));
     expect(later.queued).toEqual([{ ...waiting, origin: "server", stale: false }]);
+    const stillLater = applyVinculumTranscript(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "later" }] },
+          { role: "assistant", content: [{ type: "text", text: "streaming" }] },
+        ],
+      },
+      later,
+      consumeQueueCue(cue),
+    );
+    expect(stillLater.queued).toEqual([{ ...waiting, origin: "server", stale: false }]);
+    expect(stillLater.sessionMeta.queuedMessageCount).toBe(1);
   });
 
   it("a line the client made after the abort survives every frame the cue covers, and the cue is gone after the settle", () => {
@@ -919,6 +952,35 @@ describe("queued panel reconciliation", () => {
   it("the delivery-race frame removes a pending line immediately", () => {
     const raced = reconcileQueued([pending], [], { text: "later", images: [] });
     expect(raced).toEqual([]);
+  });
+
+  it("a placement is recognised when the streaming partial settles in the same fold", () => {
+    // A real turn boundary: the assistant's partial settles in the same commit window as the placement, and the daemon
+    // coalesces the two reads into one frame — so the message before the placed one changed too.
+    const held: ChatTranscriptState = {
+      ...emptyTranscript(),
+      messages: [
+        { role: "user", content: [{ type: "text", text: "seeded" }] },
+        { role: "assistant", content: [{ type: "text", text: "work" }], streaming: true },
+      ],
+      queued: [pending],
+      sessionMeta: { queuedMessageCount: 1 },
+    };
+    const placed = applyVinculumTranscript(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "seeded" }] },
+          { role: "assistant", content: [{ type: "text", text: "working on it" }] },
+          { role: "user", content: [{ type: "text", text: "later" }] },
+        ],
+        queued: [],
+      },
+      held,
+    );
+    // The line the placement became is gone at once — not marked stale, which would leave a phantom panel line for a
+    // message already in the thread and keep the count at one.
+    expect(placed.queued).toEqual([]);
+    expect(placed.sessionMeta.queuedMessageCount).toBe(0);
   });
 
   it("a line built from a file attachment's prepared message is removed by the frame that places it", () => {

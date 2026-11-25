@@ -1031,6 +1031,26 @@ describe("session chat send routing", () => {
     expect(sessionPrompt).not.toHaveBeenCalled();
     error.mockRestore();
   });
+
+  it("a queued send with a file attachment shows the prepared message in the panel line, not the caption", async () => {
+    resetDaemon();
+    fakeBoard.set({ anyRepoTasks: [{ ...task }] });
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    copyChatAttachments.mockResolvedValue({ copied: ["notes.pdf"], failures: [] });
+    sessionPrompt.mockResolvedValueOnce({ submissionId: "7", status: "queued" });
+    const notesPdf = { id: "file-1", kind: "file" as const, name: "notes.pdf", mimeType: "application/pdf", bytes: 12, sourcePath: "/tmp/notes.pdf" };
+    const messageDraft = { body: "see", pendingActions: [], attachments: [notesPdf] } as SessionMessageDraft;
+    renderSession({ intent: "attach", messageDraft });
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await flushPromises();
+    // The line carries the prepared message — caption plus the send's own trailers — from the moment it appears, like
+    // every other surface. It must not show the caption and then visibly correct itself when the queue-carrying frame lands.
+    const line = document.querySelector(".queued-panel-text");
+    expect(line?.textContent).toContain("see");
+    expect(line?.textContent).toContain("Attached file:");
+    expect(line?.textContent).toContain("notes.pdf");
+  });
 });
 
 describe("session-scoped completion permission", () => {
@@ -1294,6 +1314,70 @@ describe("Vinculum session chat", () => {
     });
     expect(screen.getByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
     expect(screen.getByText("Queued · 1")).toBeDefined();
+  });
+
+  it("a Send now whose abort call rejects puts the lines the server already held back", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy", correlation_id: "first-run" }));
+    let rejectAbort: (error: Error) => void = () => {};
+    sessionAbort.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectAbort = reject;
+      }),
+    );
+    renderSession({ intent: "attach", messageDraft: { body: "send this now", pendingActions: [], attachments: [] } });
+    await act(async () => {
+      daemon.setTranscript("session", {
+        messages: [{ role: "user", content: [{ type: "text", text: "playbook prompt" }] }],
+        queued: [{ id: "7", mode: "followUp", text: "hold this", images: [] }],
+      });
+    });
+    expect(await screen.findByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(sessionAbort).toHaveBeenCalled());
+    // A frame folds while the abort call is still in flight — the cue covers it and the panel is empty for the moment.
+    await act(async () => {
+      daemon.setTranscript("session", {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "playbook prompt" }] },
+          { role: "assistant", content: [{ type: "text", text: "streaming" }] },
+        ],
+      });
+    });
+    await act(async () => {
+      rejectAbort(new Error("the daemon would not abort"));
+    });
+    // The abort withdrew nothing: the lines the server still holds are back in the update that reports the error.
+    expect(await screen.findByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+    expect(screen.getByText("Queued · 1")).toBeDefined();
+    // And no later queue-less frame takes them again — the cue's claim was retracted with the rejection.
+    await act(async () => {
+      daemon.setTranscript("session", {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "playbook prompt" }] },
+          { role: "assistant", content: [{ type: "text", text: "streaming more" }] },
+        ],
+      });
+    });
+    expect(screen.getByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+    expect(screen.getByText("Queued · 1")).toBeDefined();
+  });
+
+  it("shows no queued panel in the read-only history composer", async () => {
+    // A session whose process is gone but which is not ended can still hold a queue. The history view is read-only and
+    // the design gives it no panel at all: no line, and no working Remove button inside a surface that cannot send.
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "interrupted" }, state: null, checkpoint: {} });
+    renderSession({ intent: "attach" });
+    fireEvent.click(await screen.findByRole("button", { name: "View history" }));
+    await act(async () => {
+      daemon.setTranscript("session", {
+        messages: [{ role: "user", content: [{ type: "text", text: "playbook prompt" }] }],
+        queued: [{ id: "7", mode: "followUp", text: "hold this", images: [] }],
+      });
+    });
+    expect(await screen.findByPlaceholderText("This session has ended — history only")).toBeDefined();
+    expect(await screen.findByText("playbook prompt")).toBeDefined();
+    expect(screen.queryByText("hold this", { selector: ".queued-panel-text" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove hold this" })).toBeNull();
   });
 
   it("Remove calls removeQueuedMessage and a rejection restores the line", async () => {
