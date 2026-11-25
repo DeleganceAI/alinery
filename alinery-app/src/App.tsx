@@ -6,6 +6,7 @@ import {
   Copy,
   FolderPlus,
   Grid3X3,
+  Inbox,
   List,
   MessageSquare,
   Play,
@@ -23,6 +24,7 @@ import { ThinkingOrb } from "thinking-orbs";
 import { belongsToTeam } from "./AccountMenu";
 import { afterPaint } from "./afterPaint";
 import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
+import { CAPTURE_SHORTCUT, CaptureSidebar, INBOX_SHORTCUT, QuickCapture } from "./CaptureSidebar";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
@@ -256,6 +258,8 @@ export default function App() {
   // Global left terminal drawer — ephemeral; not persisted.
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [quickChatOpen, setQuickChatOpen] = useState(false);
+  const [capturesOpen, setCapturesOpen] = useState(false);
+  const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT_WIDTH);
   const [drawer, setDrawer] = useState<DrawerHandle | null>(null);
   const [drawerCreating, setDrawerCreating] = useState(false);
@@ -1256,6 +1260,8 @@ export default function App() {
     toggleQuickChat: () => {
       if (showChat && !onboardingVisible) setQuickChatOpen((open) => !open);
     },
+    toggleCapture: () => setQuickCaptureOpen((open) => !open),
+    toggleInbox: () => setCapturesOpen((open) => !open),
     focusQuickChat: () => !onboardingVisible && showChat && quickChatOpen && focusQuickChatComposer(),
   });
 
@@ -1299,6 +1305,8 @@ export default function App() {
           action("kill-terminal", pi(X), "Kill terminal drawer", "⌘⇧`", () => void killDrawer()),
         ]
       : []),
+    action("capture", pi(Inbox), "Capture", CAPTURE_SHORTCUT, () => setQuickCaptureOpen(true)),
+    action("captures", pi(Inbox), "Toggle capture inbox", INBOX_SHORTCUT, () => setCapturesOpen((open) => !open)),
     action("playbooks", pi(List), "Go to Playbooks", "", () => switchTop("playbooks", { instant: true })),
     ...(showTeam ? [action("team", pi(List), "Go to Team", "", () => switchTop("team", { instant: true }))] : []),
     action("onboarding-guide", pi(BookOpen), "Replay playbook onboarding guide", "", replayPlaybookGuide),
@@ -1406,7 +1414,7 @@ export default function App() {
           />
         )}
         <ResizeHandles />
-        <div className="app-shell">
+        <div className={capturesOpen ? "app-shell with-captures" : "app-shell"}>
           <div className={drawerOpen ? "app app-with-drawer" : "app"} style={drawerOpen ? ({ ["--drawer-width" as string]: `${drawerWidth}px` } as CSSProperties) : undefined}>
             {(drawerOpen || (drawer?.tabs.length ?? 0) > 0) && (
               <TerminalDrawer
@@ -1477,6 +1485,8 @@ export default function App() {
                 )}
               </main>
               <HotkeyBar
+                onCapture={() => setQuickCaptureOpen(true)}
+                onInbox={() => setCapturesOpen((open) => !open)}
                 view={view.kind}
                 daemon={daemon}
                 showHints={Boolean(appConfig?.active_repo)}
@@ -1492,6 +1502,8 @@ export default function App() {
             </div>
           </div>
           {isDev && <LaunchSourceBar sourceRoot={DEV_LAUNCH_ROOT} />}
+          <CaptureSidebar open={capturesOpen} onClose={() => setCapturesOpen(false)} />
+          {quickCaptureOpen && <QuickCapture onClose={() => setQuickCaptureOpen(false)} />}
           {showChat ? (
             <QuickChat
               open={quickChatOpen}

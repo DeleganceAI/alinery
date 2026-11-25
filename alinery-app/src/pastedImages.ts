@@ -33,6 +33,11 @@ export function stagePastedImages(clipboard: DataTransfer, current: PastedImage[
       if (file.type.startsWith("image/")) files.push(file);
     }
   }
+  return { ...stageImageFiles(files, current, errors), hasImage: hasImage || files.length > 0 };
+}
+
+/** The same limits for image files that did not come off the clipboard (a dropped capture's). */
+export function stageImageFiles(files: File[], current: PastedImage[], errors: string[] = []) {
   let total = current.reduce((sum, image) => sum + image.file.size, 0);
   const added: PastedImage[] = [];
   for (const file of files) {
@@ -56,5 +61,5 @@ export function stagePastedImages(clipboard: DataTransfer, current: PastedImage[
       total += file.size;
     }
   }
-  return { added, errors, hasImage: hasImage || files.length > 0 };
+  return { added, errors };
 }

@@ -30,6 +30,8 @@ export type Handlers = {
   toggleTerminalDrawer: () => void;
   killTerminalDrawer: () => void;
   toggleQuickChat: () => void;
+  toggleCapture: () => void;
+  toggleInbox: () => void;
   /** True when the caret landed in the floater. False leaves the key alone. */
   focusQuickChat: () => boolean;
 };
@@ -56,6 +58,13 @@ export function useHotkeys(handlers: Handlers) {
       if ((e.metaKey || e.ctrlKey) && e.code === "Slash" && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         H.toggleQuickChat();
+        return;
+      }
+      // ⌘⇧C captures and ⌘⇧I shows the inbox, from anywhere: a text field or an open dialog included.
+      if (appCommand && e.shiftKey && !e.altKey && (e.code === "KeyC" || e.code === "KeyI")) {
+        e.preventDefault();
+        if (e.code === "KeyC") H.toggleCapture();
+        else H.toggleInbox();
         return;
       }
       const greaterThan = e.key === ">" || (e.shiftKey && e.code === "Period");
