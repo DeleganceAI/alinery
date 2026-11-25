@@ -19,6 +19,9 @@ function Bubble({ entry, state }: { entry: RolloutEntry; state: string }) {
 /** Never empty: a step that has published nothing still shows a sliver, so its line reads as started. */
 const MIN_PROGRESS = 0.06;
 
+/** A closed group shows this many of its sessions as dots, then a count of the rest. */
+const MAX_DOTS = 12;
+
 /**
  * A task as one conversation: every session in the order it ran, each introduced by its step's bubble. A running
  * session shows one line of what it is doing; a click opens its messages in place. The session itself is mounted
@@ -204,10 +207,12 @@ export function TaskRollout({
             // A group is one line until the reader opens it, or one of its sessions is waiting on them.
             const id = row[0].session.id;
             const open = toggled[`group:${id}`] ?? row.some(needsUser);
+            const flip = () => setToggled((current) => ({ ...current, [`group:${id}`]: !open }));
+            const sorted = [...row].sort((left, right) => RANK[stateOf(left)] - RANK[stateOf(right)]);
             return (
               <li key={id} className="rollout-row rollout-group">
                 <div className="rollout-mark rollout-group-mark">
-                  <button type="button" className="rollout-toggle" aria-expanded={open} onClick={() => setToggled((current) => ({ ...current, [`group:${id}`]: !open }))}>
+                  <button type="button" className="rollout-toggle" aria-expanded={open} onClick={flip}>
                     <Bubble entry={lead} state="" />
                     <span className="rollout-step-title">{title}</span>
                     <span className="rollout-step-name">{summary}</span>
@@ -215,12 +220,16 @@ export function TaskRollout({
                   {progress(row, title)}
                 </div>
                 {/* Closed, only the session the composer talks to stays mounted, unseen: its composer comes from it. */}
-                <div hidden={!open}>
-                  {[...row]
-                    .filter((entry) => open || entry === target)
-                    .sort((left, right) => RANK[stateOf(left)] - RANK[stateOf(right)])
-                    .map((entry) => turn(entry, true))}
-                </div>
+                {/* Closed, a dot per session says there is more under this line than a single step has. */}
+                {!open && (
+                  <button type="button" className="rollout-dots" aria-label={`Show ${row.length} agents`} onClick={flip}>
+                    {sorted.slice(0, MAX_DOTS).map((entry) => (
+                      <span key={entry.session.id} className={`rollout-bubble${entry.auxiliary ? " aux" : ""}${stateClass(entry)}`} title={entry.session.name || entry.title} />
+                    ))}
+                    {row.length > MAX_DOTS && <span>… +{row.length - MAX_DOTS}</span>}
+                  </button>
+                )}
+                <div hidden={!open}>{sorted.filter((entry) => open || entry === target).map((entry) => turn(entry, true))}</div>
               </li>
             );
           })}

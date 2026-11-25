@@ -56,7 +56,7 @@ it("shows a preview line per running session, opens one in place, and addresses 
   expect(widths()).toEqual(["100%", "6%"]);
   expect(screen.getByText("preview of step with composer")).toBeTruthy();
   expect(screen.queryByText("preview of aux")).toBeNull();
-  fireEvent.click(screen.getByText("2 agents"));
+  fireEvent.click(screen.getByRole("button", { name: "Show 2 agents" }));
   // Open, it is the step's line, then a line each, named by the session.
   expect(widths()).toEqual(["100%", "6%", "6%", "6%"]);
   // Every running session is mounted collapsed, as its preview; the newest playbook step owns the composer. The finished one is a line only.

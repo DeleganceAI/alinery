@@ -40,6 +40,25 @@
   z-index: 2;
   min-height: 24px;
 }
+.rollout-dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 2px 30px;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.rollout-dots:hover {
+  color: var(--text);
+}
+.rollout-dots .rollout-bubble.done {
+  opacity: 0.55;
+}
+.rollout-dots .rollout-bubble,
 .rollout-turn.member .rollout-bubble {
   width: 12px;
   height: 12px;
