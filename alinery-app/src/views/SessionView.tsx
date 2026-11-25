@@ -152,6 +152,8 @@ function prepareChatSend(taskSlug: string, repoPath: string, caption: string, at
 export type SessionBare = {
   /** Where the composer renders: the rollout's one pinned box. Null for a session the box is not addressed to. */
   composerSlot: HTMLElement | null;
+  /** Drawn in the composer before its prompt mark: which session the box sends to. */
+  composerMark?: ReactNode;
   /** Collapsed: one line saying what the agent is doing now, in place of the conversation. */
   preview: boolean;
   onExpand: () => void;
@@ -1732,6 +1734,7 @@ export function SessionView({
                           ? inComposerSlot(
                               <>
                                 <ChatComposer
+                                  beforePrompt={bare?.composerMark}
                                   besideSend={
                                     showNudge ? (
                                       <button

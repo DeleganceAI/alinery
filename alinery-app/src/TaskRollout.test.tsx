@@ -44,7 +44,12 @@ it("shows a preview line per running session, opens one in place, and addresses 
       repoPath="/repo"
       slug="task"
       now={400}
-      renderSession={(s, bare) => <div>{`${bare.preview ? "preview" : "conversation"} of ${s.id}${bare.composerSlot ? " with composer" : ""}`}</div>}
+      renderSession={(s, bare) => (
+        <div>
+          {`${bare.preview ? "preview" : "conversation"} of ${s.id}${bare.composerSlot ? " with composer" : ""}`}
+          {bare.composerSlot && bare.composerMark}
+        </div>
+      )}
       onOpenSession={onOpenSession}
       onOpenArtifact={vi.fn()}
     />,
@@ -64,10 +69,10 @@ it("shows a preview line per running session, opens one in place, and addresses 
   expect(screen.getByText("preview of aux")).toBeTruthy();
   expect(screen.queryByText(/of done/)).toBeNull();
 
-  // Clicking a running session's line moves the composer to it, open or closed; the line above the box names it.
+  // Clicking a running session's line moves the composer to it, open or closed; the box's own mark names it.
   fireEvent.click(screen.getByRole("button", { name: /name-aux$/ }));
   fireEvent.click(screen.getByRole("button", { name: /name-aux$/ }));
-  expect(document.querySelector(".rollout-to")?.textContent).toContain("name-aux");
+  expect(document.querySelector(".rollout-to")?.getAttribute("title")).toContain("name-aux");
   expect(screen.getByText("preview of aux with composer")).toBeTruthy();
   expect(screen.getByText("preview of step")).toBeTruthy();
 

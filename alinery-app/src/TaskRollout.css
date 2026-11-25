@@ -351,18 +351,10 @@
   margin: 0 auto;
   box-sizing: border-box;
 }
+/* In the composer's row, level with its prompt mark, with room for the ring. */
 .rollout-to {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-.rollout-to-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: none;
+  margin: 0 2px 3px 4px;
 }
 .rollout-bubble.target {
   outline: 2px solid var(--accent);

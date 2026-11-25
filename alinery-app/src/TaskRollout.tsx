@@ -81,6 +81,12 @@ export function TaskRollout({
   /** The session the composer sends to wears a ring on its bubble, wherever that bubble is drawn. */
   const bubbleState = (entry: RolloutEntry) => `${stateClass(entry)}${entry === target ? " target" : ""}`;
   const targetRow = rows.find((row) => target && row.includes(target));
+  /** The same ringed bubble sits in the composer, before its prompt mark: the box says who it sends to. */
+  const composerMark = target && (
+    <span className="rollout-to" title={`Sending to ${[target.title, target.session.name].filter(Boolean).join(" · ")}`}>
+      <Bubble entry={target} state={bubbleState(target)} index={targetRow && targetRow.length > 1 ? targetRow.indexOf(target) + 1 : 0} />
+    </span>
+  );
 
   // One scroll for the whole task: follow new output while the reader is at the bottom, and stay put once they scroll up.
   const stream = useRef<HTMLDivElement>(null);
@@ -159,7 +165,7 @@ export function TaskRollout({
         {/* A running session stays mounted while collapsed: its one-line preview and its composer come from it. */}
         {s.worktree && (open || live) && (
           <div className="rollout-session">
-            {renderSession(s, { composerSlot: target?.session.id === s.id ? composerSlot : null, preview: !open, onExpand: toggle }, () =>
+            {renderSession(s, { composerSlot: target?.session.id === s.id ? composerSlot : null, composerMark, preview: !open, onExpand: toggle }, () =>
               setToggled((current) => ({ ...current, [s.id]: false })),
             )}
           </div>
@@ -262,13 +268,6 @@ export function TaskRollout({
         </ol>
       </div>
       <div className="rollout-composer">
-        {target && (
-          <div className="rollout-to">
-            Sending to
-            <Bubble entry={target} state={bubbleState(target)} index={targetRow && targetRow.length > 1 ? targetRow.indexOf(target) + 1 : 0} />
-            <span className="rollout-to-name">{[target.title, target.session.name].filter(Boolean).join(" · ")}</span>
-          </div>
-        )}
         <div className="rollout-composer-slot" ref={setComposerSlot} data-empty={target ? "Connecting to the session…" : "No session is running. Start one to send a message."} />
       </div>
     </div>

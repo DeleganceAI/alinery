@@ -35,6 +35,8 @@ export type ChatComposerProps = {
   onPasteFiles?: (files: File[]) => void;
   /** The reviewed playbook action, adjacent to Send. */
   besideSend?: ReactNode;
+  /** Drawn before the prompt mark: who this box sends to, where the box is one of several sessions'. */
+  beforePrompt?: ReactNode;
   /** Session controls and stats at the left of the footer, under the input. */
   actions?: ReactNode;
   /** Centered in the footer, under the input. */
@@ -66,6 +68,7 @@ export function ChatComposer({
   onPasteFiles,
   actions,
   besideSend,
+  beforePrompt,
   center,
   end,
 }: ChatComposerProps) {
@@ -281,6 +284,7 @@ export function ChatComposer({
                 <Paperclip className="chat-composer-icon" />
               </button>
             ) : null}
+            {beforePrompt}
             <span className="chat-composer-prompt" aria-hidden>
               ›
             </span>
