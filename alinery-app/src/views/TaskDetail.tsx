@@ -142,16 +142,23 @@ type ErrState = { msg: string; detail: string; tone?: "info" } | null;
 
 const TASK_SESSION_VIEW_KEY = "alinery.taskSessionView";
 
-function readStoredTaskSessionView(): "graph" | "list" {
+type TaskSessionView = "rollout" | "graph" | "list";
+// The three ways to read the sessions pane, in the order the switch shows them.
+const TASK_SESSION_VIEWS = [
+  { key: "rollout", label: "Show rollout view", title: "Rollout: every session in the order it ran, with the files each step published", Icon: ListTree },
+  { key: "graph", label: "Show graph view", title: "Graph: sessions and the files that connect them", Icon: Network },
+  { key: "list", label: "Show list view", title: "List: sessions as a sortable table", Icon: List },
+] as const;
+
+function readStoredTaskSessionView(): TaskSessionView {
   try {
-    return localStorage.getItem(TASK_SESSION_VIEW_KEY) === "list" ? "list" : "graph";
+    const stored = localStorage.getItem(TASK_SESSION_VIEW_KEY);
+    return stored === "list" || stored === "rollout" ? stored : "graph";
   } catch {
     return "graph";
   }
 }
 
-/** Rollout is a third way to read the sessions pane, kept apart from graph/list so leaving it returns to the one chosen there. */
-const TASK_ROLLOUT_KEY = "alinery.taskRollout";
 const TASK_TWO_PANE_KEY = "alinery.taskTwoPane";
 const TASK_SESSIONS_SIDE_KEY = "alinery.taskSessionsSide";
 const TASK_SESSIONS_WIDTH_KEY = "alinery.taskSessionsWidth";
@@ -167,13 +174,6 @@ function writeStored(key: string, value: string) {
     localStorage.setItem(key, value);
   } catch {
     // The choice still holds for this view.
-  }
-}
-function readStoredRollout(): boolean {
-  try {
-    return localStorage.getItem(TASK_ROLLOUT_KEY) === "1";
-  } catch {
-    return false;
   }
 }
 
@@ -336,7 +336,7 @@ export function TaskDetail({
     : "";
   const [showArchived, setShowArchived] = useState(false);
   const [sessionView, setSessionView] = useState(readStoredTaskSessionView);
-  const [rollout, setRollout] = useState(readStoredRollout);
+  const rollout = sessionView === "rollout";
   // One pane or two. With two, Sessions keeps one side and every opened file or session tab shows in the other,
   // so a file opened from the sessions pane lands beside it. Sessions exists once: it holds the live session views.
   const [twoPane, setTwoPane] = useState(() => readStored(TASK_TWO_PANE_KEY) === "1");
@@ -1707,43 +1707,24 @@ export function TaskDetail({
               <div className="task-panel-head">
                 <div className="task-sessions-heading">
                   <h3 className="task-panel-title">Sessions</h3>
-                  <button
-                    type="button"
-                    className={`btn ghost small${rollout ? " on" : ""}`}
-                    aria-pressed={rollout}
-                    title="Every session in the order it ran, with the files each step published"
-                    onClick={() => {
-                      setRollout(!rollout);
-                      try {
-                        localStorage.setItem(TASK_ROLLOUT_KEY, rollout ? "0" : "1");
-                      } catch {
-                        // Keep switching usable when preference storage is unavailable.
-                      }
-                    }}
-                  >
-                    <ListTree size={14} aria-hidden="true" />
-                    Rollout
-                  </button>
-                  {!rollout && (
-                    <button
-                      type="button"
-                      className="btn ghost small"
-                      aria-label={sessionView === "graph" ? "Show list view" : "Show graph view"}
-                      title={sessionView === "graph" ? "Switch to list view" : "Switch to graph view"}
-                      onClick={() => {
-                        const next = sessionView === "graph" ? "list" : "graph";
-                        setSessionView(next);
-                        try {
-                          localStorage.setItem(TASK_SESSION_VIEW_KEY, next);
-                        } catch {
-                          // Keep switching usable when preference storage is unavailable.
-                        }
-                      }}
-                    >
-                      {sessionView === "graph" ? <List size={14} aria-hidden="true" /> : <Network size={14} aria-hidden="true" />}
-                      {sessionView === "graph" ? "List" : "Graph"}
-                    </button>
-                  )}
+                  <fieldset className="btn-group step-continuation-mode" aria-label="Sessions view">
+                    {TASK_SESSION_VIEWS.map(({ key, label, title, Icon }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className="btn ghost small"
+                        aria-label={label}
+                        aria-pressed={sessionView === key}
+                        title={title}
+                        onClick={() => {
+                          setSessionView(key);
+                          writeStored(TASK_SESSION_VIEW_KEY, key);
+                        }}
+                      >
+                        <Icon size={14} aria-hidden="true" />
+                      </button>
+                    ))}
+                  </fieldset>
                 </div>
                 <div className="task-session-controls">
                   {executionView && (

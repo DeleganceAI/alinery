@@ -2492,8 +2492,9 @@ describe("main pane file tabs", () => {
     expect(main.classList.contains("sessions-right")).toBe(true);
 
     // Rollout is only a way to read the sessions pane: it does not change the panes.
-    fireEvent.click(screen.getByRole("button", { name: "Rollout" }));
-    expect(screen.queryByRole("button", { name: /Show (list|graph) view/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show rollout view" }));
+    expect(screen.getByRole("button", { name: "Show rollout view" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Show graph view" }).getAttribute("aria-pressed")).toBe("false");
     expect(sessionsTab.hidden).toBe(false);
 
     // Closing the last file gives Sessions the whole pane again.
@@ -2501,7 +2502,7 @@ describe("main pane file tabs", () => {
     expect(main.classList.contains("two-pane")).toBe(false);
     // The choices are stored: put them back for the tests after this one.
     fireEvent.click(screen.getByRole("button", { name: "Two panes" }));
-    fireEvent.click(screen.getByRole("button", { name: "Rollout" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show graph view" }));
   });
   it("a single click opens a temporary tab the next one replaces, and clicking it in the strip keeps it", async () => {
     const owned = (label: string): ArtifactTreeNode => ({ id: `node-${label}`, kind: "owned", label, owner_task_slug: "parent", source: "owned", children: [] });
