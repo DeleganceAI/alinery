@@ -64,15 +64,17 @@ it("shows a preview line per running session, opens one in place, and addresses 
   expect(screen.getByText("preview of aux")).toBeTruthy();
   expect(screen.queryByText(/of done/)).toBeNull();
 
-  // The To menu, or opening a running session, moves the composer to it.
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "aux" } });
+  // Clicking a running session's line moves the composer to it, open or closed; the line above the box names it.
+  fireEvent.click(screen.getByRole("button", { name: /name-aux$/ }));
+  fireEvent.click(screen.getByRole("button", { name: /name-aux$/ }));
+  expect(document.querySelector(".rollout-to")?.textContent).toContain("name-aux");
   expect(screen.getByText("preview of aux with composer")).toBeTruthy();
   expect(screen.getByText("preview of step")).toBeTruthy();
 
   // The running step's owed output is listed but cannot be opened yet.
   expect((screen.getByRole("button", { name: /2-result-10\.md/ }) as HTMLButtonElement).disabled).toBe(true);
 
-  fireEvent.click(screen.getByText("name-step"));
+  fireEvent.click(screen.getByRole("button", { name: /name-step$/ }));
   expect(screen.getByText("conversation of step with composer")).toBeTruthy();
   expect(screen.getByText("preview of aux")).toBeTruthy();
   fireEvent.click(screen.getAllByRole("button", { name: "Open session" })[1]);

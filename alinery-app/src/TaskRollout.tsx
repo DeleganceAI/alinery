@@ -73,9 +73,14 @@ export function TaskRollout({
   const isOpen = (entry: RolloutEntry) => toggled[entry.session.id] ?? needsUser(entry);
 
   // The one composer talks to a running session: the one the reader picked or last opened, else one waiting on them, else the newest step.
+  // ponytail: no menu; the reader changes it by clicking a session's line or bubble.
   const running = rows.flat().filter((entry) => entry.end == null && !entry.session.archived && entry.session.worktree);
   const target =
     running.find((entry) => entry.session.id === picked) ?? (running.length ? running.find((entry) => entry.session.id === defaultFocus(running, needsUser)) : undefined);
+
+  /** The session the composer sends to wears a ring on its bubble, wherever that bubble is drawn. */
+  const bubbleState = (entry: RolloutEntry) => `${stateClass(entry)}${entry === target ? " target" : ""}`;
+  const targetRow = rows.find((row) => target && row.includes(target));
 
   // One scroll for the whole task: follow new output while the reader is at the bottom, and stay put once they scroll up.
   const stream = useRef<HTMLDivElement>(null);
@@ -121,15 +126,15 @@ export function TaskRollout({
     const superseded = Boolean(entry.execution && entry.execution.owner_session_id !== s.id);
     const toggle = () => {
       setToggled((current) => ({ ...current, [s.id]: !open }));
-      // Opening a running session is how the reader says which one they are talking to.
-      if (!open && live) setPicked(s.id);
+      // Clicking a running session's line is how the reader says which one they are talking to.
+      if (live) setPicked(s.id);
     };
     return (
       // A closed member is one table-like line: its preview and files sit in the line, by CSS alone, so the session never moves or remounts.
       <div key={s.id} className={`rollout-turn${member ? " member" : ""}${member && !open ? " inline" : ""}`}>
         <div className="rollout-mark">
           <button type="button" className="rollout-toggle" aria-expanded={open} disabled={!s.worktree} onClick={toggle}>
-            <Bubble entry={entry} state={stateClass(entry)} index={index} />
+            <Bubble entry={entry} state={bubbleState(entry)} index={index} />
             <span className="rollout-step-title">{member ? s.name || entry.title : entry.title}</span>
             {!member && s.name && <span className="rollout-step-name">{s.name}</span>}
           </button>
@@ -243,7 +248,7 @@ export function TaskRollout({
                           if (entry.end == null && !entry.session.archived) setPicked(entry.session.id);
                         }}
                       >
-                        <Bubble entry={entry} state={stateClass(entry)} index={at + 1} />
+                        <Bubble entry={entry} state={bubbleState(entry)} index={at + 1} />
                       </button>
                     ))}
                     {row.length > MAX_DOTS && <span>… +{row.length - MAX_DOTS}</span>}
@@ -257,17 +262,12 @@ export function TaskRollout({
         </ol>
       </div>
       <div className="rollout-composer">
-        {running.length > 1 && target && (
-          <label className="rollout-to">
-            To
-            <select value={target.session.id} onChange={(event) => setPicked(event.target.value)}>
-              {running.map((entry) => (
-                <option key={entry.session.id} value={entry.session.id}>
-                  {[entry.stepNumber, entry.title, entry.session.name].filter(Boolean).join(" · ")}
-                </option>
-              ))}
-            </select>
-          </label>
+        {target && (
+          <div className="rollout-to">
+            Sending to
+            <Bubble entry={target} state={bubbleState(target)} index={targetRow && targetRow.length > 1 ? targetRow.indexOf(target) + 1 : 0} />
+            <span className="rollout-to-name">{[target.title, target.session.name].filter(Boolean).join(" · ")}</span>
+          </div>
         )}
         <div className="rollout-composer-slot" ref={setComposerSlot} data-empty={target ? "Connecting to the session…" : "No session is running. Start one to send a message."} />
       </div>
