@@ -1,4 +1,5 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
+import { toast } from "./toast";
 
 /** One thing dumped into the inbox: whatever was typed plus any pasted images. */
 export type Capture = { id: string; at: number; text: string; images: File[] };
@@ -82,16 +83,28 @@ export function useCaptureDrop(onDrop: (capture: Capture) => void) {
   }, []);
 }
 
-/** The innermost drop target under a point, if any. */
+/**
+ * The innermost drop target under a point, if any. A plain textarea with no handler of its own
+ * (an artifact comment, a handoff note) still takes a capture's text.
+ */
 export function captureDropTargetAt(x: number, y: number): Element | null {
-  for (let element = document.elementFromPoint?.(x, y) ?? null; element; element = element.parentElement) {
+  const under = document.elementFromPoint?.(x, y) ?? null;
+  for (let element = under; element; element = element.parentElement) {
     if (targets.has(element)) return element;
   }
-  return null;
+  const field = under?.closest("textarea");
+  return field && !field.readOnly && !field.disabled && !field.closest(".capture-sidebar") ? field : null;
 }
 
 export function dropCapture(target: Element, capture: Capture) {
-  targets.get(target)?.(capture);
+  const handler = targets.get(target);
+  if (handler) return handler(capture);
+  if (!(target instanceof HTMLTextAreaElement)) return;
+  if (!capture.text) return toast.error("This field takes text only.");
+  // The native setter plus an input event is what a controlled React field hears as typing.
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(target, appendCaptureText(target.value, capture.text));
+  target.dispatchEvent(new Event("input", { bubbles: true }));
+  target.focus();
 }
 
 /** A capture's text appended to a draft on its own line. */

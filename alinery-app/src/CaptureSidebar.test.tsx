@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { CaptureSidebar, QuickCapture } from "./CaptureSidebar";
-import { appendCaptureText, type Capture, useCaptureDrop } from "./captures";
+import { appendCaptureText, type Capture, captureDropTargetAt, dropCapture, useCaptureDrop } from "./captures";
 
 vi.mock("./ipc", async () => (await import("./test/mockIpc")).mockIpc());
 
@@ -94,4 +95,17 @@ test("a screenshot pasted into the box saves itself as its own capture and leave
   fireEvent.paste(box, { clipboardData: { items: [], files: [shot], getData: () => "" } });
   expect(await screen.findByAltText("shot.png")).toBeTruthy();
   expect(box.value).toBe("half a thought");
+});
+
+test("a plain controlled textarea takes a dropped capture's text on its own line", () => {
+  function Comment() {
+    const [value, setValue] = useState("first");
+    return <textarea aria-label="Comment" value={value} onChange={(event) => setValue(event.target.value)} />;
+  }
+  render(<Comment />);
+  const field = screen.getByLabelText("Comment") as HTMLTextAreaElement;
+  document.elementFromPoint = () => field;
+  expect(captureDropTargetAt(0, 0)).toBe(field);
+  act(() => dropCapture(field, { id: "1", at: 0, text: "second", images: [] }));
+  expect(field.value).toBe("first\nsecond");
 });
