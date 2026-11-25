@@ -77,4 +77,9 @@ it("shows a preview line per running session, opens one in place, and addresses 
   expect(screen.getByText("preview of aux")).toBeTruthy();
   fireEvent.click(screen.getAllByRole("button", { name: "Open session" })[1]);
   expect(onOpenSession).toHaveBeenCalledWith(expect.objectContaining({ id: "step" }));
+
+  // Closed again, the group is a row of numbered bubbles; one of them opens the group at its session.
+  fireEvent.click(screen.getByRole("button", { name: "Hide 2 agents" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open name-aux" }));
+  expect(screen.getByText("conversation of aux with composer")).toBeTruthy();
 });

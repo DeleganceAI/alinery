@@ -1,4 +1,4 @@
-import { ArrowUpRight, FileText } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { defaultFocus, formatElapsed, type RolloutEntry, type RolloutRow } from "./rolloutModel";
 import { hasAcknowledgedExit, observationDisplayKind } from "./sessionAttention";
@@ -125,7 +125,8 @@ export function TaskRollout({
       if (!open && live) setPicked(s.id);
     };
     return (
-      <div key={s.id} className={`rollout-turn${member ? " member" : ""}`}>
+      // A closed member is one table-like line: its preview and files sit in the line, by CSS alone, so the session never moves or remounts.
+      <div key={s.id} className={`rollout-turn${member ? " member" : ""}${member && !open ? " inline" : ""}`}>
         <div className="rollout-mark">
           <button type="button" className="rollout-toggle" aria-expanded={open} disabled={!s.worktree} onClick={toggle}>
             <Bubble entry={entry} state={stateClass(entry)} index={index} />
@@ -166,11 +167,12 @@ export function TaskRollout({
                 type="button"
                 className="rollout-artifact"
                 disabled={artifact.pending}
+                aria-label={artifact.path.slice(artifact.path.lastIndexOf("/") + 1)}
                 title={artifact.pending ? `${artifact.path} — not written yet` : artifact.path}
                 onClick={() => onOpenArtifact(artifact.path)}
               >
                 <FileText size={12} aria-hidden="true" />
-                {artifact.path.slice(artifact.path.lastIndexOf("/") + 1)}
+                <span className="rollout-artifact-name">{artifact.path.slice(artifact.path.lastIndexOf("/") + 1)}</span>
               </button>
             ))}
           </div>
@@ -223,15 +225,30 @@ export function TaskRollout({
                     <span className="rollout-step-name">{summary}</span>
                   </button>
                   {progress(row, title)}
+                  <button type="button" className="btn ghost small rollout-open" aria-label={`${open ? "Hide" : "Show"} ${row.length} agents`} onClick={flip}>
+                    {open ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+                  </button>
                 </div>
-                {/* Closed, only the session the composer talks to stays mounted, unseen: its composer comes from it. */}
-                {/* A bubble per session, numbered in start order: what says this line holds more than a single step, and the way in and out. */}
-                <button type="button" className="rollout-dots" aria-expanded={open} aria-label={`${open ? "Hide" : "Show"} ${row.length} agents`} onClick={flip}>
-                  {row.slice(0, MAX_DOTS).map((entry, at) => (
-                    <Bubble key={entry.session.id} entry={entry} state={stateClass(entry)} index={at + 1} />
-                  ))}
-                  {row.length > MAX_DOTS && <span>… +{row.length - MAX_DOTS}</span>}
-                </button>
+                {/* Closed, a numbered bubble per session says this line holds more than a single step; one of them opens the group at its session. */}
+                {!open && (
+                  <div className="rollout-dots">
+                    {row.slice(0, MAX_DOTS).map((entry, at) => (
+                      <button
+                        key={entry.session.id}
+                        type="button"
+                        className="rollout-dot"
+                        aria-label={`Open ${entry.session.name || entry.title}`}
+                        onClick={() => {
+                          setToggled((current) => ({ ...current, [`group:${id}`]: true, [entry.session.id]: true }));
+                          if (entry.end == null && !entry.session.archived) setPicked(entry.session.id);
+                        }}
+                      >
+                        <Bubble entry={entry} state={stateClass(entry)} index={at + 1} />
+                      </button>
+                    ))}
+                    {row.length > MAX_DOTS && <span>… +{row.length - MAX_DOTS}</span>}
+                  </div>
+                )}
                 {/* Closed, only the session the composer talks to stays mounted, unseen: its composer comes from it. */}
                 <div hidden={!open}>{row.map((entry, at) => (open || entry === target ? turn(entry, at + 1) : null))}</div>
               </li>

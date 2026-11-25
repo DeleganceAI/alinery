@@ -42,21 +42,78 @@
 }
 .rollout-dots {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 2px 0 2px 30px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.rollout-dot {
+  padding: 0;
   border: 0;
   background: none;
-  color: var(--text-muted);
   font: inherit;
-  font-size: 12px;
   cursor: pointer;
 }
-.rollout-dots:hover {
-  color: var(--text);
-}
-.rollout-dots .rollout-bubble.done {
+.rollout-dot .rollout-bubble.done {
   opacity: 0.55;
+}
+/* A closed member is one line, like a table row: number and name, what it is doing, progress, time, files, open.
+   The line's own box dissolves so the session's preview, which lives under it in the tree, can sit inside it. */
+.rollout-turn.inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.rollout-turn.inline > .rollout-mark {
+  display: contents;
+}
+.rollout-turn.inline .rollout-toggle {
+  flex: 0 1 280px;
+}
+.rollout-turn.inline .rollout-step-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rollout-turn.inline > .rollout-session {
+  order: 1;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.rollout-turn.inline .rollout-preview {
+  padding: 0;
+}
+.rollout-turn.inline .rollout-rule {
+  order: 2;
+  flex: none;
+  width: 120px;
+  margin-left: auto;
+}
+/* The bubble already carries the state; the preview says the rest. */
+.rollout-turn.inline .statusdot {
+  display: none;
+}
+.rollout-turn.inline .rollout-elapsed {
+  order: 3;
+}
+.rollout-turn.inline > .rollout-artifacts {
+  order: 4;
+  flex: none;
+  flex-wrap: nowrap;
+  padding: 0;
+}
+.rollout-turn.inline .rollout-artifact {
+  padding: 4px;
+}
+.rollout-turn.inline .rollout-artifact-name {
+  display: none;
+}
+.rollout-turn.inline .rollout-open {
+  order: 5;
 }
 /* A numbered member: wide enough for its subscript. */
 .rollout-bubble.sub {
