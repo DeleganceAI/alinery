@@ -25,6 +25,7 @@ import type { ModelRolesMap } from "../chat/modelRoles";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
 import { useProviderAccess } from "../chat/providerAccess";
 import { shouldOfferProviderSetup } from "../chat/providers";
+import { dropQueuedLine, queuedLineOf, queueOptimisticLine, removeQueuedAndRestore, restoreQueuedLine } from "../chat/send";
 import type { ProvidersDialogTab } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
 import { decodeVinculumPage } from "../chat/vinculumFile";
@@ -36,10 +37,13 @@ import {
   applySessionControls,
   applyVinculumTranscript,
   type ChatTranscriptState,
+  consumeQueueCue,
   emptyTranscript,
   NEXT_TURN_MODEL_TITLE,
   NEXT_TURN_THINKING_TITLE,
   needsUiReply,
+  type QueueAbortCue,
+  withoutQueued,
 } from "../chatTranscript";
 import { confirmDanger } from "../confirm";
 import { lineageSessionIntent } from "../executionLineage";
@@ -95,6 +99,7 @@ import {
   archiveSession,
   promptSession,
   readSessionVinculum,
+  removeQueuedMessage,
   renameSession,
   sessionArtifactReady,
   setSessionModel,
@@ -129,6 +134,7 @@ import { ChatPane } from "./ChatPane";
 import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
 import { SessionActionPanel } from "./SessionActionPanel";
 import { StepContinuationMode } from "./StepContinuationMode";
+import { sessionReviewOffered } from "./sessionReview";
 
 // ---- session view -------------------------------------------------------------
 
@@ -344,6 +350,18 @@ export function SessionView({
   const attachmentSeq = useRef(0);
   const chatRef = useRef(chat);
   chatRef.current = chat;
+  const queueCue = useRef<QueueAbortCue>({ ended: false, withdrawn: false, settled: false });
+  const sessionEnded = live.session?.ended_at != null || observation?.lifecycle.state === "exited" || observation?.lifecycle.state === "live_exited";
+  queueCue.current.ended = sessionEnded;
+  useEffect(() => {
+    if (!sessionEnded) return;
+    setChat((current) => {
+      const next = withoutQueued(current);
+      if (next === current) return current;
+      chatRef.current = next;
+      return next;
+    });
+  }, [sessionEnded]);
 
   const handleTerminalConnectionState = useCallback((state: SessionTerminalConnectionState) => setTerminalConnection(state), []);
   const messageDraftRef = useRef(messageDraft);
@@ -810,22 +828,22 @@ export function SessionView({
       return;
     }
     const actions = [...messageDraftRef.current.pendingActions];
-    const busy = isTurnActive({
-      pendingTurn: chatRef.current.pendingTurn,
-      turnOpen: chatRef.current.turnOpen,
-      observation,
-    });
     setMessageSending(true);
     setMessageError("");
     try {
       if (transport === "rpc") {
         const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
-        await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images, chatRef.current.sessionMeta.model);
+        const admitted = await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images, chatRef.current.sessionMeta.model);
         if (reviewKey) setInvalidatedReview(reviewKey);
         // The row keeps the images the model was given, by the name they were copied under: the pane
         // reads them back from the same directory, so they stay visible after the turn ends.
         const row = prepared ? draftToRowAttachments(prepared.copied) : [];
-        const next = appendOptimisticUser(chatRef.current, caption, busy ? "follow_up" : "prompt", undefined, row.length > 0 ? row : undefined);
+        // Waiting or delivered is the daemon's answer, not a guess: a waiting input is a panel line and no thread row,
+        // and a delivered one is a message even if a turn looked open when it left.
+        const next =
+          admitted?.status === "queued" && admitted.submissionId !== ""
+            ? queueOptimisticLine(chatRef.current, queuedLineOf(admitted, caption, prepared?.images ?? []), { invokesModel: true })
+            : appendOptimisticUser(chatRef.current, caption, "prompt", undefined, row.length > 0 ? row : undefined);
         chatRef.current = next;
         setChat(next);
         updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
@@ -857,12 +875,24 @@ export function SessionView({
     setMessageError("");
     try {
       const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
-      await abortSession(repoPath, id);
-      await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images, chatRef.current.sessionMeta.model);
+      // Abort can withdraw the queue inside the coalesce window, so no frame will say it is empty. Drop the lines here.
+      // The cue is this abort's own: it is raised here and settled when the call answers, resolved or rejected.
+      queueCue.current.withdrawn = true;
+      queueCue.current.settled = false;
+      try {
+        await abortSession(repoPath, id);
+      } finally {
+        queueCue.current.settled = true;
+      }
+      const admitted = await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images, chatRef.current.sessionMeta.model);
       if (reviewKey) setInvalidatedReview(reviewKey);
       const rowAttachments = prepared ? draftToRowAttachments(prepared.copied) : [];
       updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
-      const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
+      const base = withoutQueued(chatRef.current);
+      const next =
+        admitted?.status === "queued" && admitted.submissionId !== ""
+          ? queueOptimisticLine(base, queuedLineOf(admitted, caption, prepared?.images ?? []), { invokesModel: true })
+          : appendOptimisticUser(base, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
       chatRef.current = next;
       setChat(next);
     } catch (error) {
@@ -999,8 +1029,10 @@ export function SessionView({
       repoPath,
       { taskSlug, id },
       (reply) => {
-        setChat(() => {
-          const next = applyVinculumTranscript(reply);
+        // The fold consumes the withdrawal cue: it covers the frames in flight at the abort and the first one after it settles.
+        const cue = consumeQueueCue(queueCue.current);
+        setChat((current) => {
+          const next = applyVinculumTranscript(reply, current, cue);
           chatRef.current = next;
           return next;
         });
@@ -1092,12 +1124,27 @@ export function SessionView({
     if (!liveRpc || !canAbortChatSession(messageReadiness)) return;
     setMessageInterrupting(true);
     setMessageError("");
+    // The lines this clear drops are kept: an abort that rejects withdraws nothing, and the server still holds them.
+    const held = chatRef.current.queued;
     try {
-      setChat((current) => appendOptimisticAbort(current));
+      // The cue is this abort's own: raised here, and settled when the call answers — resolved or rejected.
+      queueCue.current.withdrawn = true;
+      queueCue.current.settled = false;
+      setChat((current) => {
+        const next = withoutQueued(appendOptimisticAbort(current));
+        chatRef.current = next;
+        return next;
+      });
       await abortSession(repoPath, id);
     } catch (error) {
       setMessageError(`Couldn't interrupt the session: ${String(error)}`);
+      setChat((current) => {
+        const next = held.reduce((state, line) => restoreQueuedLine(state, line), current);
+        chatRef.current = next;
+        return next;
+      });
     } finally {
+      queueCue.current.settled = true;
       setMessageInterrupting(false);
     }
   };
@@ -1152,16 +1199,36 @@ export function SessionView({
     agentState !== "waiting_for_approval" &&
     !chat.sessionMeta.isCompacting &&
     (messageDraft.body.trim().length > 0 || (messageDraft.attachments?.length ?? 0) > 0);
-  const queuedMeta = chat.sessionMeta.queuedMessageCount ?? 0;
-  const canShowReview =
-    reviewCurrent &&
-    !turnActive &&
-    !messageSending &&
-    !messageInterrupting &&
-    !turnRetry?.pending &&
-    !chat.sessionMeta.isCompacting &&
-    queuedMeta === 0 &&
-    !chat.pendingUi.some((request) => needsUiReply(request.method));
+  const queuedMeta = chat.queued.length;
+  const canShowReview = sessionReviewOffered({
+    reviewCurrent,
+    turnActive,
+    messageSending,
+    messageInterrupting,
+    retryPending: Boolean(turnRetry?.pending),
+    compacting: Boolean(chat.sessionMeta.isCompacting),
+    queuedCount: queuedMeta,
+    pendingUi: chat.pendingUi.some((request) => needsUiReply(request.method)),
+  });
+  const removeQueued = (submissionId: string) => {
+    void removeQueuedAndRestore(
+      () => {
+        const dropped = dropQueuedLine(chatRef.current, submissionId);
+        if (!dropped.removed) return undefined;
+        chatRef.current = dropped.state;
+        setChat(dropped.state);
+        return dropped.removed;
+      },
+      () => removeQueuedMessage(repoPath, id, submissionId),
+      (line) => {
+        setChat((current) => {
+          const restored = restoreQueuedLine(current, line);
+          chatRef.current = restored;
+          return restored;
+        });
+      },
+    );
+  };
   const readyEndpoint = canShowReview && review?.endpoint && executionAvailable && rpcProcessLive;
   const chatMetaHead = chat.sessionMeta.model || model;
   const applyControls = (controls: Parameters<typeof applySessionControls>[1]) =>
@@ -1762,7 +1829,8 @@ export function SessionView({
                               onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
                               sendNowEnabled={sendNowEnabled}
                               canAbort={composerCanAbort}
-                              queuedCount={queuedMeta}
+                              queued={chat.queued}
+                              onRemoveQueued={removeQueued}
                             />
                             {messageError ? <InlineStatus tone="error">{messageError}</InlineStatus> : null}
                           </>
@@ -1844,7 +1912,18 @@ export function SessionView({
                   </>
                 )}
                 {readingHistory && vinculum && (!navHistory || !liveRpc) && (
-                  <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
+                  <ChatComposer
+                    body=""
+                    status="idle"
+                    catalog={[]}
+                    showHints={false}
+                    readOnly
+                    queued={chat.queued}
+                    onRemoveQueued={removeQueued}
+                    onBodyChange={() => undefined}
+                    onSend={() => undefined}
+                    onAbort={() => undefined}
+                  />
                 )}
                 {modelDialog && (
                   <ChatModelDialog

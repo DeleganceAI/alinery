@@ -114,7 +114,12 @@ async function withSessionAction<T>(id: string, run: () => Promise<T>): Promise<
   }
 }
 
-export async function submitSessionWork(slug: string, sessionId: string, submit: () => Promise<void>, check?: (boundExecution?: string) => Promise<boolean>, requestId?: string): Promise<void> {
+/**
+ * Run one admitted action for a session, after the execution's readiness is durably invalidated. `submit`'s value is the
+ * answer — the prompt's submission id and admit status, for the one caller that needs it. `undefined` is the check's
+ * refusal: a replayed or stale action admits nothing, deliberately and silently.
+ */
+export async function submitSessionWork<T>(slug: string, sessionId: string, submit: () => Promise<T>, check?: (boundExecution?: string) => Promise<boolean>, requestId?: string): Promise<T | undefined> {
   if (slug) {
     await engineReady;
     if (hooks) openTask(repoRoot, slug, hooks);
@@ -122,13 +127,13 @@ export async function submitSessionWork(slug: string, sessionId: string, submit:
   return withSessionAction(sessionId, async () => {
     const link = bound.get(sessionId);
     // A replay or stale Retry must not invalidate reviewed work.
-    if (check && !(await check(link?.execId))) return;
+    if (check && !(await check(link?.execId))) return undefined;
     if (link) {
       const engine = running.get(slug)?.engine;
       if (link.slug !== slug || !engine) throw new DomainError("failed_precondition", "the owning execution is unavailable");
       await engine.invalidateReadiness(link.execId, sessionId, requestId);
     }
-    await submit();
+    return await submit();
   });
 }
 

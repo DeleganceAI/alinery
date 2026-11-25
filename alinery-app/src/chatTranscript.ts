@@ -8,7 +8,7 @@
 import { parseFileTrailers, type UserRowAttachment } from "./chat/attachments";
 import { parseSlash } from "./chat/commands";
 import { explodeAssistantParts } from "./chat/journal";
-import { ACTOR, type ChatCommand, type ChatEntry, type CommandSource, type SubagentStatus, subagent } from "./chat/types";
+import { ACTOR, type ChatCommand, type ChatEntry, type CommandSource, type QueuedLine, type SubagentStatus, subagent } from "./chat/types";
 import type { ChatMessage, ChatPart } from "./types";
 import { transportLimitMessage } from "./vinculumRpc";
 
@@ -95,7 +95,17 @@ export type ChatTranscriptState = {
    * from disk. Zero means the whole conversation is loaded — there is nothing older to page in.
    */
   fileStart: number | null;
+  /**
+   * What the Queued panel shows, in delivery order (next first): the inputs the daemon holds and has not delivered,
+   * plus the lines this client just sent that no frame has confirmed yet. It is the one home of the count.
+   */
+  queued: QueuedPanelLine[];
 };
+
+/** One line of the Queued panel. `origin` says who knows it — the server's own item, or this client's send not yet
+ *  confirmed — and `stale` marks a pending line a frame did not mention, which is not removed until a second frame
+ *  agrees (a frame's read can pre-date the send's commit). */
+export type QueuedPanelLine = QueuedLine & { origin: "server" | "pending"; stale: boolean };
 
 export function emptyTranscript(): ChatTranscriptState {
   return {
@@ -117,6 +127,7 @@ export function emptyTranscript(): ChatTranscriptState {
     entrySeq: 0,
     liveStart: 0,
     fileStart: null,
+    queued: [],
   };
 }
 
@@ -586,7 +597,13 @@ export type SessionControls = {
   context_window?: number;
 };
 
-export type VinculumTranscript = { messages: VinculumMessage[] } & Partial<SessionControls>;
+/** A live transcript fold. `queued` is present exactly when the frame carried the queue: absent means "unchanged". */
+export type VinculumTranscript = {
+  messages: VinculumMessage[];
+  queued?: QueuedLine[];
+  /** First frame of a watch, including the first after a reconnect. The queue it carries — or its absence — is ground truth. */
+  queueAuthoritative?: boolean;
+} & Partial<SessionControls>;
 
 export const NEXT_TURN_MODEL_TITLE = "This turn keeps the model it started with. The next message uses the new one.";
 export const NEXT_TURN_THINKING_TITLE = "This turn keeps the thinking level it started with. The next message uses the new one.";
@@ -625,8 +642,32 @@ export function applySessionControls(state: ChatTranscriptState, controls: Parti
   return { ...state, sessionMeta };
 }
 
+/** A fold that knows more than the frame. `ended` is a session that has ended; `withdrawn` is an abort or Send now whose empty queue may never be emitted. */
+export type QueueFoldCue = { ended?: boolean; withdrawn?: boolean };
+
+/** The cue one abort raises, and where it stands. `settled` is the abort call's own answer: it is set resolved or rejected. */
+export type QueueAbortCue = { ended: boolean; withdrawn: boolean; settled: boolean };
+
+/**
+ * A fold's share of the cue, and the cue it leaves behind. A withdrawal covers the frames in flight at the abort and the
+ * first fold after the abort call settles — the coalesce window can hide the frame that says the queue emptied, and a
+ * frame of the old queue can arrive after the call did — and that fold consumes it. Clearing the cue when the call
+ * returns instead leaves that frame uncovered; leaving it set is the latch that empties a later send's line.
+ */
+export function consumeQueueCue(cue: QueueAbortCue): QueueFoldCue {
+  const fold: QueueFoldCue = cue.withdrawn ? { ended: cue.ended, withdrawn: true } : { ended: cue.ended };
+  if (cue.withdrawn && cue.settled) cue.withdrawn = false;
+  return fold;
+}
+
+/** Drop every panel line. An ended session's queue is empty, and so is a queue an abort or Send now just withdrew. */
+export function withoutQueued(state: ChatTranscriptState): ChatTranscriptState {
+  if (state.queued.length === 0 && (state.sessionMeta.queuedMessageCount ?? 0) === 0) return state;
+  return { ...state, queued: [], sessionMeta: { ...state.sessionMeta, queuedMessageCount: 0 } };
+}
+
 /** Replace the pane with the daemon transcript. Row ids are the entry id plus the part key, so a growing partial does not remount earlier rows. */
-export function applyVinculumTranscript(reply: VinculumMessage[] | VinculumTranscript): ChatTranscriptState {
+export function applyVinculumTranscript(reply: VinculumMessage[] | VinculumTranscript, previous?: ChatTranscriptState, cue?: QueueFoldCue): ChatTranscriptState {
   const transcript = Array.isArray(reply) ? { messages: reply } : reply;
   const messages = transcript.messages ?? [];
   const page = {
@@ -637,7 +678,97 @@ export function applyVinculumTranscript(reply: VinculumMessage[] | VinculumTrans
     }),
   };
   const state = { ...applyFilePage(emptyTranscript(), page, "initial"), ready: true, fileStart: 0 };
-  return Array.isArray(reply) ? state : applySessionControls(state, transcript);
+  const base = Array.isArray(reply) ? state : applySessionControls(state, transcript);
+  // The delivery race: the send answered `queued`, and this same fold appended the one user message the line became. A
+  // genuine append is one new message at the end of what the client held: a replace fold or a replay is not one, and the
+  // message another window's line became is never this client's to remove.
+  const held = previous?.messages ?? [];
+  const appended =
+    previous !== undefined && page.messages.length === held.length + 1 && messageSignature(page.messages[page.messages.length - 2]) === messageSignature(held[held.length - 1])
+      ? page.messages[page.messages.length - 1]
+      : undefined;
+  const delivered = appended?.role === "user" ? deliveryOf(appended) : undefined;
+  const carried = Array.isArray(reply) ? undefined : transcript.queued;
+  const authoritative = (!Array.isArray(reply) && transcript.queueAuthoritative === true) || cue?.ended === true;
+  // An ended session has no queue. A withdrawal whose frame carries no queue is the same fact about the server's lines:
+  // the coalesced read may never say the queue emptied, so the fold says it for them. A line this client made after the
+  // abort is not the abort's to remove — the ordinary stale-then-drop rule owns it — so the cue never touches one.
+  const withdrew = cue?.withdrawn === true && carried === undefined;
+  const prior = withdrew ? (previous?.queued ?? []).filter((line) => line.origin !== "server") : (previous?.queued ?? []);
+  const queued = reconcileQueued(prior, cue?.ended === true ? [] : carried, delivered, authoritative);
+  return { ...base, queued, sessionMeta: { ...base.sessionMeta, queuedMessageCount: queued.length } };
+}
+
+/** The user message a fold appended at the end of what the client held: the queued line it became is gone in that fold. */
+export type DeliveredMessage = { text: string; images: string[] };
+
+/** What a message says, for the append test: its parts, not the row id the fold gives it. */
+function messageSignature(message: ChatMessage | undefined): string {
+  if (!message) return "";
+  return JSON.stringify([
+    message.role,
+    message.content.map((part) => {
+      if (part.type === "text") return ["text", part.text];
+      if (part.type === "thinking") return ["thinking", part.thinking];
+      if (part.type === "image") return ["image", part.name ?? "", part.mimeType];
+      if (part.type === "toolCall") return ["toolCall", part.id ?? "", part.name ?? ""];
+      return [part.type];
+    }),
+  ]);
+}
+
+/** The words and image names a user message carries. */
+function deliveryOf(message: ChatMessage): DeliveredMessage {
+  const text: string[] = [];
+  const images: string[] = [];
+  for (const part of message.content) {
+    if (part.type === "text") text.push(part.text);
+    else if (part.type === "image") images.push(part.name ?? "");
+  }
+  return { text: text.join("\n"), images };
+}
+
+/**
+ * Whether the appended user message is the one this line became: the same image names and the same words. A placed
+ * message carries no submission id, so the words are all that is left to match on. A send's own file trailers follow the
+ * words in the message, and a line built from the prepared message carries them too — the chat thread's line is built
+ * from the prepared message — so both sides are compared as captions, trailers stripped. Left raw on either side, a
+ * file attachment's line could never match and would stay in the panel after its message was placed.
+ */
+function isDeliveryOf(line: QueuedPanelLine, delivered: DeliveredMessage): boolean {
+  const names = line.images.map((image) => image.name);
+  return (
+    names.length === delivered.images.length &&
+    names.every((name, index) => name === delivered.images[index]) &&
+    parseFileTrailers(delivered.text).caption.trim() === parseFileTrailers(line.text).caption.trim()
+  );
+}
+
+/**
+ * The panel's rule, applied on every fold and matching by `id` only — never by words, so two identical sentences stay
+ * two lines. `queued` is the frame's queue; `undefined` means the frame carried none and the lines are untouched, unless
+ * the frame is authoritative (the first of a watch, or the first after a reconnect), in which case absence is empty.
+ *  - an id the queue holds is updated in place and is the server's line again (delivery has not happened yet);
+ *  - an id the queue omits is gone when the server made it (delivered or withdrawn — the thread shows which), and when
+ *    this client's own line was already `stale`;
+ *  - the one line the fold's appended user message became is gone at once (the delivery race), and no other line with it;
+ *  - an authoritative frame drops a client line it omits instead of marking it stale;
+ *  - otherwise a pending line only turns `stale`, so a frame read before the send's commit cannot make it blink.
+ */
+export function reconcileQueued(lines: readonly QueuedPanelLine[], queued: QueuedLine[] | undefined, delivered?: DeliveredMessage, authoritative = false): QueuedPanelLine[] {
+  if (queued === undefined) return authoritative ? [] : [...lines];
+  const held = new Set(queued.map((item) => item.id));
+  const next: QueuedPanelLine[] = queued.map((item) => ({ ...item, origin: "server", stale: false }));
+  let deliveredLine = false;
+  for (const line of lines) {
+    if (held.has(line.id) || line.origin === "server" || line.stale || authoritative) continue;
+    if (!deliveredLine && delivered !== undefined && isDeliveryOf(line, delivered)) {
+      deliveredLine = true;
+      continue;
+    }
+    next.push({ ...line, stale: true });
+  }
+  return next;
 }
 
 export function applyFilePage(state: ChatTranscriptState, page: { start: number; messages: ChatMessage[] }, position: "initial" | "older"): ChatTranscriptState {

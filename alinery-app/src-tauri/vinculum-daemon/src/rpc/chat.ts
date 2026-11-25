@@ -79,8 +79,9 @@ export function chatService(c: SessionControl, dedupe: Dedupe, store: Store): Se
       requireCapability(ctx, Capability.ACT);
       return once(req.meta, async () => {
         loadChat(c.repo, req.threadId);
-        await c.turns.prompt(req.threadId, req.text, promptImages(req.images));
-        return {};
+        const r = await c.turns.prompt(req.threadId, req.text, promptImages(req.images));
+        // As PromptSessionResponse: empty strings when a deliberate skip admitted nothing.
+        return { submissionId: r?.submissionId ?? "", status: r?.status ?? "" };
       });
     },
     abortChatThread: (req, ctx) => {

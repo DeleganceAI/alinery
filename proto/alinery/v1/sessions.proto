@@ -26,6 +26,9 @@ service SessionService {
   rpc ArtifactReady(ArtifactReadyRequest) returns (ArtifactReadyResponse);                // VIEW
   // The turn controls of a live harness session (they replaced the JSON-lines prompt, abort, set_model and set_thinking_level ops).
   rpc PromptSession(PromptSessionRequest) returns (PromptSessionResponse);                // ACT
+  // Withdraws one input the harness still holds: the item leaves the session's queue in every window and becomes
+  // nothing in the thread. A remove that arrives after the turn placed the item is not an error — it is a message now.
+  rpc RemoveQueuedMessage(RemoveQueuedMessageRequest) returns (RemoveQueuedMessageResponse);  // ACT
   rpc RetryTurn(RetryTurnRequest) returns (RetryTurnResponse);                           // ACT
   rpc AbortSession(AbortSessionRequest) returns (AbortSessionResponse);                   // ACT
   rpc SetSessionModel(SetSessionModelRequest) returns (SetSessionModelResponse);          // ACT
@@ -41,7 +44,25 @@ message PromptSessionRequest {
   // Pi's placeholder instead. The files themselves are already attachments; the text names them.
   repeated DraftImage images = 4;
 }
-message PromptSessionResponse {}
+// The submission the harness admitted. `submission_id` is its id and, while it waits, the queued item's id.
+// `status` is what admit time decided: `queued` (it waits in the Queued panel), `placed` (it is already a user
+// message), or empty when a deliberate skip admitted nothing.
+message PromptSessionResponse {
+  string submission_id = 1;
+  string status = 2;
+}
+message RemoveQueuedMessageRequest {
+  MutationMeta meta = 1;
+  string session_id = 2;
+  string submission_id = 3;
+}
+message RemoveQueuedMessageResponse { RemoveQueuedMessageOutcome outcome = 1; }
+enum RemoveQueuedMessageOutcome {
+  REMOVE_QUEUED_MESSAGE_OUTCOME_UNSPECIFIED = 0;
+  REMOVE_QUEUED_MESSAGE_OUTCOME_REMOVED = 1;     // the queue no longer holds it
+  REMOVE_QUEUED_MESSAGE_OUTCOME_NOT_QUEUED = 2;  // it is a message now; there is nothing to undo
+  REMOVE_QUEUED_MESSAGE_OUTCOME_NOT_FOUND = 3;   // this conversation holds no such submission, whether it never existed or was already withdrawn
+}
 // Resume the failed turn once in this conversation. An id for an older failure cannot start new work.
 message RetryTurnRequest {
   MutationMeta meta = 1;
@@ -208,6 +229,26 @@ message WatchTranscriptResponse {
   uint64 next_item = 2;
   bool replace = 3;
   SessionControls controls = 4;  // set on the first frame and whenever it changes
+  QueuedMessages queued = 5;  // the waiting inputs beside the items: set on the first frame and whenever the queue changes
+}
+
+// The inputs waiting on this session, carried beside the message list and never one of them. Set on the first
+// frame and whenever the queue changes — the `controls` contract — so an unset field means "unchanged, keep what
+// you have" and a set field with no items means "nothing is waiting". A queued item is accepted input that has not
+// been delivered: the harness places it at the turn's next boundary and it then appears as an ordinary user
+// message. Harness-internal writes are never in this list.
+message QueuedMessages {
+  repeated QueuedMessage items = 1;
+}
+// One waiting input. `id` is the submission id the prompt call returned, so a client matches its own line to this
+// item by identity. `mode` is the harness's own word ("steer" interrupts the running turn, "followUp" is delivered
+// after it). `text` is the submitted text, unclipped. `images` are the attached images by name and type, never
+// their bytes, exactly as a placed prompt's images travel.
+message QueuedMessage {
+  string id = 1;
+  string mode = 2;
+  string text = 3;
+  repeated TranscriptImage images = 4;
 }
 
 // The model and thinking level the next turn will use. No levels means no thinking menu.

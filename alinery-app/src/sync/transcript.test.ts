@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { VinculumTranscript } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
 import { daemonHarness, untilAborted } from "../test/daemonHarness";
-import { applyFrame, messageOf, watchSessionTranscript } from "./transcript";
+import { applyFrame, messageOf, queuedOf, watchSessionTranscript } from "./transcript";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 
@@ -230,6 +230,15 @@ describe("transcript frames", () => {
       { type: "image", mimeType: "image/png", name: "shot.png" },
       { type: "image", mimeType: "image/jpeg" },
     ]);
+  });
+
+  it("maps a carried queue and treats an absent field as unchanged, not as an empty queue", () => {
+    const carried = create(WatchTranscriptResponseSchema, {
+      queued: { items: [{ id: "7", mode: "followUp", text: "later", images: [{ name: "shot.png", mimeType: "image/png" }] }] },
+    });
+    expect(queuedOf(carried)).toEqual([{ id: "7", mode: "followUp", text: "later", images: [{ name: "shot.png", mimeType: "image/png" }] }]);
+    expect(queuedOf(create(WatchTranscriptResponseSchema, {}))).toBeUndefined();
+    expect(queuedOf(create(WatchTranscriptResponseSchema, { queued: { items: [] } }))).toEqual([]);
   });
 
   it("applyFrame appends at the end, replaces from the start index, and refuses a gap", () => {

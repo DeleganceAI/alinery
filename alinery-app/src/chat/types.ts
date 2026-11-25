@@ -19,6 +19,13 @@ export type WrapUpPrompt = {
   position?: { promptId: string; offset: number };
 };
 
+/**
+ * One input the daemon accepted but has not delivered: it waits in the Queued panel above the composer. `id` is the
+ * submission's, the same id the send call answered with, and `mode` is the harness's own word — `followUp` (delivered
+ * after this turn) or `steer` (interrupts the running turn).
+ */
+export type QueuedLine = { id: string; mode: string; text: string; images: { name: string; mimeType: string }[] };
+
 export type ChatEntryType =
   | "prompt"
   | "follow_up"

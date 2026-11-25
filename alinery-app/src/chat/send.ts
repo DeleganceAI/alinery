@@ -1,8 +1,8 @@
-import { appendHarnessNotice, appendOptimisticUser, type ChatTranscriptState, type OptimisticKind } from "../chatTranscript";
+import { appendHarnessNotice, appendOptimisticUser, type ChatTranscriptState, type OptimisticKind, type QueuedPanelLine } from "../chatTranscript";
 import type { UserRowAttachment } from "./attachments";
 import { findCommand, parseSlash } from "./commands";
 import { routeSlash, type SlashDispatch } from "./slash";
-import type { ChatCommand } from "./types";
+import type { ChatCommand, QueuedLine } from "./types";
 
 export type ChatSendDispatch = SlashDispatch | { kind: "plain"; message: string };
 
@@ -20,19 +20,19 @@ export type ChatSendPlan = {
   notice?: string;
 };
 
-/** Map a composer submit onto host intercept vs prompt/follow_up. Catalog names become slash rows; unknown `/name` is a model turn plus a harness notice. */
+/** Map a composer submit onto host intercept vs prompt. A busy send waits in the Queued panel, so this plan never names a follow_up row. Catalog names become slash rows; unknown `/name` is a model turn plus a harness notice. */
 export function planChatSend(raw: string, catalog: ChatCommand[], busy: boolean): ChatSendPlan {
   const parsed = parseSlash(raw);
   const routed = routeSlash(raw, catalog);
   if (!routed) {
-    return { dispatch: { kind: "plain", message: raw }, invokesModel: true, optimisticKind: busy ? "follow_up" : "prompt" };
+    return { dispatch: { kind: "plain", message: raw }, invokesModel: true, optimisticKind: "prompt" };
   }
   const slash = parsed ? { name: parsed.name, args: parsed.args || undefined } : undefined;
   if (routed.kind === "unknown-prompt") {
     return {
       dispatch: routed,
       invokesModel: true,
-      optimisticKind: busy ? "follow_up" : "prompt",
+      optimisticKind: "prompt",
       notice: `/${parsed?.name} is not in the command catalog. Sending as a prompt.`,
     };
   }
@@ -43,7 +43,7 @@ export function planChatSend(raw: string, catalog: ChatCommand[], busy: boolean)
     return {
       dispatch: routed,
       invokesModel: invokesAgent(parsed?.name, catalog),
-      optimisticKind: busy ? "follow_up" : "slash",
+      optimisticKind: busy ? "prompt" : "slash",
       slash: busy ? undefined : slash,
     };
   }
@@ -75,4 +75,48 @@ export function applySendPlan(state: ChatTranscriptState, text: string, plan: Ch
   // do invoke the agent. Over-claiming is safe now that a refusal or `agentInvoked:false` clears
   // it; under-claiming is the bug this exists to prevent.
   return { state: plan.invokesModel ? { ...next, pendingTurn: true } : next, entryId };
+}
+
+/**
+ * The daemon accepted this send and will deliver it later: the line waits in the Queued panel instead of becoming a
+ * thread row. `pendingTurn` is set exactly as `applySendPlan` sets it for a send that invokes the model — the turn is
+ * still coming — and neither `entries` nor `messages` is touched, so the thread shows nothing until delivery.
+ */
+export function queueOptimisticLine(state: ChatTranscriptState, line: QueuedLine, plan?: Pick<ChatSendPlan, "invokesModel">): ChatTranscriptState {
+  // A frame may have folded this id before the reply arrived. Keep that line — the server's, if it sent one — and only raise the flag.
+  if (state.queued.some((item) => item.id === line.id)) return plan?.invokesModel ? { ...state, pendingTurn: true } : state;
+  const queued = [...state.queued, { ...line, origin: "pending" as const, stale: false }];
+  const next = { ...state, queued, sessionMeta: { ...state.sessionMeta, queuedMessageCount: queued.length } };
+  return plan?.invokesModel ? { ...next, pendingTurn: true } : next;
+}
+
+/** The panel line a queued admission names. `mode` is the product's follow-up; the daemon's frame is what later corrects it. */
+export function queuedLineOf(admitted: { submissionId: string }, text: string, images: readonly { name?: string; mimeType: string }[]): QueuedLine {
+  return { id: admitted.submissionId, mode: "followUp", text, images: images.map((image) => ({ name: image.name ?? "", mimeType: image.mimeType })) };
+}
+
+/** Drop a panel line, ask the daemon to withdraw it, and put the line back if that call fails. Each view passes its own ref and setter. */
+export async function removeQueuedAndRestore(drop: () => QueuedPanelLine | undefined, call: () => Promise<unknown>, restore: (line: QueuedPanelLine) => void): Promise<void> {
+  const line = drop();
+  if (!line) return;
+  try {
+    await call();
+  } catch {
+    restore(line);
+  }
+}
+
+/** Take one line out of the panel. The count moves with the list, in the same update. */
+export function dropQueuedLine(state: ChatTranscriptState, id: string): { state: ChatTranscriptState; removed?: QueuedPanelLine } {
+  const removed = state.queued.find((line) => line.id === id);
+  if (!removed) return { state };
+  const queued = state.queued.filter((line) => line.id !== id);
+  return { removed, state: { ...state, queued, sessionMeta: { ...state.sessionMeta, queuedMessageCount: queued.length } } };
+}
+
+/** Put a line back after a remove call rejected. A frame that already holds the id wins; the previous origin and stale flag are kept. */
+export function restoreQueuedLine(state: ChatTranscriptState, line: QueuedPanelLine): ChatTranscriptState {
+  if (state.queued.some((item) => item.id === line.id)) return state;
+  const queued = [...state.queued, line];
+  return { ...state, queued, sessionMeta: { ...state.sessionMeta, queuedMessageCount: queued.length } };
 }

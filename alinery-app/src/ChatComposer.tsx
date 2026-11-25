@@ -4,6 +4,8 @@ import type { DraftAttachment } from "./chat/attachments";
 import { groupCommands, matchCommands, parseSlash } from "./chat/commands";
 import { formatComposerStats } from "./chat/format";
 import { type ChatCommand, type SessionChatStatus, SOURCE_LABEL } from "./chat/types";
+import type { QueuedPanelLine } from "./chatTranscript";
+import { QueuedPanel } from "./QueuedPanel";
 import { sessionMessageMetrics } from "./sessionMessage";
 
 const LINE = 20;
@@ -26,7 +28,11 @@ export type ChatComposerProps = {
   onSendNow?: () => void;
   sendNowEnabled?: boolean;
   canAbort?: boolean;
+  /** Retired. No caller passes this; the Queued panel is the count's one home. The chip below stays un-fed. */
   queuedCount?: number;
+  /** Accepted input waiting for delivery, in delivery order. The panel renders only when this is non-empty. */
+  queued?: QueuedPanelLine[];
+  onRemoveQueued?: (id: string) => void;
   attachments?: DraftAttachment[];
   dropping?: boolean;
   onAttach?: () => void;
@@ -58,6 +64,8 @@ export function ChatComposer({
   sendNowEnabled = false,
   canAbort,
   queuedCount,
+  queued,
+  onRemoveQueued,
   attachments,
   dropping = false,
   onAttach,
@@ -224,6 +232,7 @@ export function ChatComposer({
   return (
     <div className="chat-composer">
       {palette ? <CommandList matches={matches} active={active} onPick={fill} onHover={setActive} /> : null}
+      {queued && queued.length > 0 ? <QueuedPanel items={queued} onRemove={(id) => onRemoveQueued?.(id)} /> : null}
 
       {metrics.large ? (
         <div className="session-message-large" role="status">

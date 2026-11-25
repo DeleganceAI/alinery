@@ -39,7 +39,8 @@ const sessionStatus = {
 };
 const sessionArtifactReady = vi.hoisted(() => vi.fn(async () => false));
 const startSession = vi.hoisted(() => vi.fn(async () => undefined));
-const sessionPrompt = vi.hoisted(() => vi.fn(async () => undefined));
+const sessionPrompt = vi.hoisted(() => vi.fn(async (): Promise<{ submissionId: string; status: string } | undefined> => undefined));
+const sessionRemoveQueued = vi.hoisted(() => vi.fn(async () => "REMOVED" as const));
 const retryTurn = vi.hoisted(() => vi.fn<(_repo: string, _sessionId: string, _entryId: string) => Promise<void>>());
 const nudgeExecution = vi.hoisted(() => vi.fn<typeof import("../sync/execution").nudgeExecution>());
 const sessionAbort = vi.hoisted(() => vi.fn(async () => undefined));
@@ -147,6 +148,7 @@ vi.mock("../sync/sessions", async (actual) => ({
   sessionArtifactReady,
   startSession,
   promptSession: sessionPrompt,
+  removeQueuedMessage: sessionRemoveQueued,
   retryTurn,
   abortSession: sessionAbort,
   setSessionModel: sessionSetModel,
@@ -1152,6 +1154,7 @@ describe("Vinculum session chat", () => {
     fakeBoard.set({ anyRepoTasks: [task] });
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     sessionPrompt.mockClear();
+    sessionRemoveQueued.mockReset().mockResolvedValue("REMOVED");
     retryTurn.mockReset().mockResolvedValue(undefined);
     nudgeExecution.mockReset().mockResolvedValue(undefined);
     sessionAbort.mockClear();
@@ -1181,17 +1184,20 @@ describe("Vinculum session chat", () => {
     return record;
   }
 
-  it("nudges the active turn once while preserving a queued message and an unsent review draft", async () => {
+  it("nudges the active turn once while preserving a queued panel line, not a thread row, and an unsent review draft", async () => {
     const record = workingStep();
     const pending = deferred<void>();
     nudgeExecution.mockReturnValue(pending.promise);
+    sessionPrompt.mockResolvedValueOnce({ submissionId: "7", status: "queued" });
     const onMessageDraftChange = vi.fn();
     const props = { intent: "attach" as const, onMessageDraftChange };
     const view = renderSession({ ...props, messageDraft: { body: "Read the changelog afterward", attachments: [], pendingActions: [] } });
     await screen.findByText("playbook prompt");
     fireEvent.click(await screen.findByRole("button", { name: "Queue" }));
     const pane = within(await screen.findByTestId("chat-pane"));
-    expect(await pane.findByText("Read the changelog afterward")).toBeDefined();
+    // A waiting input is a panel line above the composer, never a follow_up row in the transcript.
+    expect(await screen.findByText("Read the changelog afterward", { selector: ".queued-panel-text" })).toBeDefined();
+    expect(pane.queryByText("Read the changelog afterward")).toBeNull();
     expect(sessionPrompt).toHaveBeenCalledTimes(1);
     onMessageDraftChange.mockClear();
     const draft: SessionMessageDraft = {
@@ -1210,7 +1216,8 @@ describe("Vinculum session chat", () => {
     await act(async () => pending.resolve());
     expect(screen.getByRole("button", { name: "Nudge sent" })).toHaveProperty("disabled", true);
     expect(pane.getAllByText(WRAP_UP_NUDGE)).toHaveLength(1);
-    expect(pane.getByText("Read the changelog afterward")).toBeDefined();
+    expect(screen.getByText("Read the changelog afterward", { selector: ".queued-panel-text" })).toBeDefined();
+    expect(pane.queryByText("Read the changelog afterward")).toBeNull();
     expect(screen.getByDisplayValue(draft.body)).toBeDefined();
     expect(screen.getByRole("button", { name: "Remove shot.png" })).toBeDefined();
     expect(sessionPrompt).toHaveBeenCalledTimes(1);
@@ -1218,6 +1225,147 @@ describe("Vinculum session chat", () => {
     expect(onMessageDraftChange).not.toHaveBeenCalled();
     expect(fakeArtifacts.finalize).not.toHaveBeenCalled();
     expect(fakeExecution.continueReviewed).not.toHaveBeenCalled();
+  });
+
+  it("a queued send sets the pending-turn flag so the composer queues the next one", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    sessionPrompt.mockResolvedValueOnce({ submissionId: "7", status: "queued" });
+    renderSession({ intent: "attach", messageDraft: { body: "hold this", pendingActions: [], attachments: [] } });
+    fireEvent.click(await screen.findByRole("button", { name: "Send" }));
+    expect(await screen.findByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Queue" })).toBeDefined();
+    expect(screen.getByPlaceholderText("Send after this turn…")).toBeDefined();
+  });
+
+  it("Interrupt with an empty queue leaves the line a later queued send makes", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy", correlation_id: "first-run" }));
+    renderSession({ intent: "attach", messageDraft: { body: "hold this", pendingActions: [], attachments: [] } });
+    fireEvent.click(await screen.findByRole("button", { name: "Abort turn" }));
+    await waitFor(() => expect(sessionAbort).toHaveBeenCalled());
+    sessionPrompt.mockResolvedValueOnce({ submissionId: "7", status: "queued" });
+    fireEvent.click(await screen.findByRole("button", { name: /^(Send|Queue)$/ }));
+    expect(await screen.findByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+    // The next streamed delta carries no queue, and an absent queue says nothing about what this send queued.
+    await act(async () => {
+      daemon.setTranscript("session", [{ role: "assistant", content: [{ type: "text", text: "streaming" }] }]);
+    });
+    expect(screen.getByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+  });
+
+  it("an Interrupt whose abort call rejects leaves the line a later queued send makes", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy", correlation_id: "first-run" }));
+    sessionAbort.mockRejectedValueOnce(new Error("the daemon would not abort"));
+    renderSession({ intent: "attach", messageDraft: { body: "hold this", pendingActions: [], attachments: [] } });
+    fireEvent.click(await screen.findByRole("button", { name: "Abort turn" }));
+    await waitFor(() => expect(sessionAbort).toHaveBeenCalled());
+    sessionPrompt.mockResolvedValueOnce({ submissionId: "7", status: "queued" });
+    fireEvent.click(await screen.findByRole("button", { name: /^(Send|Queue)$/ }));
+    expect(await screen.findByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+    await act(async () => {
+      daemon.setTranscript("session", [{ role: "assistant", content: [{ type: "text", text: "streaming" }] }]);
+    });
+    expect(screen.getByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+  });
+
+  it("an Interrupt whose abort call rejects leaves the lines the server already held", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy", correlation_id: "first-run" }));
+    sessionAbort.mockRejectedValueOnce(new Error("the daemon would not abort"));
+    renderSession({ intent: "attach", messageDraft: { body: "hold this", pendingActions: [], attachments: [] } });
+    await act(async () => {
+      daemon.setTranscript("session", {
+        messages: [{ role: "user", content: [{ type: "text", text: "playbook prompt" }] }],
+        queued: [{ id: "7", mode: "followUp", text: "hold this", images: [] }],
+      });
+    });
+    expect(await screen.findByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+    fireEvent.click(await screen.findByRole("button", { name: "Abort turn" }));
+    await waitFor(() => expect(sessionAbort).toHaveBeenCalled());
+    // The abort withdrew nothing: the panel still shows what the server holds, in the update that reports the error.
+    expect(await screen.findByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+    expect(screen.getByText("Queued · 1")).toBeDefined();
+    // A frame that carries no queue says nothing about the queue and must not empty the panel.
+    await act(async () => {
+      daemon.setTranscript("session", {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "playbook prompt" }] },
+          { role: "assistant", content: [{ type: "text", text: "streaming" }] },
+        ],
+      });
+    });
+    expect(screen.getByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+    expect(screen.getByText("Queued · 1")).toBeDefined();
+  });
+
+  it("Remove calls removeQueuedMessage and a rejection restores the line", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    sessionPrompt.mockResolvedValueOnce({ submissionId: "7", status: "queued" });
+    let rejectRemove: (error: Error) => void = () => {};
+    sessionRemoveQueued.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectRemove = reject;
+      }),
+    );
+    renderSession({ intent: "attach", messageDraft: { body: "hold this", pendingActions: [], attachments: [] } });
+    fireEvent.click(await screen.findByRole("button", { name: "Queue" }));
+    expect(await screen.findByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Remove hold this" }));
+    await waitFor(() => expect(sessionRemoveQueued).toHaveBeenCalledWith("/repo", "session", "7"));
+    await waitFor(() => expect(screen.queryByText("hold this", { selector: ".queued-panel-text" })).toBeNull());
+    await act(async () => {
+      rejectRemove(new Error("daemon down"));
+    });
+    expect(await screen.findByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+  });
+
+  it("hides Review while a line is queued and offers it once a frame empties the queue and the turn has ended, including after a file-attachment line drains", async () => {
+    const record = executionRecord({ owner_session_id: "session" });
+    const ready = { revision: 9, endpoint: false, destinations: ["worker"], roles: ["result.md"] };
+    getTaskExecution.mockResolvedValue(executionReply([{ ...record, ready }]));
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    renderSession({ intent: "attach" });
+    const label = "Continue to Retained worker";
+    expect(await screen.findByRole("button", { name: label })).toBeDefined();
+    await act(async () => {
+      daemon.setTranscript("session", {
+        messages: [{ role: "user", content: [{ type: "text", text: "playbook prompt" }] }],
+        queued: [{ id: "7", mode: "followUp", text: "hold this", images: [] }],
+      });
+    });
+    expect(await screen.findByText("hold this", { selector: ".queued-panel-text" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: label })).toBeNull();
+    await act(async () => {
+      daemon.setTranscript("session", {
+        messages: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
+        queued: [],
+      });
+      sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    });
+    expect(await screen.findByRole("button", { name: label })).toBeDefined();
+    expect(screen.queryByText("hold this", { selector: ".queued-panel-text" })).toBeNull();
+    // A file attachment's line carries the prepared message — caption plus the send's own trailers — and has to drain
+    // like any other, or the count never reaches zero and the offer stays withheld.
+    const prepared = "see\n\nAttached file: /repo/.alinery/tasks/task/artifacts/attachments/notes.pdf";
+    await act(async () => {
+      daemon.setTranscript("session", {
+        messages: [{ role: "user", content: [{ type: "text", text: "playbook prompt" }] }],
+        queued: [{ id: "8", mode: "followUp", text: prepared, images: [] }],
+      });
+    });
+    expect(await screen.findByText("Queued · 1")).toBeDefined();
+    expect(document.querySelector(".queued-panel-text")?.textContent).toContain("Attached file:");
+    expect(screen.queryByRole("button", { name: label })).toBeNull();
+    await act(async () => {
+      daemon.setTranscript("session", {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "playbook prompt" }] },
+          { role: "user", content: [{ type: "text", text: prepared }] },
+        ],
+        queued: [],
+      });
+    });
+    expect(screen.queryByText("Queued · 1")).toBeNull();
+    expect(screen.queryByText(/Attached file:/, { selector: ".queued-panel-text" })).toBeNull();
+    expect(await screen.findByRole("button", { name: label })).toBeDefined();
   });
 
   it("uses the recorded nudge when the transcript arrives before a lost acknowledgement", async () => {

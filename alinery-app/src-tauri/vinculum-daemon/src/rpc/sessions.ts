@@ -5,12 +5,13 @@ import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { CreateSessionRequest, SessionStartedSchema } from "alinery-proto/alinery/v1/sessions_pb";
 import type { DraftImage } from "alinery-proto/alinery/v1/tasks_pb";
 import { type SessionService, type TranscriptItemSchema, type WatchTranscriptResponseSchema } from "alinery-proto/alinery/v1/sessions_pb";
+import { RemoveQueuedMessageOutcome } from "alinery-proto/alinery/v1/sessions_pb";
 import type { ChatPublisher, ChatSessions } from "../domain/chat.ts";
 import { readHistory, readVinculumWindow, sessionArtifactReady } from "../domain/history.ts";
 import { clearSessionNotifications, type Json, setSessionName, stampSessionArchived } from "../domain/sessionOps.ts";
 import { DomainError } from "../platform/lock.ts";
 import type { Sender } from "../platform/telemetry.ts";
-import { watchTranscript, type TranscriptFrame, type TranscriptFeed } from "../runtime/transcript.ts";
+import { watchTranscript, type QueuedInput, type TranscriptFrame, type TranscriptFeed } from "../runtime/transcript.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import { sessionKey } from "../sync/parsers/sessionMeta.ts";
 import type { Store } from "../sync/store.ts";
@@ -65,7 +66,13 @@ export function toResponse(frame: TranscriptFrame): MessageInitShape<typeof Watc
     nextItem: BigInt(frame.nextItem),
     replace: frame.replace,
     ...(frame.controls ? controlsOf(frame.controls) : {}),
+    // Present means "this is the queue now"; absent means "unchanged". A retained feed never sends it.
+    ...(frame.queued ? { queued: { items: frame.queued.map(queuedOf) } } : {}),
   };
+}
+
+function queuedOf(item: QueuedInput): NonNullable<NonNullable<MessageInitShape<typeof WatchTranscriptResponseSchema>["queued"]>["items"]>[number] {
+  return { id: item.id, mode: item.mode, text: item.text, images: item.images.map((image) => ({ mimeType: image.mimeType, name: image.name })) };
 }
 
 /**
@@ -92,12 +99,17 @@ export function promptImages(images: readonly DraftImage[]): PromptImage[] {
 
 /** The turn controls of a live harness session, the same for a task session and a chat thread. A refusal is a `DomainError`. */
 export type TurnControl = {
-  prompt(id: string, text: string, images?: PromptImage[]): Promise<void>;
+  /** The submission the harness admitted: its id (which is the queued item's id while it waits) and the admit status. */
+  prompt(id: string, text: string, images?: PromptImage[]): Promise<PromptResult | undefined>;
   retry(id: string, failedEntryId: string): Promise<void>;
   abort(id: string): Promise<void>;
+  /** Withdraw one queued input: `removed` (the queue no longer holds it), `not_queued` (it is a message now, or settled) or `not_found`. */
+  removeQueued(id: string, submissionId: string): Promise<"removed" | "not_queued" | "not_found">;
   setModel(id: string, model: string): Promise<Controls>;
   setThinkingLevel(id: string, level: string): Promise<Controls>;
 };
+/** `status` is the harness's admit-time verdict: `queued` (it waits) or `placed` (it is already a user message). */
+export type PromptResult = { submissionId: string; status: string };
 export type Controls = { model: string; thinking: string; thinking_levels: string[]; context_tokens?: number; context_window?: number };
 export const controlsOf = (c: Controls) => ({
   controls: { model: c.model, thinking: c.thinking, thinkingLevels: c.thinking_levels, contextTokens: c.context_tokens ?? 0, contextWindow: c.context_window ?? 0 },
@@ -267,9 +279,14 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
     promptSession: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return once(req.meta, async () => {
-        await c().turns.prompt(req.sessionId, req.text, promptImages(req.images));
-        return {};
+        const r = await c().turns.prompt(req.sessionId, req.text, promptImages(req.images));
+        // Empty strings mean nothing was admitted (a deliberate skip), which the client reads as today's behaviour.
+        return { submissionId: r?.submissionId ?? "", status: r?.status ?? "" };
       });
+    },
+    removeQueuedMessage: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => ({ outcome: removeOutcome(await c().turns.removeQueued(req.sessionId, req.submissionId)) }));
     },
     retryTurn: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
@@ -294,6 +311,13 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
       return once(req.meta, async () => controlsOf(await c().turns.setThinkingLevel(req.sessionId, req.level)));
     },
   };
+}
+
+/** The three answers a remove can have, as the wire's enum. All three mean the line is gone; none is an error. */
+function removeOutcome(answer: "removed" | "not_queued" | "not_found"): RemoveQueuedMessageOutcome {
+  if (answer === "removed") return RemoveQueuedMessageOutcome.REMOVED;
+  if (answer === "not_queued") return RemoveQueuedMessageOutcome.NOT_QUEUED;
+  return RemoveQueuedMessageOutcome.NOT_FOUND;
 }
 
 function transcriptHandlers(transcripts: Transcripts): Pick<ServiceImpl<typeof SessionService>, "watchTranscript"> {
