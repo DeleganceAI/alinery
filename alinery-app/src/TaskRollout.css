@@ -98,16 +98,8 @@
 }
 .rollout-open {
   flex: none;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--text-faint);
-  font: inherit;
-  cursor: pointer;
-}
-.rollout-open:hover:not(:disabled) {
-  color: var(--text);
-  text-decoration: underline;
+  width: var(--control-h);
+  padding-inline: 0;
 }
 .rollout-bubble {
   display: inline-flex;

@@ -1,4 +1,4 @@
-import { FileText } from "lucide-react";
+import { ArrowUpRight, FileText } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { defaultFocus, formatElapsed, type RolloutEntry, type RolloutRow } from "./rolloutModel";
 import { hasAcknowledgedExit, observationDisplayKind } from "./sessionAttention";
@@ -139,8 +139,15 @@ export function TaskRollout({
                     <span className="rollout-elapsed" title={`Started ${formatAbsolute(entry.start)}`}>
                       {formatElapsed((entry.end ?? now) - entry.start)}
                     </span>
-                    <button type="button" className="rollout-open" disabled={!s.worktree} onClick={() => onOpenSession(s)}>
-                      Open session
+                    <button
+                      type="button"
+                      className="btn ghost small rollout-open"
+                      aria-label="Open session"
+                      title="Open session"
+                      disabled={!s.worktree}
+                      onClick={() => onOpenSession(s)}
+                    >
+                      <ArrowUpRight size={14} aria-hidden="true" />
                     </button>
                   </div>
                   {/* A running session stays mounted while collapsed: its one-line preview and its composer come from it. */}
