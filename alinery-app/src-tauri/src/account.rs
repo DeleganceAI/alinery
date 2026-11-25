@@ -361,7 +361,7 @@ h1 {{
     )
 }
 
-fn write_loopback_page(stream: &mut TcpStream, ok: bool) {
+pub(crate) fn write_loopback_page(stream: &mut TcpStream, ok: bool) {
     let body = loopback_html(ok);
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -371,12 +371,15 @@ fn write_loopback_page(stream: &mut TcpStream, ok: bool) {
     let _ = stream.write_all(response.as_bytes());
 }
 
-fn read_request_line(stream: &mut TcpStream) -> Result<String, ()> {
+/// The request line of a loopback callback, read until its newline. A line the peer ends without
+/// one is malformed however much of it arrived: a callback cut off by a half-close just after
+/// `code=ri` would otherwise parse as complete, its nonce or state intact and its code truncated.
+pub(crate) fn read_request_line(stream: &mut TcpStream) -> Result<String, ()> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 256];
     loop {
         match stream.read(&mut chunk) {
-            Ok(0) => break,
+            Ok(0) => return Err(()),
             Ok(n) => {
                 buf.extend_from_slice(&chunk[..n]);
                 if let Some(end) = buf.iter().position(|&b| b == b'\n') {
@@ -390,11 +393,6 @@ fn read_request_line(stream: &mut TcpStream) -> Result<String, ()> {
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
             Err(_) => return Err(()),
         }
-    }
-    if buf.is_empty() {
-        Err(())
-    } else {
-        Ok(String::from_utf8_lossy(&buf).into_owned())
     }
 }
 
