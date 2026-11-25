@@ -1,0 +1,200 @@
+.rollout {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The focused session takes the row; the others it ran beside are thin bars to its right. */
+.rollout-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+}
+.rollout-step {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+.rollout-step-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+.rollout-toggle {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rollout-toggle:disabled {
+  cursor: default;
+}
+.rollout-chevron {
+  flex: none;
+  color: var(--text-muted);
+  transition: transform 120ms;
+}
+.rollout-step.open .rollout-chevron {
+  transform: rotate(90deg);
+}
+.rollout-step-title {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rollout-step-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rollout-elapsed {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.rollout-bubble {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  color: var(--text-strong);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* An auxiliary session is not a playbook step: no number, and its own colour. */
+.rollout-bubble.aux {
+  border-style: dashed;
+  border-color: var(--text-muted);
+}
+.rollout-bubble.running {
+  background: var(--accent-subtle);
+}
+.rollout-bubble.needs-user {
+  border-color: var(--warning);
+  background: var(--warning-subtle);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rollout-bubble.running {
+    animation: rollout-pulse 1.6s ease-in-out infinite;
+  }
+}
+@keyframes rollout-pulse {
+  50% {
+    box-shadow: 0 0 0 4px var(--accent-subtle);
+  }
+}
+.rollout-artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 10px 8px 54px;
+}
+.rollout-artifact {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.rollout-artifact:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+.rollout-artifact:disabled {
+  border-style: dashed;
+  background: none;
+  color: var(--text-faint);
+  cursor: default;
+}
+/* ponytail: a fixed share of the window, the session scrolls inside it. A drag handle if people want it taller. */
+.rollout-session {
+  display: flex;
+  flex-direction: column;
+  height: 60vh;
+  min-height: 320px;
+  border-top: 1px solid var(--border);
+}
+.rollout-session > .sessionview {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+.rollout-bars {
+  display: flex;
+  flex: 0 1 auto;
+  gap: 4px;
+  max-width: 20%;
+}
+.rollout-bar {
+  display: flex;
+  flex: 0 1 32px;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 12px;
+  padding: 8px 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.rollout-bar:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.rollout-bar-title {
+  writing-mode: vertical-rl;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-rollout-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+}
+/* Rollout with a file open: the tab strip on top, the rollout on the left, the one open file on the right. */
+.detailmain.rollout-split {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  column-gap: 12px;
+}
+.detailmain.rollout-split > :first-child {
+  grid-column: 1 / -1;
+}
+.detailmain.rollout-split > .task-sessions-tab {
+  grid-area: 2 / 1;
+}
+.detailmain.rollout-split > .task-artifact-view {
+  grid-area: 2 / 2;
+  min-width: 0;
+  min-height: 0;
+}

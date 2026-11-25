@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronDown, ChevronUp, List, Network, Pencil, Square } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, List, ListTree, Network, Pencil, Square } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -25,6 +25,7 @@ import { RepoFileTree } from "../RepoFileTree";
 import { ReviewedCompletion } from "../ReviewedCompletion";
 import { relatedRepoKey, relatedStoredPath, sameMachine } from "../remoteRepo";
 import { revealPath } from "../revealPath";
+import { buildRollout } from "../rolloutModel";
 import { SessionLineage } from "../SessionLineage";
 import {
   classifySessionNotice,
@@ -84,6 +85,7 @@ import { abortSession, archiveSession, markSessionNotificationRead, renameSessio
 import { pullTeamComments } from "../sync/share";
 import { discardSubtask as discardSubtaskForRepo, subtaskState as fetchSubtaskState, startSubtaskManager } from "../sync/subtasks";
 import { renameTask, restoreTaskForRepo, setAutoApproveAllForRepo, setRelatedTasksForRepo, worktreeExists } from "../sync/tasks";
+import { TaskRollout } from "../TaskRollout";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
 import type {
@@ -143,6 +145,16 @@ function readStoredTaskSessionView(): "graph" | "list" {
     return localStorage.getItem(TASK_SESSION_VIEW_KEY) === "list" ? "list" : "graph";
   } catch {
     return "graph";
+  }
+}
+
+/** Rollout is a third way to read the sessions pane, kept apart from graph/list so leaving it returns to the one chosen there. */
+const TASK_ROLLOUT_KEY = "alinery.taskRollout";
+function readStoredRollout(): boolean {
+  try {
+    return localStorage.getItem(TASK_ROLLOUT_KEY) === "1";
+  } catch {
+    return false;
   }
 }
 
@@ -304,6 +316,7 @@ export function TaskDetail({
     : "";
   const [showArchived, setShowArchived] = useState(false);
   const [sessionView, setSessionView] = useState(readStoredTaskSessionView);
+  const [rollout, setRollout] = useState(readStoredRollout);
   const [sessionSort, setSessionSort] = useSessionSort(
     controlledSessionSort !== undefined && onSessionSortChange !== undefined ? { sort: controlledSessionSort, onChange: onSessionSortChange } : undefined,
     DEFAULT_TASK_SESSION_SORT,
@@ -745,9 +758,20 @@ export function TaskDetail({
     }
   };
 
+  const sessionTarget = (ownerTaskSlug: string, s: SessionMeta, intent?: TaskSessionTarget["intent"]): TaskSessionTarget => ({
+    taskSlug: ownerTaskSlug,
+    id: s.id,
+    cwd: s.worktree,
+    phase: s.phase,
+    harness: s.harness,
+    model: s.model,
+    playbook: s.playbook,
+    generic: s.generic,
+    intent,
+  });
   const openSession = (ownerTaskSlug: string, s: SessionMeta & { name?: string | null }, intent?: TaskSessionTarget["intent"]) => {
     if (!s.worktree) return;
-    const session = { taskSlug: ownerTaskSlug, id: s.id, cwd: s.worktree, phase: s.phase, harness: s.harness, model: s.model, playbook: s.playbook, generic: s.generic, intent };
+    const session = sessionTarget(ownerTaskSlug, s, intent);
     fileTabs.open(
       { key: `session:${ownerTaskSlug}:${s.id}`, kind: "session", name: s.id, label: s.name || s.phase || "Session", node: null, mode: "preview", session },
       true,
@@ -755,6 +779,14 @@ export function TaskDetail({
     );
     markSessionNotificationRead(repoPath, ownerTaskSlug, s.id).catch(() => {});
   };
+  const rolloutSessions = taskPanelRows.flatMap((row) => (row.kind === "subtask_history" ? [] : [row.session]));
+  /** A sub-task manager's session belongs to the task that started it, which is not always this one. */
+  const sessionOwnerSlug = (session: SessionMeta) => {
+    const row = taskPanelRows.find((row) => row.kind !== "subtask_history" && row.session.id === session.id);
+    return row?.kind === "subtask_manager" ? row.owner_task_slug : slug;
+  };
+  const openRolloutSession = (session: SessionMeta) =>
+    openSession(sessionOwnerSlug(session), session, session.archived || !task?.worktree || worktreeMissing ? "history" : "attach");
   const openSessionPath = (origin: string, target: string, keep?: boolean) => {
     const name = target.slice(target.indexOf(":") + 1);
     if (target.startsWith("artifact:")) openArtifactTab(name, findOwnedArtifactNode(artifactTree, name) ?? null, "artifact", keep, origin);
@@ -1423,7 +1455,7 @@ export function TaskDetail({
           )}
         </aside>
         <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
-        <main className="detailmain">
+        <main className={`detailmain${rollout && activeArtifactTab ? " rollout-split" : ""}`}>
           <MainTabs
             pinned="Sessions"
             tabs={fileTabs.tabs.map((tab) => (tab.session ? { ...tab, label: sessions.find((s) => s.id === tab.session?.id)?.name || tab.label } : tab))}
@@ -1573,29 +1605,48 @@ export function TaskDetail({
               </div>
             );
           })}
-          <div className="task-sessions-tab" hidden={!!fileTabs.current}>
+          <div className="task-sessions-tab" hidden={rollout ? fileTabs.current?.kind === "session" : !!fileTabs.current}>
             <section className="task-panel task-sessions-panel">
               <div className="task-panel-head">
                 <div className="task-sessions-heading">
                   <h3 className="task-panel-title">Sessions</h3>
                   <button
                     type="button"
-                    className="btn ghost small"
-                    aria-label={sessionView === "graph" ? "Show list view" : "Show graph view"}
-                    title={sessionView === "graph" ? "Switch to list view" : "Switch to graph view"}
+                    className={`btn ghost small${rollout ? " on" : ""}`}
+                    aria-pressed={rollout}
+                    title="Every session in the order it ran, with the files each step published"
                     onClick={() => {
-                      const next = sessionView === "graph" ? "list" : "graph";
-                      setSessionView(next);
+                      setRollout(!rollout);
                       try {
-                        localStorage.setItem(TASK_SESSION_VIEW_KEY, next);
+                        localStorage.setItem(TASK_ROLLOUT_KEY, rollout ? "0" : "1");
                       } catch {
                         // Keep switching usable when preference storage is unavailable.
                       }
                     }}
                   >
-                    {sessionView === "graph" ? <List size={14} aria-hidden="true" /> : <Network size={14} aria-hidden="true" />}
-                    {sessionView === "graph" ? "List" : "Graph"}
+                    <ListTree size={14} aria-hidden="true" />
+                    Rollout
                   </button>
+                  {!rollout && (
+                    <button
+                      type="button"
+                      className="btn ghost small"
+                      aria-label={sessionView === "graph" ? "Show list view" : "Show graph view"}
+                      title={sessionView === "graph" ? "Switch to list view" : "Switch to graph view"}
+                      onClick={() => {
+                        const next = sessionView === "graph" ? "list" : "graph";
+                        setSessionView(next);
+                        try {
+                          localStorage.setItem(TASK_SESSION_VIEW_KEY, next);
+                        } catch {
+                          // Keep switching usable when preference storage is unavailable.
+                        }
+                      }}
+                    >
+                      {sessionView === "graph" ? <List size={14} aria-hidden="true" /> : <Network size={14} aria-hidden="true" />}
+                      {sessionView === "graph" ? "List" : "Graph"}
+                    </button>
+                  )}
                 </div>
                 <div className="task-session-controls">
                   {executionView && (
@@ -1608,7 +1659,7 @@ export function TaskDetail({
                       {queuedExecutionCount} queued
                     </span>
                   )}
-                  {sessionView === "list" && (
+                  {sessionView === "list" && !rollout && (
                     <button
                       type="button"
                       className={`btn ghost small session-sort-control${sessionSort.field === "priority" ? " active" : ""}`}
@@ -1664,19 +1715,42 @@ export function TaskDetail({
                   {err.msg}
                 </InlineStatus>
               )}
-              {sessionView === "graph" ? (
+              {rollout ? (
+                <div className="task-rollout-scroll">
+                  {!sessionsLoaded && <p className="dim">Loading sessions…</p>}
+                  {sessionsLoaded && (
+                    <TaskRollout
+                      rows={buildRollout(rolloutSessions, executionView?.state, steps, (session) => {
+                        const state = observationsById[session.id]?.lifecycle.state;
+                        return state === "live" || state === "live_exited";
+                      })}
+                      observations={observationsById}
+                      repoPath={repoPath}
+                      slug={slug}
+                      now={sessionNow}
+                      onOpenSession={openRolloutSession}
+                      onOpenArtifact={(path) => openArtifactTab(path, findOwnedArtifactNode(artifactTree, path) ?? null)}
+                      renderSession={(session, collapse) => {
+                        const owner = sessionOwnerSlug(session);
+                        return renderSession(sessionTarget(owner, session, lineageSessionIntent(executionView?.state, session)), {
+                          active: true,
+                          onClose: collapse,
+                          onOpenPath: (path, keep) => openSessionPath(session.id, path, keep),
+                          onOpenSession: (other, intent) => openSession(owner, other, intent),
+                        });
+                      }}
+                    />
+                  )}
+                </div>
+              ) : sessionView === "graph" ? (
                 <>
                   {!sessionsLoaded && <p className="dim">Loading sessions…</p>}
                   {sessionsLoaded && (
                     <TaskRunGraph
-                      sessions={taskPanelRows.flatMap((row) => (row.kind === "subtask_history" ? [] : [row.session]))}
+                      sessions={rolloutSessions}
                       state={executionView?.state ?? null}
                       observations={observationsById}
-                      onOpenSession={(session) => {
-                        const row = taskPanelRows.find((row) => row.kind !== "subtask_history" && row.session.id === session.id);
-                        const owner = row?.kind === "subtask_manager" ? row.owner_task_slug : slug;
-                        openSession(owner, session, session.archived || !task?.worktree || worktreeMissing ? "history" : "attach");
-                      }}
+                      onOpenSession={openRolloutSession}
                       onOpenArtifact={(path) => {
                         openArtifactTab(path, findOwnedArtifactNode(artifactTree, path) ?? null);
                       }}

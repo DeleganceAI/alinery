@@ -2464,6 +2464,33 @@ describe("main pane file tabs", () => {
     fireEvent.click(tabs.getByRole("button", { name: "Close b.md" }));
     expect(tabs.queryByRole("button", { name: "b.md" })).toBeNull();
   });
+  it("keeps the sessions pane beside an open file while Rollout is on", async () => {
+    const owned = (label: string): ArtifactTreeNode => ({ id: `node-${label}`, kind: "owned", label, owner_task_slug: "parent", source: "owned", children: [] });
+    fakeArtifacts.set("parent", {
+      items: [{ name: "a.md", modified_at_ms: null, playbook_step: "research", session_id: "s1", handoffs: [], attachment: false }] as never,
+      tree: [owned("a.md")],
+    });
+    fakeArtifacts.readArtifact.mockImplementation(async (_repo: string, _slug: string, name: string) => `# Heading ${name}`);
+    await renderDetail();
+    const files = within(document.querySelector("aside.artifactpane") as HTMLElement);
+    const sessionsTab = document.querySelector(".task-sessions-tab") as HTMLElement;
+
+    fireEvent.click(await files.findByRole("button", { name: /^a\.md/ }), { detail: 2 });
+    expect(await screen.findByRole("heading", { name: "Heading a.md" })).toBeDefined();
+    expect(sessionsTab.hidden).toBe(true);
+
+    fireEvent.click(within(screen.getByRole("group", { name: "Open files" })).getByRole("button", { name: "Sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rollout" }));
+    expect(screen.queryByRole("button", { name: /Show (list|graph) view/ })).toBeNull();
+    fireEvent.click(within(screen.getByRole("group", { name: "Open files" })).getByRole("button", { name: "a.md" }));
+    expect(sessionsTab.hidden).toBe(false);
+    expect(document.querySelector(".detailmain.rollout-split .task-artifact-view")).not.toBeNull();
+    expect(await screen.findByRole("heading", { name: "Heading a.md" })).toBeDefined();
+
+    // Leaving Rollout puts the graph/list choice back.
+    fireEvent.click(screen.getByRole("button", { name: "Rollout" }));
+    expect(sessionsTab.hidden).toBe(true);
+  });
   it("a single click opens a temporary tab the next one replaces, and clicking it in the strip keeps it", async () => {
     const owned = (label: string): ArtifactTreeNode => ({ id: `node-${label}`, kind: "owned", label, owner_task_slug: "parent", source: "owned", children: [] });
     const item = (name: string) => ({ name, modified_at_ms: null, playbook_step: "research", session_id: "s1", handoffs: [], attachment: false });
