@@ -58,11 +58,19 @@
 .rollout-dots .rollout-bubble.done {
   opacity: 0.55;
 }
-.rollout-dots .rollout-bubble,
-.rollout-turn.member .rollout-bubble {
-  width: 12px;
-  height: 12px;
-  font-size: 0;
+/* A numbered member: wide enough for its subscript. */
+.rollout-bubble.sub {
+  width: auto;
+  min-width: 26px;
+  padding-inline: 5px;
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+.rollout-bubble sub {
+  align-self: flex-end;
+  margin-left: 1px;
+  font-size: 8px;
+  line-height: 1.4;
 }
 .rollout-turn.member .rollout-step-title {
   font-weight: 500;
