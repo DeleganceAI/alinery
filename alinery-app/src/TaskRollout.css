@@ -31,11 +31,8 @@
   min-width: 0;
 }
 /* Sessions that ran at the same time: the step's own line, then a line per session under it. */
-.rollout-group > .rollout-turn.member {
+.rollout-group .rollout-turn.member {
   padding-left: 30px;
-}
-.rollout-group-mark .rollout-toggle {
-  cursor: default;
 }
 /* The group's line is the frozen header; a member's line freezes just under it. */
 .rollout-turn.member > .rollout-mark {

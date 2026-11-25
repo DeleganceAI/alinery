@@ -201,17 +201,26 @@ export function TaskRollout({
             ]
               .filter(Boolean)
               .join(" · ");
+            // A group is one line until the reader opens it, or one of its sessions is waiting on them.
+            const id = row[0].session.id;
+            const open = toggled[`group:${id}`] ?? row.some(needsUser);
             return (
-              <li key={row[0].session.id} className="rollout-row rollout-group">
+              <li key={id} className="rollout-row rollout-group">
                 <div className="rollout-mark rollout-group-mark">
-                  <span className="rollout-toggle">
+                  <button type="button" className="rollout-toggle" aria-expanded={open} onClick={() => setToggled((current) => ({ ...current, [`group:${id}`]: !open }))}>
                     <Bubble entry={lead} state="" />
                     <span className="rollout-step-title">{title}</span>
                     <span className="rollout-step-name">{summary}</span>
-                  </span>
+                  </button>
                   {progress(row, title)}
                 </div>
-                {[...row].sort((left, right) => RANK[stateOf(left)] - RANK[stateOf(right)]).map((entry) => turn(entry, true))}
+                {/* Closed, only the session the composer talks to stays mounted, unseen: its composer comes from it. */}
+                <div hidden={!open}>
+                  {[...row]
+                    .filter((entry) => open || entry === target)
+                    .sort((left, right) => RANK[stateOf(left)] - RANK[stateOf(right)])
+                    .map((entry) => turn(entry, true))}
+                </div>
               </li>
             );
           })}

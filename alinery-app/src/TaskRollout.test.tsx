@@ -51,10 +51,14 @@ it("shows a preview line per running session, opens one in place, and addresses 
   );
   // Each line is a progress bar: the finished row with nothing owed is full; the group, and each session in it, has
   // written nothing yet and still shows a sliver, never empty.
-  expect(screen.getAllByRole("progressbar").map((el) => (el.firstElementChild as HTMLElement).style.width)).toEqual(["100%", "6%", "6%", "6%"]);
-
-  // Sessions that ran together are a group: the step's line with a count, then a line each, named by the session.
-  expect(screen.getByText("2 agents")).toBeTruthy();
+  const widths = () => screen.getAllByRole("progressbar").map((el) => (el.firstElementChild as HTMLElement).style.width);
+  // Sessions that ran together are a group, closed until asked for: one line with a count. The composer still has its session.
+  expect(widths()).toEqual(["100%", "6%"]);
+  expect(screen.getByText("preview of step with composer")).toBeTruthy();
+  expect(screen.queryByText("preview of aux")).toBeNull();
+  fireEvent.click(screen.getByText("2 agents"));
+  // Open, it is the step's line, then a line each, named by the session.
+  expect(widths()).toEqual(["100%", "6%", "6%", "6%"]);
   // Every running session is mounted collapsed, as its preview; the newest playbook step owns the composer. The finished one is a line only.
   expect(screen.getByText("preview of step with composer")).toBeTruthy();
   expect(screen.getByText("preview of aux")).toBeTruthy();
