@@ -2,8 +2,9 @@ import { ArrowLeft, ChevronDown, ChevronUp, List, Network, Pencil, Square } from
 import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { ArtifactCommentsPanel, CommentsPanelToggle, useCommentsPanel } from "../ArtifactCommentsPanel";
 import type { ArtifactCommentAnchor } from "../ArtifactMarkdown";
-import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
+import { ArtifactMarkdown } from "../ArtifactMarkdown";
 import { ArtifactTree, artifactTabPath, isDirectOwnedArtifactNode, treeArtifactImages } from "../ArtifactTree";
 import { AttachmentPreview } from "../AttachmentPreview";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
@@ -448,6 +449,15 @@ export function TaskDetail({
   const [pendingArchive, setPendingArchive] = useState<Task | null>(null);
   const taskRef = useRef<Task | null>(null);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
+  const commentsPanel = useCommentsPanel();
+  // Writing a comment shows the panel whatever its saved state; putting it away then parks the composer, and the
+  // autosaved draft waits in its thread.
+  const commentsPanelShown = commentsPanel.open || Boolean(commentAnchor);
+  const toggleCommentsPanel = () => {
+    setCommentAnchor(null);
+    setCommentDraft("");
+    commentsPanel.setOpen(!commentsPanelShown);
+  };
   const {
     drafts: artifactCommentDrafts,
     draftError: artifactCommentDraftError,
@@ -1453,6 +1463,9 @@ export function TaskDetail({
                   <div className="btn-group">
                     <CopyTextButton text={openFilePath(repoPath, slug, selectedArtifact, selectedArtifactNode, selectedIsRepo ? (task?.worktree ?? "") : undefined)} label="path" />
                     {!richRef && <CopyArtifactButton text={artifactText} />}
+                    {commentsEnabled && selectedPreviewable && !richRef && (
+                      <CommentsPanelToggle open={commentsPanelShown} count={artifactComments.length} onToggle={toggleCommentsPanel} />
+                    )}
                     {selectedPreviewable && (
                       <>
                         <button
@@ -1495,67 +1508,51 @@ export function TaskDetail({
                     </button>
                   </div>
                 )}
-                <div className="artifactviewer">
-                  {richRef ? (
-                    <FileView repo={repoPath} ref={richRef} name={selectedArtifact.slice(selectedArtifact.lastIndexOf("/") + 1)} />
-                  ) : !selectedPreviewable ? (
-                    <CodeView path={selectedArtifact} text={artifactText} />
-                  ) : artifactMode === "raw" ? (
-                    <pre className="artifactraw">{artifactText}</pre>
-                  ) : (
-                    <article className="md artifactmd">
-                      <ArtifactMarkdown
-                        text={artifactText}
-                        repoPath={repoPath}
-                        taskSlug={slug}
-                        artifactPath={selectedArtifactImages?.artifactPath ?? selectedArtifact}
-                        attachmentNodeIds={selectedArtifactImages?.attachmentNodeIds}
-                        comments={artifactComments}
-                        draftAnchorIds={recoverableArtifactDraftAnchorIds}
-                        onAddComment={canComment ? openArtifactComment : undefined}
-                        onDiagramZoomOpenChange={onDiagramZoomOpenChange}
-                      />
-                    </article>
+                <div className="artifact-review">
+                  <div className="artifactviewer">
+                    {richRef ? (
+                      <FileView repo={repoPath} ref={richRef} name={selectedArtifact.slice(selectedArtifact.lastIndexOf("/") + 1)} />
+                    ) : !selectedPreviewable ? (
+                      <CodeView path={selectedArtifact} text={artifactText} />
+                    ) : artifactMode === "raw" ? (
+                      <pre className="artifactraw">{artifactText}</pre>
+                    ) : (
+                      <article className="md artifactmd">
+                        <ArtifactMarkdown
+                          text={artifactText}
+                          repoPath={repoPath}
+                          taskSlug={slug}
+                          artifactPath={selectedArtifactImages?.artifactPath ?? selectedArtifact}
+                          attachmentNodeIds={selectedArtifactImages?.attachmentNodeIds}
+                          comments={artifactComments}
+                          draftAnchorIds={recoverableArtifactDraftAnchorIds}
+                          onAddComment={canComment ? openArtifactComment : undefined}
+                          onOpenThread={commentsPanel.openThread}
+                          onDiagramZoomOpenChange={onDiagramZoomOpenChange}
+                        />
+                      </article>
+                    )}
+                  </div>
+                  {commentsEnabled && selectedPreviewable && !richRef && commentsPanelShown && (
+                    <ArtifactCommentsPanel
+                      comments={artifactComments}
+                      drafts={recoverableArtifactDrafts}
+                      active={commentAnchor}
+                      body={commentDraft}
+                      canSave={canSaveArtifactComment}
+                      placeholder="Add a comment for the next phase..."
+                      inputRef={commentInputRef}
+                      focused={commentsPanel.focused}
+                      onBodyChange={handleCommentDraftChange}
+                      onKeyDown={handleCommentKeyDown}
+                      onSave={saveArtifactComment}
+                      onDiscard={discardOpenCommentDraft}
+                      onOpen={openArtifactComment}
+                      onDiscardDraft={(anchorId) => void discardCommentDraft(commentTarget, anchorId).catch(() => {})}
+                      onClose={toggleCommentsPanel}
+                    />
                   )}
                 </div>
-                {recoverableArtifactDrafts.length > 0 && (
-                  <div className="artifact-comment-drafts">
-                    <div className="artifact-comment-drafts-title">Unsaved drafts</div>
-                    {recoverableArtifactDrafts.map((draft) => (
-                      <div className="artifact-comment-draft-row" key={draft.anchor_id}>
-                        <button type="button" className="artifact-comment-draft-resume" title={draft.body} onClick={() => openArtifactComment(draft)}>
-                          <span>{formatArtifactCommentTarget(draft)}</span>
-                          {draft.stale && <span className="artifact-comment-draft-stale">Artifact changed</span>}
-                        </button>
-                        <button type="button" className="btn ghost small" onClick={() => void discardCommentDraft(commentTarget, draft.anchor_id).catch(() => {})}>
-                          Discard
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {commentAnchor && (
-                  <div className="artifact-comment-composer">
-                    <div className="artifact-comment-title">{formatArtifactCommentTarget(commentAnchor)}</div>
-                    <textarea
-                      ref={commentInputRef}
-                      className="field-input artifact-comment-input"
-                      value={commentDraft}
-                      rows={2}
-                      placeholder="Add a comment for the next phase..."
-                      onChange={(ev) => handleCommentDraftChange(ev.target.value)}
-                      onKeyDown={handleCommentKeyDown}
-                    />
-                    <div className="artifact-comment-actions">
-                      <button type="button" className="btn small" disabled={!canSaveArtifactComment} onClick={saveArtifactComment}>
-                        Save comment
-                      </button>
-                      <button type="button" className="btn ghost small" onClick={discardOpenCommentDraft}>
-                        Discard draft
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
             )
           )}
