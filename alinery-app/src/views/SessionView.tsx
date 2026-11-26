@@ -1007,7 +1007,7 @@ export function SessionView({
         olderBusy.current = false;
         setLoadingOlder(false);
       });
-  }, [loadVinculumPage]);
+  }, [loadVinculumPage, previewOnly]);
 
   const readingHistory = navHistory || (showPanel && showHistory);
   useEffect(() => {
