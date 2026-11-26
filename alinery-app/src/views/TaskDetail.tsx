@@ -422,12 +422,13 @@ export function TaskDetail({
   const fileTabs = useOpenTabs<OpenArtifactTab>(`${repoPath}\0${slug}`);
   const activeArtifactTab = fileTabs.current?.kind === "session" ? undefined : fileTabs.current;
   const split = twoPane && fileTabs.tabs.length > 0;
-  // With two panes there is no Sessions tab to fall back to: the other pane always shows one of its tabs.
-  const lastTabKey = fileTabs.tabs[fileTabs.tabs.length - 1]?.key;
-  const selectTab = fileTabs.select;
+  // With two panes there is no Sessions tab to fall back to: the other pane always shows one of its tabs. The first
+  // one, which is the neighbour when the first tab was the one closed; shown, not clicked, so a temporary tab stays temporary.
+  const firstTabKey = fileTabs.tabs[0]?.key;
+  const showTab = fileTabs.setActive;
   useEffect(() => {
-    if (split && !fileTabs.current && lastTabKey) selectTab(lastTabKey);
-  }, [split, fileTabs.current, lastTabKey, selectTab]);
+    if (split && !fileTabs.current && firstTabKey) showTab(firstTabKey);
+  }, [split, fileTabs.current, firstTabKey, showTab]);
   const selectedArtifact = activeArtifactTab?.name ?? "";
   const selectedArtifactNode = activeArtifactTab?.node ?? null;
   const artifactMode = activeArtifactTab?.mode ?? "preview";
