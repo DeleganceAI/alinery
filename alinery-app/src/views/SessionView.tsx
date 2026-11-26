@@ -1,7 +1,7 @@
-import { ArrowLeft, MessageSquare, Pencil } from "lucide-react";
-import type { KeyboardEvent } from "react";
+import { ArrowLeft, ChevronRight, MessageSquare, Pencil } from "lucide-react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import type { ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
 import { ArtifactTree, artifactTabPath, isDirectOwnedArtifactNode, treeArtifactImages } from "../ArtifactTree";
@@ -21,6 +21,7 @@ import {
   taskAttachmentDir,
 } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, type PathLinks, PathLinksContext } from "../chat/CopyMessage";
+import { formatDuration } from "../chat/format";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
 import { useProviderAccess } from "../chat/providerAccess";
@@ -44,6 +45,7 @@ import {
 import { confirmDanger } from "../confirm";
 import { lineageSessionIntent } from "../executionLineage";
 import { type SessionFollow, useFollowNextSessionControl } from "../FollowNextSession";
+import { IdleDot, RunningIndicator } from "../Indicators";
 import * as ipc from "../ipc";
 import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
@@ -126,6 +128,7 @@ import { FileView, richPreview } from "./CanvasFiles";
 import { ChatModelBar, ComposerStats } from "./ChatModelBar";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
+import { workPreview } from "./ChatWorkStrip";
 import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
 import { SessionActionPanel } from "./SessionActionPanel";
 import { StepContinuationMode } from "./StepContinuationMode";
@@ -145,6 +148,16 @@ function prepareChatSend(taskSlug: string, repoPath: string, caption: string, at
     attachments,
   );
 }
+
+export type SessionBare = {
+  /** Where the composer renders: the rollout's one pinned box. Null for a session the box is not addressed to. */
+  composerSlot: HTMLElement | null;
+  /** Drawn in the composer before its prompt mark: which session the box sends to. */
+  composerMark?: ReactNode;
+  /** Collapsed: one line saying what the agent is doing now, in place of the conversation. */
+  preview: boolean;
+  onExpand: () => void;
+};
 
 export function SessionView({
   id,
@@ -168,6 +181,7 @@ export function SessionView({
   onDiagramZoomOpenChange,
   onNameCommitted,
   embedded,
+  bare,
   active = true,
   follow,
   onOpenSession,
@@ -197,6 +211,8 @@ export function SessionView({
   onNameCommitted?: (change: NameCommit) => void;
   /** A tab of the task view: the task supplies the artifact pane and the tab strip, so this view drops its own, and its Back. */
   embedded?: boolean;
+  /** The task rollout: the conversation alone, with no header or navigator, flowing in the rollout's own scroll. */
+  bare?: SessionBare;
   active?: boolean;
   follow?: SessionFollow;
   onOpenSession?: (session: SessionMeta, intent: "history" | "attach") => void;
@@ -978,9 +994,11 @@ export function SessionView({
 
   const olderBusy = useRef(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const previewOnly = bare?.preview === true;
   const loadOlder = useCallback(() => {
     const from = chatRef.current.fileStart;
-    if (olderBusy.current || from == null || from === 0) return;
+    // A collapsed rollout row shows one line: it has no use for the pages before it.
+    if (previewOnly || olderBusy.current || from == null || from === 0) return;
     olderBusy.current = true;
     setLoadingOlder(true);
     void loadVinculumPage("older", from)
@@ -989,7 +1007,7 @@ export function SessionView({
         olderBusy.current = false;
         setLoadingOlder(false);
       });
-  }, [loadVinculumPage]);
+  }, [loadVinculumPage, previewOnly]);
 
   const readingHistory = navHistory || (showPanel && showHistory);
   useEffect(() => {
@@ -1274,8 +1292,10 @@ export function SessionView({
     ) : null;
   const awaitingName = display != null && awaitingSessionName({ ...display.session, harness: display.session.harness || harness }, observation);
 
+  const inComposerSlot = (node: ReactNode) => (bare ? bare.composerSlot && createPortal(node, bare.composerSlot) : node);
+
   return (
-    <div className="sessionview">
+    <div className={`sessionview${bare ? " bare" : ""}${bare?.preview ? " preview" : ""}`}>
       <div className="sessionhd">
         {!embedded && (
           <button ref={backButtonRef} type="button" className="btn ghost small" onClick={onBack}>
@@ -1638,6 +1658,16 @@ export function SessionView({
                 </div>
               )}
               <div className="termhost" ref={termhostRef} hidden={Boolean(fileTabs.current)}>
+                {bare?.preview && (
+                  <button type="button" className="rollout-preview" onClick={bare.onExpand}>
+                    {chatStatus === "idle" ? <IdleDot /> : <RunningIndicator />}
+                    <span className="rollout-preview-text">{workPreview(chat.entries)?.text ?? (chatStatus === "idle" ? "Idle" : "Working…")}</span>
+                    {chatStatus !== "idle" && workPreview(chat.entries)?.ms != null && (
+                      <span className="rollout-preview-time">{formatDuration(workPreview(chat.entries)?.ms ?? 0)}</span>
+                    )}
+                    <ChevronRight size={14} aria-hidden="true" />
+                  </button>
+                )}
                 {readingHistory && historyError && (
                   <InlineStatus tone="error" detail={historyError}>
                     Couldn't read session history.
@@ -1700,73 +1730,76 @@ export function SessionView({
                             readImage={readPromptImages}
                           />
                         </div>
-                        {showChatComposer ? (
-                          <>
-                            <ChatComposer
-                              besideSend={
-                                showNudge ? (
-                                  <button
-                                    type="button"
-                                    className="btn ghost small"
-                                    title="Ask the agent to finish this step during the current turn"
-                                    disabled={!sessionActionAvailable || nudge.pending || nudge.sent || nudge.unconfirmed}
-                                    onClick={nudge.send}
-                                  >
-                                    {nudge.sent ? "Nudge sent" : nudge.pending ? "Sending nudge…" : "Nudge to wrap up"}
-                                  </button>
-                                ) : canShowReview && review && !review.endpoint && execution && executionView ? (
-                                  <ReviewedCompletion
-                                    repo={repoPath}
-                                    slug={taskSlug}
-                                    execution={execution}
-                                    steps={executionView.definition.step}
-                                    disabled={!executionAvailable || !rpcProcessLive || completionBusy || Boolean(messageDraft.body || messageDraft.attachments?.length)}
-                                  />
-                                ) : undefined
-                              }
-                              actions={chatVisibility.showMeta ? sessionStats : undefined}
-                              center={chatVisibility.showMeta ? modelBar : undefined}
-                              end={continuationControls}
-                              body={messageDraft.body}
-                              status={chatStatus}
-                              catalog={chat.commands}
-                              sending={messageSending}
-                              readOnly={finishingStep}
-                              showHints={false}
-                              attachments={messageDraft.attachments ?? []}
-                              dropping={dropping}
-                              onAttach={() => {
-                                void ipc
-                                  .pickAttachmentFilesDialog()
-                                  .then((paths) => void stagePaths(paths))
-                                  .catch((error) => toast.error(String(error)));
-                              }}
-                              onRemoveAttachment={(id) => {
-                                const current = messageDraftRef.current;
-                                const removed = current.attachments.find((item) => item.id === id);
-                                if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
-                                updateMessageDraft({ ...current, attachments: current.attachments.filter((item) => item.id !== id) });
-                              }}
-                              onClear={() => {
-                                revokeDraftPreviewUrls(messageDraftRef.current.attachments);
-                                updateMessageDraft({ body: "", pendingActions: messageDraftRef.current.pendingActions, attachments: [] });
-                              }}
-                              onPasteFiles={stageBlobs}
-                              onBodyChange={(next) => {
-                                updateMessageDraft({ ...messageDraftRef.current, body: next });
-                                setMessageError("");
-                              }}
-                              onCompositionChange={setMessageComposing}
-                              onSend={(text) => void sendCurrentMessage(text)}
-                              onAbort={() => void interruptCurrentSession()}
-                              onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
-                              sendNowEnabled={sendNowEnabled}
-                              canAbort={composerCanAbort}
-                              queuedCount={queuedMeta}
-                            />
-                            {messageError ? <InlineStatus tone="error">{messageError}</InlineStatus> : null}
-                          </>
-                        ) : null}
+                        {showChatComposer
+                          ? inComposerSlot(
+                              <>
+                                <ChatComposer
+                                  beforePrompt={bare?.composerMark}
+                                  besideSend={
+                                    showNudge ? (
+                                      <button
+                                        type="button"
+                                        className="btn ghost small"
+                                        title="Ask the agent to finish this step during the current turn"
+                                        disabled={!sessionActionAvailable || nudge.pending || nudge.sent || nudge.unconfirmed}
+                                        onClick={nudge.send}
+                                      >
+                                        {nudge.sent ? "Nudge sent" : nudge.pending ? "Sending nudge…" : "Nudge to wrap up"}
+                                      </button>
+                                    ) : canShowReview && review && !review.endpoint && execution && executionView ? (
+                                      <ReviewedCompletion
+                                        repo={repoPath}
+                                        slug={taskSlug}
+                                        execution={execution}
+                                        steps={executionView.definition.step}
+                                        disabled={!executionAvailable || !rpcProcessLive || completionBusy || Boolean(messageDraft.body || messageDraft.attachments?.length)}
+                                      />
+                                    ) : undefined
+                                  }
+                                  actions={chatVisibility.showMeta ? sessionStats : undefined}
+                                  center={chatVisibility.showMeta ? modelBar : undefined}
+                                  end={continuationControls}
+                                  body={messageDraft.body}
+                                  status={chatStatus}
+                                  catalog={chat.commands}
+                                  sending={messageSending}
+                                  readOnly={finishingStep}
+                                  showHints={false}
+                                  attachments={messageDraft.attachments ?? []}
+                                  dropping={dropping}
+                                  onAttach={() => {
+                                    void ipc
+                                      .pickAttachmentFilesDialog()
+                                      .then((paths) => void stagePaths(paths))
+                                      .catch((error) => toast.error(String(error)));
+                                  }}
+                                  onRemoveAttachment={(id) => {
+                                    const current = messageDraftRef.current;
+                                    const removed = current.attachments.find((item) => item.id === id);
+                                    if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+                                    updateMessageDraft({ ...current, attachments: current.attachments.filter((item) => item.id !== id) });
+                                  }}
+                                  onClear={() => {
+                                    revokeDraftPreviewUrls(messageDraftRef.current.attachments);
+                                    updateMessageDraft({ body: "", pendingActions: messageDraftRef.current.pendingActions, attachments: [] });
+                                  }}
+                                  onPasteFiles={stageBlobs}
+                                  onBodyChange={(next) => {
+                                    updateMessageDraft({ ...messageDraftRef.current, body: next });
+                                    setMessageError("");
+                                  }}
+                                  onCompositionChange={setMessageComposing}
+                                  onSend={(text) => void sendCurrentMessage(text)}
+                                  onAbort={() => void interruptCurrentSession()}
+                                  onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
+                                  sendNowEnabled={sendNowEnabled}
+                                  canAbort={composerCanAbort}
+                                  queuedCount={queuedMeta}
+                                />
+                                {messageError ? <InlineStatus tone="error">{messageError}</InlineStatus> : null}
+                              </>,
+                            )
+                          : null}
                       </>
                     ) : (
                       showPtyTerminal && (
@@ -1843,7 +1876,7 @@ export function SessionView({
                       ))}
                   </>
                 )}
-                {readingHistory && vinculum && (!navHistory || !liveRpc) && (
+                {readingHistory && vinculum && (!navHistory || !liveRpc) && !bare && (
                   <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
                 )}
                 {modelDialog && (
@@ -1901,7 +1934,7 @@ export function SessionView({
                 )}
               </div>
             </div>
-            {hasTask && active && (
+            {hasTask && active && !bare && (
               <SessionLineage
                 id={id}
                 name={display?.session.name ?? ""}

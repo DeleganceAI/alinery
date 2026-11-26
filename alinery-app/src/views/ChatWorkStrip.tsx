@@ -64,6 +64,19 @@ function stepLine(entry: ChatEntry): string {
   }
 }
 
+/** The newest thing the agent did, as one line: what a collapsed session shows while it works. */
+export function workPreview(entries: ChatEntry[]): { text: string; ms?: number } | null {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry.type === "thinking") return { text: "Thinking", ms: entry.durationMs };
+    if (entry.type === "tool_call" || entry.type === "text" || entry.type === "subagent_status") {
+      const text = stepLine(entry).trim();
+      if (text) return { text, ms: entry.type === "tool_call" ? entry.durationMs : undefined };
+    }
+  }
+  return null;
+}
+
 function stepBody(step: Step, live: boolean): ReactNode {
   const { entry, result } = step;
   if (entry.type === "thinking") {

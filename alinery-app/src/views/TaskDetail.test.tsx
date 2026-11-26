@@ -2464,6 +2464,46 @@ describe("main pane file tabs", () => {
     fireEvent.click(tabs.getByRole("button", { name: "Close b.md" }));
     expect(tabs.queryByRole("button", { name: "b.md" })).toBeNull();
   });
+  it("with two panes, shows Sessions beside the open file, on either side, in any sessions view", async () => {
+    const owned = (label: string): ArtifactTreeNode => ({ id: `node-${label}`, kind: "owned", label, owner_task_slug: "parent", source: "owned", children: [] });
+    fakeArtifacts.set("parent", {
+      items: [{ name: "a.md", modified_at_ms: null, playbook_step: "research", session_id: "s1", handoffs: [], attachment: false }] as never,
+      tree: [owned("a.md")],
+    });
+    fakeArtifacts.readArtifact.mockImplementation(async (_repo: string, _slug: string, name: string) => `# Heading ${name}`);
+    await renderDetail();
+    const files = within(document.querySelector("aside.artifactpane") as HTMLElement);
+    const sessionsTab = document.querySelector(".task-sessions-tab") as HTMLElement;
+    const main = document.querySelector(".detailmain") as HTMLElement;
+
+    // One pane: an open file takes the pane, and Sessions is a tab to go back to.
+    fireEvent.click(await files.findByRole("button", { name: /^a\.md/ }), { detail: 2 });
+    expect(await screen.findByRole("heading", { name: "Heading a.md" })).toBeDefined();
+    expect(sessionsTab.hidden).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Two panes" }));
+    expect(sessionsTab.hidden).toBe(false);
+    expect(main.classList.contains("two-pane")).toBe(true);
+    expect(document.querySelector(".detailmain.two-pane > .task-artifact-view")).not.toBeNull();
+    // The files strip has no Sessions tab to fall back to; Sessions has its own strip.
+    expect(within(screen.getByRole("group", { name: "Open files" })).queryByRole("button", { name: "Sessions" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Move Sessions to the other side" }));
+    expect(main.classList.contains("sessions-right")).toBe(true);
+
+    // Rollout is only a way to read the sessions pane: it does not change the panes.
+    fireEvent.click(screen.getByRole("button", { name: "Show rollout view" }));
+    expect(screen.getByRole("button", { name: "Show rollout view" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Show graph view" }).getAttribute("aria-pressed")).toBe("false");
+    expect(sessionsTab.hidden).toBe(false);
+
+    // Closing the last file gives Sessions the whole pane again.
+    fireEvent.click(within(screen.getByRole("group", { name: "Open files" })).getByRole("button", { name: "Close a.md" }));
+    expect(main.classList.contains("two-pane")).toBe(false);
+    // The choices are stored: put them back for the tests after this one.
+    fireEvent.click(screen.getByRole("button", { name: "Two panes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show graph view" }));
+  });
   it("a single click opens a temporary tab the next one replaces, and clicking it in the strip keeps it", async () => {
     const owned = (label: string): ArtifactTreeNode => ({ id: `node-${label}`, kind: "owned", label, owner_task_slug: "parent", source: "owned", children: [] });
     const item = (name: string) => ({ name, modified_at_ms: null, playbook_step: "research", session_id: "s1", handoffs: [], attachment: false });

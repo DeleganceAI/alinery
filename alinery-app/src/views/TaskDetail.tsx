@@ -1,5 +1,5 @@
-import { ArrowLeft, ChevronDown, ChevronUp, List, Network, Pencil, Square } from "lucide-react";
-import type { KeyboardEvent, ReactNode } from "react";
+import { ArrowLeft, ArrowLeftRight, ChevronDown, ChevronUp, Columns2, List, ListTree, Network, Pencil, Square } from "lucide-react";
+import type { KeyboardEvent, ReactNode, PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactCommentAnchor } from "../ArtifactMarkdown";
@@ -25,6 +25,7 @@ import { RepoFileTree } from "../RepoFileTree";
 import { ReviewedCompletion } from "../ReviewedCompletion";
 import { relatedRepoKey, relatedStoredPath, sameMachine } from "../remoteRepo";
 import { revealPath } from "../revealPath";
+import { buildRollout } from "../rolloutModel";
 import { SessionLineage } from "../SessionLineage";
 import {
   classifySessionNotice,
@@ -84,6 +85,7 @@ import { abortSession, archiveSession, markSessionNotificationRead, renameSessio
 import { pullTeamComments } from "../sync/share";
 import { discardSubtask as discardSubtaskForRepo, subtaskState as fetchSubtaskState, startSubtaskManager } from "../sync/subtasks";
 import { renameTask, restoreTaskForRepo, setAutoApproveAllForRepo, setRelatedTasksForRepo, worktreeExists } from "../sync/tasks";
+import { TaskRollout } from "../TaskRollout";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
 import type {
@@ -103,10 +105,12 @@ import type {
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
+import { usePointerDrag } from "../usePointerDrag";
 import { useSessionSort } from "../useSessionSort";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 import { isVinculumHarness, sessionTerminalLabel } from "../vinculumHarness";
 import { FileView, richPreview } from "./CanvasFiles";
+import type { SessionBare } from "./SessionView";
 import { TaskSpecsPin } from "./TaskSpecsPin";
 
 function taskActivityLabel(activity: TaskActivitySummary): string {
@@ -138,11 +142,38 @@ type ErrState = { msg: string; detail: string; tone?: "info" } | null;
 
 const TASK_SESSION_VIEW_KEY = "alinery.taskSessionView";
 
-function readStoredTaskSessionView(): "graph" | "list" {
+type TaskSessionView = "rollout" | "graph" | "list";
+// The three ways to read the sessions pane, in the order the switch shows them.
+const TASK_SESSION_VIEWS = [
+  { key: "rollout", label: "Show rollout view", title: "Rollout: every session in the order it ran, with the files each step published", Icon: ListTree },
+  { key: "graph", label: "Show graph view", title: "Graph: sessions and the files that connect them", Icon: Network },
+  { key: "list", label: "Show list view", title: "List: sessions as a sortable table", Icon: List },
+] as const;
+
+function readStoredTaskSessionView(): TaskSessionView {
   try {
-    return localStorage.getItem(TASK_SESSION_VIEW_KEY) === "list" ? "list" : "graph";
+    const stored = localStorage.getItem(TASK_SESSION_VIEW_KEY);
+    return stored === "list" || stored === "rollout" ? stored : "graph";
   } catch {
     return "graph";
+  }
+}
+
+const TASK_TWO_PANE_KEY = "alinery.taskTwoPane";
+const TASK_SESSIONS_SIDE_KEY = "alinery.taskSessionsSide";
+const TASK_SESSIONS_WIDTH_KEY = "alinery.taskSessionsWidth";
+function readStored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writeStored(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // The choice still holds for this view.
   }
 }
 
@@ -221,6 +252,7 @@ export function TaskDetail({
       onClose: () => void;
       onOpenPath: (target: string, keep?: boolean) => void;
       onOpenSession: (session: SessionMeta, intent?: "history" | "attach") => void;
+      bare?: SessionBare;
     },
   ) => ReactNode;
   onNewSession: () => void;
@@ -304,6 +336,26 @@ export function TaskDetail({
     : "";
   const [showArchived, setShowArchived] = useState(false);
   const [sessionView, setSessionView] = useState(readStoredTaskSessionView);
+  const rollout = sessionView === "rollout";
+  // One pane or two. With two, Sessions keeps one side and every opened file or session tab shows in the other,
+  // so a file opened from the sessions pane lands beside it. Sessions exists once: it holds the live session views.
+  const [twoPane, setTwoPane] = useState(() => readStored(TASK_TWO_PANE_KEY) === "1");
+  const [sessionsRight, setSessionsRight] = useState(() => readStored(TASK_SESSIONS_SIDE_KEY) === "right");
+  const [sessionsWidth, setSessionsWidth] = useState(() => Number(readStored(TASK_SESSIONS_WIDTH_KEY)) || 560);
+  const paneDrag = usePointerDrag();
+  const startPaneResize = (ev: ReactPointerEvent<HTMLElement>) => {
+    const startX = ev.clientX;
+    const room = ev.currentTarget.parentElement?.clientWidth ?? 1200;
+    // Dragging away from the sessions pane's own edge grows it.
+    const width = (clientX: number) => Math.max(320, Math.min(room - 320, sessionsWidth + (sessionsRight ? startX - clientX : clientX - startX)));
+    paneDrag.start(ev, {
+      onMove: (moveEv) => setSessionsWidth(width(moveEv.clientX)),
+      onComplete: (completeEv) => {
+        setSessionsWidth(width(completeEv.clientX));
+        writeStored(TASK_SESSIONS_WIDTH_KEY, String(width(completeEv.clientX)));
+      },
+    });
+  };
   const [sessionSort, setSessionSort] = useSessionSort(
     controlledSessionSort !== undefined && onSessionSortChange !== undefined ? { sort: controlledSessionSort, onChange: onSessionSortChange } : undefined,
     DEFAULT_TASK_SESSION_SORT,
@@ -369,6 +421,14 @@ export function TaskDetail({
   // another repo) starts on Sessions.
   const fileTabs = useOpenTabs<OpenArtifactTab>(`${repoPath}\0${slug}`);
   const activeArtifactTab = fileTabs.current?.kind === "session" ? undefined : fileTabs.current;
+  const split = twoPane && fileTabs.tabs.length > 0;
+  // With two panes there is no Sessions tab to fall back to: the other pane always shows one of its tabs. The first
+  // one, which is the neighbour when the first tab was the one closed; shown, not clicked, so a temporary tab stays temporary.
+  const firstTabKey = fileTabs.tabs[0]?.key;
+  const showTab = fileTabs.setActive;
+  useEffect(() => {
+    if (split && !fileTabs.current && firstTabKey) showTab(firstTabKey);
+  }, [split, fileTabs.current, firstTabKey, showTab]);
   const selectedArtifact = activeArtifactTab?.name ?? "";
   const selectedArtifactNode = activeArtifactTab?.node ?? null;
   const artifactMode = activeArtifactTab?.mode ?? "preview";
@@ -745,9 +805,20 @@ export function TaskDetail({
     }
   };
 
+  const sessionTarget = (ownerTaskSlug: string, s: SessionMeta, intent?: TaskSessionTarget["intent"]): TaskSessionTarget => ({
+    taskSlug: ownerTaskSlug,
+    id: s.id,
+    cwd: s.worktree,
+    phase: s.phase,
+    harness: s.harness,
+    model: s.model,
+    playbook: s.playbook,
+    generic: s.generic,
+    intent,
+  });
   const openSession = (ownerTaskSlug: string, s: SessionMeta & { name?: string | null }, intent?: TaskSessionTarget["intent"]) => {
     if (!s.worktree) return;
-    const session = { taskSlug: ownerTaskSlug, id: s.id, cwd: s.worktree, phase: s.phase, harness: s.harness, model: s.model, playbook: s.playbook, generic: s.generic, intent };
+    const session = sessionTarget(ownerTaskSlug, s, intent);
     fileTabs.open(
       { key: `session:${ownerTaskSlug}:${s.id}`, kind: "session", name: s.id, label: s.name || s.phase || "Session", node: null, mode: "preview", session },
       true,
@@ -755,6 +826,14 @@ export function TaskDetail({
     );
     markSessionNotificationRead(repoPath, ownerTaskSlug, s.id).catch(() => {});
   };
+  const rolloutSessions = taskPanelRows.flatMap((row) => (row.kind === "subtask_history" ? [] : [row.session]));
+  /** A sub-task manager's session belongs to the task that started it, which is not always this one. */
+  const sessionOwnerSlug = (session: SessionMeta) => {
+    const row = taskPanelRows.find((row) => row.kind !== "subtask_history" && row.session.id === session.id);
+    return row?.kind === "subtask_manager" ? row.owner_task_slug : slug;
+  };
+  const openRolloutSession = (session: SessionMeta) =>
+    openSession(sessionOwnerSlug(session), session, session.archived || !task?.worktree || worktreeMissing ? "history" : "attach");
   const openSessionPath = (origin: string, target: string, keep?: boolean) => {
     const name = target.slice(target.indexOf(":") + 1);
     if (target.startsWith("artifact:")) openArtifactTab(name, findOwnedArtifactNode(artifactTree, name) ?? null, "artifact", keep, origin);
@@ -1423,14 +1502,65 @@ export function TaskDetail({
           )}
         </aside>
         <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
-        <main className="detailmain">
-          <MainTabs
-            pinned="Sessions"
-            tabs={fileTabs.tabs.map((tab) => (tab.session ? { ...tab, label: sessions.find((s) => s.id === tab.session?.id)?.name || tab.label } : tab))}
-            active={fileTabs.active}
-            onSelect={fileTabs.select}
-            onClose={fileTabs.close}
-          />
+        <main
+          className={`detailmain${split ? ` two-pane${sessionsRight ? " sessions-right" : ""}` : ""}`}
+          style={split ? { gridTemplateColumns: sessionsRight ? `minmax(0, 1fr) 8px ${sessionsWidth}px` : `${sessionsWidth}px 8px minmax(0, 1fr)` } : undefined}
+        >
+          {split && (
+            <div className="task-pane-bar pane-bar-sessions">
+              <div className="task-main-tabs">
+                <div className="task-main-tab on">
+                  <span className="task-main-tab-label">Sessions</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn ghost small task-pane-toggle"
+                aria-label="Move Sessions to the other side"
+                title="Move Sessions to the other side"
+                onClick={() => {
+                  setSessionsRight(!sessionsRight);
+                  writeStored(TASK_SESSIONS_SIDE_KEY, sessionsRight ? "left" : "right");
+                }}
+              >
+                <ArrowLeftRight size={14} aria-hidden="true" />
+              </button>
+            </div>
+          )}
+          <div className="task-pane-bar pane-bar-files">
+            <MainTabs
+              pinned={split ? undefined : "Sessions"}
+              tabs={fileTabs.tabs.map((tab) => (tab.session ? { ...tab, label: sessions.find((s) => s.id === tab.session?.id)?.name || tab.label } : tab))}
+              active={fileTabs.active}
+              onSelect={fileTabs.select}
+              onClose={fileTabs.close}
+            />
+            <button
+              type="button"
+              className={`btn ghost small task-pane-toggle${twoPane ? " on" : ""}`}
+              aria-pressed={twoPane}
+              aria-label="Two panes"
+              title={twoPane ? "Show one pane" : "Show Sessions and an open file side by side"}
+              onClick={() => {
+                setTwoPane(!twoPane);
+                writeStored(TASK_TWO_PANE_KEY, twoPane ? "0" : "1");
+              }}
+            >
+              <Columns2 size={14} aria-hidden="true" />
+            </button>
+          </div>
+          {split && (
+            // biome-ignore lint/a11y/useSemanticElements: the divider is a drag handle, as PaneResizer's is
+            <div
+              className="artifact-resizer pane-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize panes"
+              aria-valuenow={sessionsWidth}
+              tabIndex={0}
+              onPointerDown={startPaneResize}
+            />
+          )}
           {selectedDiff ? (
             <div className="artifactpane task-artifact-view">
               <div className="artifacthead">
@@ -1573,29 +1703,29 @@ export function TaskDetail({
               </div>
             );
           })}
-          <div className="task-sessions-tab" hidden={!!fileTabs.current}>
+          <div className="task-sessions-tab" hidden={!split && !!fileTabs.current}>
             <section className="task-panel task-sessions-panel">
               <div className="task-panel-head">
                 <div className="task-sessions-heading">
                   <h3 className="task-panel-title">Sessions</h3>
-                  <button
-                    type="button"
-                    className="btn ghost small"
-                    aria-label={sessionView === "graph" ? "Show list view" : "Show graph view"}
-                    title={sessionView === "graph" ? "Switch to list view" : "Switch to graph view"}
-                    onClick={() => {
-                      const next = sessionView === "graph" ? "list" : "graph";
-                      setSessionView(next);
-                      try {
-                        localStorage.setItem(TASK_SESSION_VIEW_KEY, next);
-                      } catch {
-                        // Keep switching usable when preference storage is unavailable.
-                      }
-                    }}
-                  >
-                    {sessionView === "graph" ? <List size={14} aria-hidden="true" /> : <Network size={14} aria-hidden="true" />}
-                    {sessionView === "graph" ? "List" : "Graph"}
-                  </button>
+                  <fieldset className="btn-group step-continuation-mode" aria-label="Sessions view">
+                    {TASK_SESSION_VIEWS.map(({ key, label, title, Icon }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className="btn ghost small"
+                        aria-label={label}
+                        aria-pressed={sessionView === key}
+                        title={title}
+                        onClick={() => {
+                          setSessionView(key);
+                          writeStored(TASK_SESSION_VIEW_KEY, key);
+                        }}
+                      >
+                        <Icon size={14} aria-hidden="true" />
+                      </button>
+                    ))}
+                  </fieldset>
                 </div>
                 <div className="task-session-controls">
                   {executionView && (
@@ -1608,7 +1738,7 @@ export function TaskDetail({
                       {queuedExecutionCount} queued
                     </span>
                   )}
-                  {sessionView === "list" && (
+                  {sessionView === "list" && !rollout && (
                     <button
                       type="button"
                       className={`btn ghost small session-sort-control${sessionSort.field === "priority" ? " active" : ""}`}
@@ -1664,19 +1794,49 @@ export function TaskDetail({
                   {err.msg}
                 </InlineStatus>
               )}
-              {sessionView === "graph" ? (
+              {rollout ? (
+                <div className="task-rollout">
+                  {!sessionsLoaded && <p className="dim">Loading sessions…</p>}
+                  {sessionsLoaded && (
+                    <TaskRollout
+                      rows={buildRollout(
+                        rolloutSessions,
+                        executionView?.state,
+                        steps,
+                        (session) => {
+                          const state = observationsById[session.id]?.lifecycle.state;
+                          return state === "live" || state === "live_exited";
+                        },
+                        (path) => Boolean(findOwnedArtifactNode(artifactTree, path)),
+                      )}
+                      observations={observationsById}
+                      repoPath={repoPath}
+                      slug={slug}
+                      now={sessionNow}
+                      onOpenSession={openRolloutSession}
+                      onOpenArtifact={(path) => openArtifactTab(path, findOwnedArtifactNode(artifactTree, path) ?? null)}
+                      renderSession={(session, bare, collapse) => {
+                        const owner = sessionOwnerSlug(session);
+                        return renderSession(sessionTarget(owner, session, lineageSessionIntent(executionView?.state, session)), {
+                          active: true,
+                          bare,
+                          onClose: collapse,
+                          onOpenPath: (path, keep) => openSessionPath(session.id, path, keep),
+                          onOpenSession: (other, intent) => openSession(owner, other, intent),
+                        });
+                      }}
+                    />
+                  )}
+                </div>
+              ) : sessionView === "graph" ? (
                 <>
                   {!sessionsLoaded && <p className="dim">Loading sessions…</p>}
                   {sessionsLoaded && (
                     <TaskRunGraph
-                      sessions={taskPanelRows.flatMap((row) => (row.kind === "subtask_history" ? [] : [row.session]))}
+                      sessions={rolloutSessions}
                       state={executionView?.state ?? null}
                       observations={observationsById}
-                      onOpenSession={(session) => {
-                        const row = taskPanelRows.find((row) => row.kind !== "subtask_history" && row.session.id === session.id);
-                        const owner = row?.kind === "subtask_manager" ? row.owner_task_slug : slug;
-                        openSession(owner, session, session.archived || !task?.worktree || worktreeMissing ? "history" : "attach");
-                      }}
+                      onOpenSession={openRolloutSession}
                       onOpenArtifact={(path) => {
                         openArtifactTab(path, findOwnedArtifactNode(artifactTree, path) ?? null);
                       }}
