@@ -1,6 +1,9 @@
-.collection-view {
+.listwrap.collection-view {
   min-width: 0;
   min-height: 0;
+  /* .listwrap clips, which cut the top off the toolbar's focus rings. The list clips its own
+     scrolling content, so the wrapper can let the rings paint into the view's padding. */
+  overflow: visible;
 }
 
 .collection-view > .list {
@@ -131,8 +134,18 @@
   text-overflow: ellipsis;
 }
 
+.collection-filters select:focus-visible {
+  outline-offset: 2px;
+}
+
 .collection-results {
   margin-left: auto;
+}
+
+/* Everything in the toolbar is one control tall: a compact button keeps its padding and type but
+   takes --control-h, so it lines up with the search field and filters. */
+.collection-toolbar .btn.small {
+  height: var(--control-h);
 }
 
 .collection-count {

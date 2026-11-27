@@ -274,6 +274,7 @@ Rules:
 - Related content groups: `12-16px`.
 - Major screen regions: `24-32px` when space permits.
 - Default control height: `32px`; prominent controls may use `36px`.
+- Toolbar controls use `--control-h`, so a compact button in a toolbar matches the search field and selects beside it. Compact actions inside list and table rows stay compact.
 - Table and list rows should generally remain between `32px` and `40px`, increasing only for meaningful secondary content.
 - Use alignment, whitespace, and separators before adding another container.
 - Preserve resizable panes and let primary work surfaces consume available space.
@@ -417,6 +418,7 @@ AI components are not chat bubbles by default. Choose the structure that best ex
 - Use native HTML semantics before ARIA.
 - Visible focus is required on every interactive element and must remain clear in light and dark modes.
 - Default focus treatment is a `2px` accent ring with enough offset to remain distinct from the component border.
+- A wrapper must not clip its children's focus rings. Clip at the scrolling container itself, and draw rings inset (`outline-offset: -2px`) for controls inside it.
 - Focus order follows visual reading order.
 - Status always includes text; color, icon, and motion are supplemental.
 - Icon-only buttons require accessible names and visible tooltips.
