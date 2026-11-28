@@ -6,6 +6,9 @@ import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatToolsDialog } from "./ChatToolsDialog";
 
+// Dialog portals to document.body, which the server renderer these tests use cannot do.
+vi.mock("react-dom", async (orig) => ({ ...(await orig<typeof import("react-dom")>()), createPortal: (node: unknown) => node }));
+
 vi.mock("../ipc", () => mockIpc({ getCurrentWindow: (() => ({ listen: async () => () => undefined })) as never }));
 
 describe("ChatModelDialog", () => {

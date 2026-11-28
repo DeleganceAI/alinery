@@ -1,7 +1,7 @@
 {
   "name": "alinery-app",
   "private": true,
-  "version": "0.602.0",
+  "version": "0.650.1",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "scripts": {

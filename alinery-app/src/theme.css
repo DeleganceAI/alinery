@@ -8147,6 +8147,92 @@ button.chat-prompt-image:focus-visible {
 .task-sessions-tab[hidden] {
   display: none;
 }
+/* The main pane's tab bar: the open tabs, then the one-or-two-pane toggle. */
+.task-pane-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  min-width: 0;
+  margin: -12px -12px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--canvas);
+}
+.task-pane-bar > .task-main-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  border-bottom: 0;
+}
+.task-pane-toggle {
+  flex: none;
+  align-self: center;
+  margin: 0 6px;
+}
+/* Two panes: Sessions on one side, the open tab on the other, each under its own strip. The column widths come from
+   the dragged divider (TaskDetail); --s and --f are the columns Sessions and the files take. */
+.detailmain.two-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  --s: 1;
+  --f: 3;
+}
+.detailmain.two-pane.sessions-right {
+  --s: 3;
+  --f: 1;
+}
+.detailmain.two-pane > .task-pane-bar {
+  margin-inline: 0;
+}
+.detailmain.two-pane > .pane-bar-sessions {
+  grid-area: 1 / var(--s);
+}
+.detailmain.two-pane > .pane-bar-files {
+  grid-area: 1 / var(--f);
+}
+.detailmain.two-pane > .task-sessions-tab {
+  grid-area: 2 / var(--s);
+}
+.detailmain.two-pane > .pane-resizer {
+  grid-area: 1 / 2 / 3 / 3;
+  margin-top: -12px;
+}
+.detailmain.two-pane > :is(.task-artifact-view, .task-session-view) {
+  grid-area: 2 / var(--f);
+  min-width: 0;
+  min-height: 0;
+}
+.pane-bar-sessions .task-main-tab-label {
+  display: flex;
+  align-items: center;
+  cursor: default;
+}
+/* An open file in the task's main pane is the document and nothing else: its tab already names it (the full path is
+   the tab's tooltip and the copy-path button), so the head row is only its controls, floating over the top corner
+   and quiet until the pointer or focus is in the pane. */
+.detailmain > .task-artifact-view {
+  position: relative;
+  border: 0;
+  border-radius: 0;
+}
+.detailmain > .task-artifact-view > .artifacthead {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 2;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  opacity: 0.4;
+  transition: opacity 120ms;
+}
+.detailmain > .task-artifact-view:hover > .artifacthead,
+.detailmain > .task-artifact-view > .artifacthead:focus-within {
+  opacity: 1;
+}
+.detailmain > .task-artifact-view > .artifacthead > .artifacttitle {
+  display: none;
+}
 /* A session opened from the task: its conversation fills the main pane under the task's tab strip. */
 .task-session-view {
   display: flex;

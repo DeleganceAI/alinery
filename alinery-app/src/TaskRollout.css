@@ -1,0 +1,370 @@
+/* The rollout is one conversation: no cards, no boxes. A step is a line in the stream, the way a turn is. */
+.task-rollout {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.rollout {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.rollout-stream {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+}
+.rollout-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 4px 10px 16px;
+  box-sizing: border-box;
+  list-style: none;
+}
+.rollout-row {
+  min-width: 0;
+}
+/* Sessions that ran at the same time: the step's own line, then a line per session under it. */
+.rollout-group .rollout-turn.member {
+  padding-left: 30px;
+}
+/* The group's line is the frozen header; a member's line freezes just under it. */
+.rollout-turn.member > .rollout-mark {
+  top: 36px;
+  z-index: 2;
+  min-height: 24px;
+}
+.rollout-dots {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 2px 30px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.rollout-dot {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.rollout-dot .rollout-bubble.done {
+  opacity: 0.55;
+}
+/* A closed member is one line, like a table row: number and name, what it is doing, progress, time, files, open.
+   The line's own box dissolves so the session's preview, which lives under it in the tree, can sit inside it. */
+.rollout-turn.inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.rollout-turn.inline > .rollout-mark {
+  display: contents;
+}
+.rollout-turn.inline .rollout-toggle {
+  flex: 0 1 280px;
+}
+.rollout-turn.inline .rollout-step-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rollout-turn.inline > .rollout-session {
+  order: 1;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.rollout-turn.inline .rollout-preview {
+  padding: 0;
+}
+.rollout-turn.inline .rollout-rule {
+  order: 2;
+  flex: none;
+  width: 120px;
+  margin-left: auto;
+}
+/* The bubble already carries the state; the preview says the rest. */
+.rollout-turn.inline .statusdot {
+  display: none;
+}
+.rollout-turn.inline .rollout-elapsed {
+  order: 3;
+}
+.rollout-turn.inline > .rollout-artifacts {
+  order: 4;
+  flex: none;
+  flex-wrap: nowrap;
+  padding: 0;
+}
+.rollout-turn.inline .rollout-artifact {
+  padding: 4px;
+}
+.rollout-turn.inline .rollout-artifact-name {
+  display: none;
+}
+.rollout-turn.inline .rollout-open {
+  order: 5;
+}
+/* A numbered member: wide enough for its subscript. */
+.rollout-bubble.sub {
+  width: auto;
+  min-width: 26px;
+  padding-inline: 5px;
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+.rollout-bubble sub {
+  align-self: flex-end;
+  margin-left: 1px;
+  font-size: 8px;
+  line-height: 1.4;
+}
+.rollout-turn.member .rollout-step-title {
+  font-weight: 500;
+}
+/* The finished ones step back so the ones still working or stuck stand out. */
+.rollout-turn.member .rollout-toggle:has(.rollout-bubble.done) {
+  opacity: 0.55;
+}
+.rollout-turn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* A step's line stays at the top of the scroll while its conversation is under it, like a frozen header row, and the
+   next step's line takes its place as that one arrives: sticky stops at the end of its own row. */
+.rollout-mark {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding-block: 4px;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.rollout-mark .statusdot {
+  font-size: 12px;
+}
+/* The line beside a step is its progress bar. */
+.rollout-rule {
+  flex: 1 1 0;
+  min-width: 12px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: var(--border);
+}
+.rollout-rule-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 400ms ease;
+}
+.rollout-toggle {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.rollout-toggle:disabled {
+  cursor: default;
+}
+.rollout-step-title {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rollout-step-name {
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rollout-elapsed {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.rollout-open {
+  flex: none;
+  width: var(--control-h);
+  padding-inline: 0;
+}
+.rollout-bubble {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  color: var(--text-strong);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* An auxiliary session is not a playbook step: no number, and its own colour. */
+.rollout-bubble.aux {
+  border-style: dashed;
+  border-color: var(--text-muted);
+}
+.rollout-bubble.running {
+  background: var(--accent-subtle);
+}
+.rollout-bubble.needs-user {
+  border-color: var(--warning);
+  background: var(--warning-subtle);
+}
+.rollout-bubble.failed {
+  border-color: var(--danger);
+  background: var(--danger-subtle);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rollout-bubble.running {
+    animation: rollout-pulse 1.6s ease-in-out infinite;
+  }
+}
+@keyframes rollout-pulse {
+  50% {
+    box-shadow: 0 0 0 4px var(--accent-subtle);
+  }
+}
+.rollout-artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0 0 30px;
+}
+.rollout-artifact {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.rollout-artifact:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+.rollout-artifact:disabled {
+  border-style: dashed;
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* The session inside a row: its conversation only, sized by its content, scrolled by the rollout. Every wrapper
+   between the row and the messages gives up its own height, scroll and background. */
+.rollout .sessionview.bare,
+.rollout .sessionview.bare :is(.sessionbody, .session-main, .session-main-body, .termhost, .terminal-frame, .chat-pane, .chat-list) {
+  display: block;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+  background: none;
+}
+.rollout .sessionview.bare .termhost[hidden] {
+  display: none;
+}
+.rollout .sessionview.bare > .sessionhd,
+.rollout .sessionview.bare :is(.chat-meta, .chat-older, .chat-activity) {
+  display: none;
+}
+.rollout .sessionview.bare .session-view-loading {
+  position: static;
+}
+/* A terminal session has no content height of its own. */
+.rollout .sessionview.bare .terminal-frame:not(:has(.chat-pane)) {
+  height: 50vh;
+}
+.rollout .sessionview.bare .chat-journal {
+  max-width: none;
+  padding-inline: 0;
+}
+/* Collapsed: the one line stands in for everything else the session would draw. */
+.rollout .sessionview.bare.preview .termhost > :not(.rollout-preview) {
+  display: none;
+}
+.rollout-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 0 0 30px;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.rollout-preview:hover {
+  color: var(--text);
+}
+.rollout-preview > :is(svg, .ind-orb) {
+  flex: none;
+}
+.rollout-preview-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rollout-preview-time {
+  flex: none;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* One box for the whole task, at the bottom the whole time. The running session renders its composer into it. */
+.rollout-composer {
+  flex: none;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+/* In the composer's row, level with its prompt mark, with room for the ring. */
+.rollout-to {
+  flex: none;
+  margin: 0 2px 3px 4px;
+}
+.rollout-bubble.target {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.rollout-composer-slot:empty::before {
+  display: block;
+  padding: 12px 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+  content: attr(data-empty);
+}
+
