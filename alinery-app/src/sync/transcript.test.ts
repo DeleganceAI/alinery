@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { VinculumTranscript } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
 import { daemonHarness, untilAborted } from "../test/daemonHarness";
-import { applyFrame, messageOf, watchSessionTranscript } from "./transcript";
+import { applyFrame, messageOf, queuedOf, watchSessionTranscript } from "./transcript";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 
@@ -103,6 +103,30 @@ describe("watchSessionTranscript", () => {
     ]);
     expect(got[2]?.messages.map((m) => m.id)).toEqual(["u1", "live", "a2"]);
     expect(got[2]?.model).toBe("p/m"); // controls are kept until a frame changes them
+  });
+
+  it("a queue-only change folds as an empty append at the client's own index: no replay, and the queue lands", async () => {
+    // What the daemon really emits when only the inbox changed: an empty item list, no replace, the client's own next
+    // index. The fake daemon always sends the full list with replace set, so this shape is the one a real busy submit
+    // produces and the fold must take it without re-reading anything.
+    const requests = serve(async function* (_req, _call, signal) {
+      yield frame([item("u1", "hi"), item("live", "He")], 2);
+      yield create(WatchTranscriptResponseSchema, {
+        items: [],
+        nextItem: 2n,
+        replace: false,
+        queued: { items: [{ id: "7", mode: "followUp", text: "later", images: [] }] },
+      });
+      await untilAborted(signal);
+    });
+    const { got, apply } = replies();
+    const stop = watchSessionTranscript("/repo", { taskSlug: "t", id: "s1" }, apply);
+    await until(() => got.length === 2);
+    stop();
+    // No replay: the same list as before — same rows, no restart from 0, one request — and the queue is applied.
+    expect(got[1]?.messages.map((m) => m.id)).toEqual(["u1", "live"]);
+    expect(got[1]?.queued).toEqual([{ id: "7", mode: "followUp", text: "later", images: [] }]);
+    expect(requests).toHaveLength(1);
   });
 
   it("after a drop it reconnects from the end of its list and keeps what it had", async () => {
@@ -230,6 +254,15 @@ describe("transcript frames", () => {
       { type: "image", mimeType: "image/png", name: "shot.png" },
       { type: "image", mimeType: "image/jpeg" },
     ]);
+  });
+
+  it("maps a carried queue and treats an absent field as unchanged, not as an empty queue", () => {
+    const carried = create(WatchTranscriptResponseSchema, {
+      queued: { items: [{ id: "7", mode: "followUp", text: "later", images: [{ name: "shot.png", mimeType: "image/png" }] }] },
+    });
+    expect(queuedOf(carried)).toEqual([{ id: "7", mode: "followUp", text: "later", images: [{ name: "shot.png", mimeType: "image/png" }] }]);
+    expect(queuedOf(create(WatchTranscriptResponseSchema, {}))).toBeUndefined();
+    expect(queuedOf(create(WatchTranscriptResponseSchema, { queued: { items: [] } }))).toEqual([]);
   });
 
   it("applyFrame appends at the end, replaces from the start index, and refuses a gap", () => {

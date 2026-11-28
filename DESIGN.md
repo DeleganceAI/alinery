@@ -357,6 +357,7 @@ Shared Alinery components should own the final class names, tokens, semantics, a
 - Session row, session controls, lifecycle, and live status.
 - Status indicator and attention state.
 - Prompt composer, model selection, and attachments.
+- Queued panel: accepted input waiting for delivery, above the composer.
 - Artifact list, artifact reader, diff, comments, and provenance.
 - Terminal shell and terminal/session split view.
 - Review handoff and related-task context.
@@ -545,6 +546,10 @@ Rules:
 - Finished-but-unreviewed is the one non-running state in warning. It is the only marker that asks for attention without a visible label, so its tooltip and accessible name must both say what it means.
 - Ended-well states share the success dot. Completed, ready-to-advance, and idle differ in their label, not their color; states that merely stopped — stale, exited — drop to text faint.
 - Every indicator carries a label, a `title`, or an `aria-label`. State never lives in color or motion alone, including in minimal mode where the visible label is suppressed.
+
+#### Queued panel
+
+The Queued panel is accepted input waiting for delivery. It sits above the composer, in every surface that can send. Each line is stable text — the message, its image names, and one marker — and never an orb or an animation. A follow-up is marked "after this turn". A steer is marked "interrupts the running turn". The panel's title `Queued` is this waiting list. It is not the lifecycle label `Queued`, which means a playbook session is waiting for engine capacity.
 
 ## Content voice
 

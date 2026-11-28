@@ -11,8 +11,9 @@
 /// leave every running daemon — and every live session — exactly where it is.
 ///
 /// A protocol bump means every user with live sessions has to stop them deliberately
-/// before installing, so treat it as a real cost.
-pub const PROTOCOL_VERSION: u32 = 58;
+/// before installing, so treat it as a real cost. A bump that adds queue visibility to the
+/// transcript stream costs every live session, and the shipping note says so.
+pub const PROTOCOL_VERSION: u32 = 59;
 
 /// How a running daemon relates to this build of the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

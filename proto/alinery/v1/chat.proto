@@ -51,7 +51,13 @@ message PromptChatThreadRequest {
   string text = 3;
   repeated DraftImage images = 4;  // as PromptSessionRequest.images
 }
-message PromptChatThreadResponse {}
+// The submission the harness admitted. `submission_id` is its id and, while it waits, the queued item's id.
+// `status` is what admit time decided: `queued` (it waits in the Queued panel), `placed` (it is already a user
+// message), or empty when a deliberate skip admitted nothing.
+message PromptChatThreadResponse {
+  string submission_id = 1;
+  string status = 2;
+}
 message AbortChatThreadRequest { string thread_id = 1; }
 message AbortChatThreadResponse {}
 message SetChatModelRequest {

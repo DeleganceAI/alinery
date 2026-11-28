@@ -4,8 +4,8 @@
 // @generated from file alinery/v1/sessions.proto (package alinery.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Applied, MutationMeta } from "./common_pb";
 import { file_alinery_v1_common } from "./common_pb";
 import type { LaunchChoices, NotificationSuppression, SessionRef } from "./entities_pb";
@@ -20,7 +20,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/sessions.proto.
  */
 export const file_alinery_v1_sessions: GenFile = /*@__PURE__*/
-  fileDesc("ChlhbGluZXJ5L3YxL3Nlc3Npb25zLnByb3RvEgphbGluZXJ5LnYxIogBChRQcm9tcHRTZXNzaW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEgoKc2Vzc2lvbl9pZBgCIAEoCRIMCgR0ZXh0GAMgASgJEiYKBmltYWdlcxgEIAMoCzIWLmFsaW5lcnkudjEuRHJhZnRJbWFnZSIXChVQcm9tcHRTZXNzaW9uUmVzcG9uc2UiZwoQUmV0cnlUdXJuUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEgoKc2Vzc2lvbl9pZBgCIAEoCRIXCg9mYWlsZWRfZW50cnlfaWQYAyABKAkiEwoRUmV0cnlUdXJuUmVzcG9uc2UiKQoTQWJvcnRTZXNzaW9uUmVxdWVzdBISCgpzZXNzaW9uX2lkGAEgASgJIhYKFEFib3J0U2Vzc2lvblJlc3BvbnNlImMKFlNldFNlc3Npb25Nb2RlbFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhIKCnNlc3Npb25faWQYAiABKAkSDQoFbW9kZWwYAyABKAkiawoeU2V0U2Vzc2lvblRoaW5raW5nTGV2ZWxSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRISCgpzZXNzaW9uX2lkGAIgASgJEg0KBWxldmVsGAMgASgJImkKFUNvbXBhY3RTZXNzaW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEgoKc2Vzc2lvbl9pZBgCIAEoCRIUCgxpbnN0cnVjdGlvbnMYAyABKAkiGAoWQ29tcGFjdFNlc3Npb25SZXNwb25zZSJIChdTZXRTZXNzaW9uTW9kZWxSZXNwb25zZRItCghjb250cm9scxgBIAEoCzIbLmFsaW5lcnkudjEuU2Vzc2lvbkNvbnRyb2xzIlAKH1NldFNlc3Npb25UaGlua2luZ0xldmVsUmVzcG9uc2USLQoIY29udHJvbHMYASABKAsyGy5hbGluZXJ5LnYxLlNlc3Npb25Db250cm9scyKeAQoNUHJpbWFyeVRhcmdldBIQCghzdGVwX2tleRgBIAEoCRIZCgxleGVjdXRpb25faWQYAiABKAlIAIgBARI5ChFpbnB1dF9vY2N1cnJlbmNlcxgDIAEoCzIZLmFsaW5lcnkudjEuT2NjdXJyZW5jZUlkc0gBiAEBQg8KDV9leGVjdXRpb25faWRCFAoSX2lucHV0X29jY3VycmVuY2VzIhwKDU9jY3VycmVuY2VJZHMSCwoDaWRzGAEgAygJImAKD0F1eGlsaWFyeVRhcmdldBIPCgdoYXJuZXNzGAEgASgJEhIKBW1vZGVsGAIgASgJSACIAQESEwoGcHJvbXB0GAMgASgJSAGIAQFCCAoGX21vZGVsQgkKB19wcm9tcHQiggEKFFN1YnRhc2tNYW5hZ2VyVGFyZ2V0EhkKDHN1YnRhc2tfc2x1ZxgBIAEoCUgAiAEBEg8KB3JlY292ZXIYAiABKAgSDwoHaGFybmVzcxgDIAEoCRISCgVtb2RlbBgEIAEoCUgBiAEBQg8KDV9zdWJ0YXNrX3NsdWdCCAoGX21vZGVsIrQDChRDcmVhdGVTZXNzaW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGFza19zbHVnGAIgASgJEiwKB3ByaW1hcnkYAyABKAsyGS5hbGluZXJ5LnYxLlByaW1hcnlUYXJnZXRIABIwCglhdXhpbGlhcnkYBCABKAsyGy5hbGluZXJ5LnYxLkF1eGlsaWFyeVRhcmdldEgAEjsKD3N1YnRhc2tfbWFuYWdlchgFIAEoCzIgLmFsaW5lcnkudjEuU3VidGFza01hbmFnZXJUYXJnZXRIABI3Cg9sYXVuY2hfb3ZlcnJpZGUYBiABKAsyGS5hbGluZXJ5LnYxLkxhdW5jaENob2ljZXNIAYgBARIZCgxwcm9tcHRfZXh0cmEYByABKAlIAogBARIdChBoYW5kb2ZmX2FydGlmYWN0GAggASgJSAOIAQESDQoFc3RhcnQYCSABKAhCCAoGdGFyZ2V0QhIKEF9sYXVuY2hfb3ZlcnJpZGVCDwoNX3Byb21wdF9leHRyYUITChFfaGFuZG9mZl9hcnRpZmFjdCKzAQoOU2Vzc2lvblN0YXJ0ZWQSKAoHc2Vzc2lvbhgBIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSLwoJZXhlY3V0aW9uGAIgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdEgAiAEBEg0KBXN0YXJ0GAMgASgJEikKBmVycm9ycxgEIAMoCzIZLmFsaW5lcnkudjEuQ3JlYXRpb25FcnJvckIMCgpfZXhlY3V0aW9uImoKFUNyZWF0ZVNlc3Npb25SZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEisKB3N0YXJ0ZWQYAiABKAsyGi5hbGluZXJ5LnYxLlNlc3Npb25TdGFydGVkImQKE1N0YXJ0U2Vzc2lvblJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRhc2tfc2x1ZxgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJImkKFFN0YXJ0U2Vzc2lvblJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSKwoHc3RhcnRlZBgCIAEoCzIaLmFsaW5lcnkudjEuU2Vzc2lvblN0YXJ0ZWQipAIKFFJlc3VtZVNlc3Npb25SZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRInCgdzZXNzaW9uGAIgASgLMhYuYWxpbmVyeS52MS5TZXNzaW9uUmVmEg4KBmludGVudBgDIAEoCRILCgNjd2QYBCABKAkSEgoFcGhhc2UYBSABKAlIAIgBARISCgVtb2RlbBgGIAEoCUgBiAEBEhkKDHJlc3VtZV90b2tlbhgHIAEoCUgCiAEBEhEKBGNvbHMYCCABKA1IA4gBARIRCgRyb3dzGAkgASgNSASIAQFCCAoGX3BoYXNlQggKBl9tb2RlbEIPCg1fcmVzdW1lX3Rva2VuQgcKBV9jb2xzQgcKBV9yb3dzIj0KFVJlc3VtZVNlc3Npb25SZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkIpABChRSZW5hbWVTZXNzaW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESJwoHc2Vzc2lvbhgCIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZhIMCgRuYW1lGAMgASgJEhkKEWV4cGVjdGVkX3JldmlzaW9uGAQgASgEIlsKFVJlbmFtZVNlc3Npb25SZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEgwKBG5hbWUYAiABKAkSDgoGc291cmNlGAMgASgJImgKFUFyY2hpdmVTZXNzaW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESJwoHc2Vzc2lvbhgCIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZiJTChZBcmNoaXZlU2Vzc2lvblJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSEwoLa2lsbGVkX2xpdmUYAiABKAgiZQoSS2lsbFNlc3Npb25SZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRInCgdzZXNzaW9uGAIgASgLMhYuYWxpbmVyeS52MS5TZXNzaW9uUmVmIjsKE0tpbGxTZXNzaW9uUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCKOAQoUQ2xlYXJOb3RpZmljYXRpb25SZWYSJwoHc2Vzc2lvbhgBIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZhI9CgtzdXBwcmVzc2lvbhgCIAEoCzIjLmFsaW5lcnkudjEuTm90aWZpY2F0aW9uU3VwcHJlc3Npb25IAIgBAUIOCgxfc3VwcHJlc3Npb24iigEKGUNsZWFyTm90aWZpY2F0aW9uc1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEjIKCHNlc3Npb25zGAIgAygLMiAuYWxpbmVyeS52MS5DbGVhck5vdGlmaWNhdGlvblJlZhIRCglleGl0X29ubHkYAyABKAgiQgoaQ2xlYXJOb3RpZmljYXRpb25zUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJ7ChJSZWFkSGlzdG9yeVJlcXVlc3QSJwoHc2Vzc2lvbhgBIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZhITCgZvZmZzZXQYAiABKARIAIgBARISCgVsaW1pdBgDIAEoBEgBiAEBQgkKB19vZmZzZXRCCAoGX2xpbWl0IlUKE1JlYWRIaXN0b3J5UmVzcG9uc2USDAoEZGF0YRgBIAEoDBIOCgZsZW5ndGgYAiABKAQSEwoLbmV4dF9vZmZzZXQYAyABKAQSCwoDZW9mGAQgASgIInoKGVJlYWRWaW5jdWx1bVdpbmRvd1JlcXVlc3QSJwoHc2Vzc2lvbhgBIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZhIQCgNlbmQYAiABKARIAIgBARIRCgR3YW50GAMgASgESAGIAQFCBgoEX2VuZEIHCgVfd2FudCJWChpSZWFkVmluY3VsdW1XaW5kb3dSZXNwb25zZRIMCgRkYXRhGAEgASgMEg0KBXN0YXJ0GAIgASgEEgsKA2VuZBgDIAEoBBIOCgZsZW5ndGgYBCABKAQiPwoUQXJ0aWZhY3RSZWFkeVJlcXVlc3QSJwoHc2Vzc2lvbhgBIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZiImChVBcnRpZmFjdFJlYWR5UmVzcG9uc2USDQoFcmVhZHkYASABKAgiVAoWV2F0Y2hUcmFuc2NyaXB0UmVxdWVzdBInCgdzZXNzaW9uGAEgASgLMhYuYWxpbmVyeS52MS5TZXNzaW9uUmVmEhEKCWZyb21faXRlbRgCIAEoBCKXAQoXV2F0Y2hUcmFuc2NyaXB0UmVzcG9uc2USKQoFaXRlbXMYASADKAsyGi5hbGluZXJ5LnYxLlRyYW5zY3JpcHRJdGVtEhEKCW5leHRfaXRlbRgCIAEoBBIPCgdyZXBsYWNlGAMgASgIEi0KCGNvbnRyb2xzGAQgASgLMhsuYWxpbmVyeS52MS5TZXNzaW9uQ29udHJvbHMiewoPU2Vzc2lvbkNvbnRyb2xzEg0KBW1vZGVsGAEgASgJEhAKCHRoaW5raW5nGAIgASgJEhcKD3RoaW5raW5nX2xldmVscxgDIAMoCRIWCg5jb250ZXh0X3Rva2VucxgEIAEoDRIWCg5jb250ZXh0X3dpbmRvdxgFIAEoDSKVAgoOVHJhbnNjcmlwdEl0ZW0SCgoCaWQYASABKAkSDAoEcm9sZRgCIAEoCRIRCglzdHJlYW1pbmcYAyABKAgSKwoHY29udGVudBgEIAMoCzIaLmFsaW5lcnkudjEuVHJhbnNjcmlwdFBhcnQSEQoJdG9vbF9uYW1lGAUgASgJEhQKDHRvb2xfY2FsbF9pZBgGIAEoCRIQCghpc19lcnJvchgHIAEoCBIYChBydW5uaW5nX3Rvb2xfaWRzGAggAygJEgoKAmF0GAkgASgDEhIKCnR1cm5fZXJyb3IYCiABKAkSGQoRbnVkZ2VfZGVsaXZlcnlfaWQYCyABKAkSGQoRY29tcGFjdGlvbl9yZWFzb24YDCABKAki1AEKDlRyYW5zY3JpcHRQYXJ0Eg4KBHRleHQYASABKAlIABISCgh0aGlua2luZxgCIAEoCUgAEjkKEXJlZGFjdGVkX3RoaW5raW5nGAMgASgLMhwuYWxpbmVyeS52MS5SZWRhY3RlZFRoaW5raW5nSAASLQoJdG9vbF9jYWxsGAQgASgLMhguYWxpbmVyeS52MS5Ub29sQ2FsbFBhcnRIABIsCgVpbWFnZRgFIAEoCzIbLmFsaW5lcnkudjEuVHJhbnNjcmlwdEltYWdlSABCBgoEa2luZCIyCg9UcmFuc2NyaXB0SW1hZ2USEQoJbWltZV90eXBlGAEgASgJEgwKBG5hbWUYAiABKAkiEgoQUmVkYWN0ZWRUaGlua2luZyJtCgxUb29sQ2FsbFBhcnQSDwoCaWQYASABKAlIAIgBARIRCgRuYW1lGAIgASgJSAGIAQESKQoJYXJndW1lbnRzGAMgASgLMhYuZ29vZ2xlLnByb3RvYnVmLlZhbHVlQgUKA19pZEIHCgVfbmFtZTL4CwoOU2Vzc2lvblNlcnZpY2USXAoPV2F0Y2hUcmFuc2NyaXB0EiIuYWxpbmVyeS52MS5XYXRjaFRyYW5zY3JpcHRSZXF1ZXN0GiMuYWxpbmVyeS52MS5XYXRjaFRyYW5zY3JpcHRSZXNwb25zZTABElQKDUNyZWF0ZVNlc3Npb24SIC5hbGluZXJ5LnYxLkNyZWF0ZVNlc3Npb25SZXF1ZXN0GiEuYWxpbmVyeS52MS5DcmVhdGVTZXNzaW9uUmVzcG9uc2USUQoMU3RhcnRTZXNzaW9uEh8uYWxpbmVyeS52MS5TdGFydFNlc3Npb25SZXF1ZXN0GiAuYWxpbmVyeS52MS5TdGFydFNlc3Npb25SZXNwb25zZRJUCg1SZXN1bWVTZXNzaW9uEiAuYWxpbmVyeS52MS5SZXN1bWVTZXNzaW9uUmVxdWVzdBohLmFsaW5lcnkudjEuUmVzdW1lU2Vzc2lvblJlc3BvbnNlElQKDVJlbmFtZVNlc3Npb24SIC5hbGluZXJ5LnYxLlJlbmFtZVNlc3Npb25SZXF1ZXN0GiEuYWxpbmVyeS52MS5SZW5hbWVTZXNzaW9uUmVzcG9uc2USVwoOQXJjaGl2ZVNlc3Npb24SIS5hbGluZXJ5LnYxLkFyY2hpdmVTZXNzaW9uUmVxdWVzdBoiLmFsaW5lcnkudjEuQXJjaGl2ZVNlc3Npb25SZXNwb25zZRJOCgtLaWxsU2Vzc2lvbhIeLmFsaW5lcnkudjEuS2lsbFNlc3Npb25SZXF1ZXN0Gh8uYWxpbmVyeS52MS5LaWxsU2Vzc2lvblJlc3BvbnNlEmMKEkNsZWFyTm90aWZpY2F0aW9ucxIlLmFsaW5lcnkudjEuQ2xlYXJOb3RpZmljYXRpb25zUmVxdWVzdBomLmFsaW5lcnkudjEuQ2xlYXJOb3RpZmljYXRpb25zUmVzcG9uc2USTgoLUmVhZEhpc3RvcnkSHi5hbGluZXJ5LnYxLlJlYWRIaXN0b3J5UmVxdWVzdBofLmFsaW5lcnkudjEuUmVhZEhpc3RvcnlSZXNwb25zZRJjChJSZWFkVmluY3VsdW1XaW5kb3cSJS5hbGluZXJ5LnYxLlJlYWRWaW5jdWx1bVdpbmRvd1JlcXVlc3QaJi5hbGluZXJ5LnYxLlJlYWRWaW5jdWx1bVdpbmRvd1Jlc3BvbnNlElQKDUFydGlmYWN0UmVhZHkSIC5hbGluZXJ5LnYxLkFydGlmYWN0UmVhZHlSZXF1ZXN0GiEuYWxpbmVyeS52MS5BcnRpZmFjdFJlYWR5UmVzcG9uc2USVAoNUHJvbXB0U2Vzc2lvbhIgLmFsaW5lcnkudjEuUHJvbXB0U2Vzc2lvblJlcXVlc3QaIS5hbGluZXJ5LnYxLlByb21wdFNlc3Npb25SZXNwb25zZRJICglSZXRyeVR1cm4SHC5hbGluZXJ5LnYxLlJldHJ5VHVyblJlcXVlc3QaHS5hbGluZXJ5LnYxLlJldHJ5VHVyblJlc3BvbnNlElEKDEFib3J0U2Vzc2lvbhIfLmFsaW5lcnkudjEuQWJvcnRTZXNzaW9uUmVxdWVzdBogLmFsaW5lcnkudjEuQWJvcnRTZXNzaW9uUmVzcG9uc2USWgoPU2V0U2Vzc2lvbk1vZGVsEiIuYWxpbmVyeS52MS5TZXRTZXNzaW9uTW9kZWxSZXF1ZXN0GiMuYWxpbmVyeS52MS5TZXRTZXNzaW9uTW9kZWxSZXNwb25zZRJyChdTZXRTZXNzaW9uVGhpbmtpbmdMZXZlbBIqLmFsaW5lcnkudjEuU2V0U2Vzc2lvblRoaW5raW5nTGV2ZWxSZXF1ZXN0GisuYWxpbmVyeS52MS5TZXRTZXNzaW9uVGhpbmtpbmdMZXZlbFJlc3BvbnNlElcKDkNvbXBhY3RTZXNzaW9uEiEuYWxpbmVyeS52MS5Db21wYWN0U2Vzc2lvblJlcXVlc3QaIi5hbGluZXJ5LnYxLkNvbXBhY3RTZXNzaW9uUmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common, file_alinery_v1_entities, file_alinery_v1_tasks, file_google_protobuf_struct]);
+  fileDesc("ChlhbGluZXJ5L3YxL3Nlc3Npb25zLnByb3RvEgphbGluZXJ5LnYxIogBChRQcm9tcHRTZXNzaW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEgoKc2Vzc2lvbl9pZBgCIAEoCRIMCgR0ZXh0GAMgASgJEiYKBmltYWdlcxgEIAMoCzIWLmFsaW5lcnkudjEuRHJhZnRJbWFnZSI+ChVQcm9tcHRTZXNzaW9uUmVzcG9uc2USFQoNc3VibWlzc2lvbl9pZBgBIAEoCRIOCgZzdGF0dXMYAiABKAkibwoaUmVtb3ZlUXVldWVkTWVzc2FnZVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhIKCnNlc3Npb25faWQYAiABKAkSFQoNc3VibWlzc2lvbl9pZBgDIAEoCSJWChtSZW1vdmVRdWV1ZWRNZXNzYWdlUmVzcG9uc2USNwoHb3V0Y29tZRgBIAEoDjImLmFsaW5lcnkudjEuUmVtb3ZlUXVldWVkTWVzc2FnZU91dGNvbWUiZwoQUmV0cnlUdXJuUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEgoKc2Vzc2lvbl9pZBgCIAEoCRIXCg9mYWlsZWRfZW50cnlfaWQYAyABKAkiEwoRUmV0cnlUdXJuUmVzcG9uc2UiKQoTQWJvcnRTZXNzaW9uUmVxdWVzdBISCgpzZXNzaW9uX2lkGAEgASgJIhYKFEFib3J0U2Vzc2lvblJlc3BvbnNlImMKFlNldFNlc3Npb25Nb2RlbFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhIKCnNlc3Npb25faWQYAiABKAkSDQoFbW9kZWwYAyABKAkiawoeU2V0U2Vzc2lvblRoaW5raW5nTGV2ZWxSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRISCgpzZXNzaW9uX2lkGAIgASgJEg0KBWxldmVsGAMgASgJImkKFUNvbXBhY3RTZXNzaW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEgoKc2Vzc2lvbl9pZBgCIAEoCRIUCgxpbnN0cnVjdGlvbnMYAyABKAkiGAoWQ29tcGFjdFNlc3Npb25SZXNwb25zZSJIChdTZXRTZXNzaW9uTW9kZWxSZXNwb25zZRItCghjb250cm9scxgBIAEoCzIbLmFsaW5lcnkudjEuU2Vzc2lvbkNvbnRyb2xzIlAKH1NldFNlc3Npb25UaGlua2luZ0xldmVsUmVzcG9uc2USLQoIY29udHJvbHMYASABKAsyGy5hbGluZXJ5LnYxLlNlc3Npb25Db250cm9scyKeAQoNUHJpbWFyeVRhcmdldBIQCghzdGVwX2tleRgBIAEoCRIZCgxleGVjdXRpb25faWQYAiABKAlIAIgBARI5ChFpbnB1dF9vY2N1cnJlbmNlcxgDIAEoCzIZLmFsaW5lcnkudjEuT2NjdXJyZW5jZUlkc0gBiAEBQg8KDV9leGVjdXRpb25faWRCFAoSX2lucHV0X29jY3VycmVuY2VzIhwKDU9jY3VycmVuY2VJZHMSCwoDaWRzGAEgAygJImAKD0F1eGlsaWFyeVRhcmdldBIPCgdoYXJuZXNzGAEgASgJEhIKBW1vZGVsGAIgASgJSACIAQESEwoGcHJvbXB0GAMgASgJSAGIAQFCCAoGX21vZGVsQgkKB19wcm9tcHQiggEKFFN1YnRhc2tNYW5hZ2VyVGFyZ2V0EhkKDHN1YnRhc2tfc2x1ZxgBIAEoCUgAiAEBEg8KB3JlY292ZXIYAiABKAgSDwoHaGFybmVzcxgDIAEoCRISCgVtb2RlbBgEIAEoCUgBiAEBQg8KDV9zdWJ0YXNrX3NsdWdCCAoGX21vZGVsIrQDChRDcmVhdGVTZXNzaW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdGFza19zbHVnGAIgASgJEiwKB3ByaW1hcnkYAyABKAsyGS5hbGluZXJ5LnYxLlByaW1hcnlUYXJnZXRIABIwCglhdXhpbGlhcnkYBCABKAsyGy5hbGluZXJ5LnYxLkF1eGlsaWFyeVRhcmdldEgAEjsKD3N1YnRhc2tfbWFuYWdlchgFIAEoCzIgLmFsaW5lcnkudjEuU3VidGFza01hbmFnZXJUYXJnZXRIABI3Cg9sYXVuY2hfb3ZlcnJpZGUYBiABKAsyGS5hbGluZXJ5LnYxLkxhdW5jaENob2ljZXNIAYgBARIZCgxwcm9tcHRfZXh0cmEYByABKAlIAogBARIdChBoYW5kb2ZmX2FydGlmYWN0GAggASgJSAOIAQESDQoFc3RhcnQYCSABKAhCCAoGdGFyZ2V0QhIKEF9sYXVuY2hfb3ZlcnJpZGVCDwoNX3Byb21wdF9leHRyYUITChFfaGFuZG9mZl9hcnRpZmFjdCKzAQoOU2Vzc2lvblN0YXJ0ZWQSKAoHc2Vzc2lvbhgBIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSLwoJZXhlY3V0aW9uGAIgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdEgAiAEBEg0KBXN0YXJ0GAMgASgJEikKBmVycm9ycxgEIAMoCzIZLmFsaW5lcnkudjEuQ3JlYXRpb25FcnJvckIMCgpfZXhlY3V0aW9uImoKFUNyZWF0ZVNlc3Npb25SZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEisKB3N0YXJ0ZWQYAiABKAsyGi5hbGluZXJ5LnYxLlNlc3Npb25TdGFydGVkImQKE1N0YXJ0U2Vzc2lvblJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXRhc2tfc2x1ZxgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJImkKFFN0YXJ0U2Vzc2lvblJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSKwoHc3RhcnRlZBgCIAEoCzIaLmFsaW5lcnkudjEuU2Vzc2lvblN0YXJ0ZWQipAIKFFJlc3VtZVNlc3Npb25SZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRInCgdzZXNzaW9uGAIgASgLMhYuYWxpbmVyeS52MS5TZXNzaW9uUmVmEg4KBmludGVudBgDIAEoCRILCgNjd2QYBCABKAkSEgoFcGhhc2UYBSABKAlIAIgBARISCgVtb2RlbBgGIAEoCUgBiAEBEhkKDHJlc3VtZV90b2tlbhgHIAEoCUgCiAEBEhEKBGNvbHMYCCABKA1IA4gBARIRCgRyb3dzGAkgASgNSASIAQFCCAoGX3BoYXNlQggKBl9tb2RlbEIPCg1fcmVzdW1lX3Rva2VuQgcKBV9jb2xzQgcKBV9yb3dzIj0KFVJlc3VtZVNlc3Npb25SZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkIpABChRSZW5hbWVTZXNzaW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESJwoHc2Vzc2lvbhgCIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZhIMCgRuYW1lGAMgASgJEhkKEWV4cGVjdGVkX3JldmlzaW9uGAQgASgEIlsKFVJlbmFtZVNlc3Npb25SZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEgwKBG5hbWUYAiABKAkSDgoGc291cmNlGAMgASgJImgKFUFyY2hpdmVTZXNzaW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESJwoHc2Vzc2lvbhgCIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZiJTChZBcmNoaXZlU2Vzc2lvblJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSEwoLa2lsbGVkX2xpdmUYAiABKAgiZQoSS2lsbFNlc3Npb25SZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRInCgdzZXNzaW9uGAIgASgLMhYuYWxpbmVyeS52MS5TZXNzaW9uUmVmIjsKE0tpbGxTZXNzaW9uUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCKOAQoUQ2xlYXJOb3RpZmljYXRpb25SZWYSJwoHc2Vzc2lvbhgBIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZhI9CgtzdXBwcmVzc2lvbhgCIAEoCzIjLmFsaW5lcnkudjEuTm90aWZpY2F0aW9uU3VwcHJlc3Npb25IAIgBAUIOCgxfc3VwcHJlc3Npb24iigEKGUNsZWFyTm90aWZpY2F0aW9uc1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEjIKCHNlc3Npb25zGAIgAygLMiAuYWxpbmVyeS52MS5DbGVhck5vdGlmaWNhdGlvblJlZhIRCglleGl0X29ubHkYAyABKAgiQgoaQ2xlYXJOb3RpZmljYXRpb25zUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJ7ChJSZWFkSGlzdG9yeVJlcXVlc3QSJwoHc2Vzc2lvbhgBIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZhITCgZvZmZzZXQYAiABKARIAIgBARISCgVsaW1pdBgDIAEoBEgBiAEBQgkKB19vZmZzZXRCCAoGX2xpbWl0IlUKE1JlYWRIaXN0b3J5UmVzcG9uc2USDAoEZGF0YRgBIAEoDBIOCgZsZW5ndGgYAiABKAQSEwoLbmV4dF9vZmZzZXQYAyABKAQSCwoDZW9mGAQgASgIInoKGVJlYWRWaW5jdWx1bVdpbmRvd1JlcXVlc3QSJwoHc2Vzc2lvbhgBIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZhIQCgNlbmQYAiABKARIAIgBARIRCgR3YW50GAMgASgESAGIAQFCBgoEX2VuZEIHCgVfd2FudCJWChpSZWFkVmluY3VsdW1XaW5kb3dSZXNwb25zZRIMCgRkYXRhGAEgASgMEg0KBXN0YXJ0GAIgASgEEgsKA2VuZBgDIAEoBBIOCgZsZW5ndGgYBCABKAQiPwoUQXJ0aWZhY3RSZWFkeVJlcXVlc3QSJwoHc2Vzc2lvbhgBIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZiImChVBcnRpZmFjdFJlYWR5UmVzcG9uc2USDQoFcmVhZHkYASABKAgiVAoWV2F0Y2hUcmFuc2NyaXB0UmVxdWVzdBInCgdzZXNzaW9uGAEgASgLMhYuYWxpbmVyeS52MS5TZXNzaW9uUmVmEhEKCWZyb21faXRlbRgCIAEoBCLDAQoXV2F0Y2hUcmFuc2NyaXB0UmVzcG9uc2USKQoFaXRlbXMYASADKAsyGi5hbGluZXJ5LnYxLlRyYW5zY3JpcHRJdGVtEhEKCW5leHRfaXRlbRgCIAEoBBIPCgdyZXBsYWNlGAMgASgIEi0KCGNvbnRyb2xzGAQgASgLMhsuYWxpbmVyeS52MS5TZXNzaW9uQ29udHJvbHMSKgoGcXVldWVkGAUgASgLMhouYWxpbmVyeS52MS5RdWV1ZWRNZXNzYWdlcyI6Cg5RdWV1ZWRNZXNzYWdlcxIoCgVpdGVtcxgBIAMoCzIZLmFsaW5lcnkudjEuUXVldWVkTWVzc2FnZSJkCg1RdWV1ZWRNZXNzYWdlEgoKAmlkGAEgASgJEgwKBG1vZGUYAiABKAkSDAoEdGV4dBgDIAEoCRIrCgZpbWFnZXMYBCADKAsyGy5hbGluZXJ5LnYxLlRyYW5zY3JpcHRJbWFnZSJ7Cg9TZXNzaW9uQ29udHJvbHMSDQoFbW9kZWwYASABKAkSEAoIdGhpbmtpbmcYAiABKAkSFwoPdGhpbmtpbmdfbGV2ZWxzGAMgAygJEhYKDmNvbnRleHRfdG9rZW5zGAQgASgNEhYKDmNvbnRleHRfd2luZG93GAUgASgNIpUCCg5UcmFuc2NyaXB0SXRlbRIKCgJpZBgBIAEoCRIMCgRyb2xlGAIgASgJEhEKCXN0cmVhbWluZxgDIAEoCBIrCgdjb250ZW50GAQgAygLMhouYWxpbmVyeS52MS5UcmFuc2NyaXB0UGFydBIRCgl0b29sX25hbWUYBSABKAkSFAoMdG9vbF9jYWxsX2lkGAYgASgJEhAKCGlzX2Vycm9yGAcgASgIEhgKEHJ1bm5pbmdfdG9vbF9pZHMYCCADKAkSCgoCYXQYCSABKAMSEgoKdHVybl9lcnJvchgKIAEoCRIZChFudWRnZV9kZWxpdmVyeV9pZBgLIAEoCRIZChFjb21wYWN0aW9uX3JlYXNvbhgMIAEoCSLUAQoOVHJhbnNjcmlwdFBhcnQSDgoEdGV4dBgBIAEoCUgAEhIKCHRoaW5raW5nGAIgASgJSAASOQoRcmVkYWN0ZWRfdGhpbmtpbmcYAyABKAsyHC5hbGluZXJ5LnYxLlJlZGFjdGVkVGhpbmtpbmdIABItCgl0b29sX2NhbGwYBCABKAsyGC5hbGluZXJ5LnYxLlRvb2xDYWxsUGFydEgAEiwKBWltYWdlGAUgASgLMhsuYWxpbmVyeS52MS5UcmFuc2NyaXB0SW1hZ2VIAEIGCgRraW5kIjIKD1RyYW5zY3JpcHRJbWFnZRIRCgltaW1lX3R5cGUYASABKAkSDAoEbmFtZRgCIAEoCSISChBSZWRhY3RlZFRoaW5raW5nIm0KDFRvb2xDYWxsUGFydBIPCgJpZBgBIAEoCUgAiAEBEhEKBG5hbWUYAiABKAlIAYgBARIpCglhcmd1bWVudHMYAyABKAsyFi5nb29nbGUucHJvdG9idWYuVmFsdWVCBQoDX2lkQgcKBV9uYW1lKtEBChpSZW1vdmVRdWV1ZWRNZXNzYWdlT3V0Y29tZRItCilSRU1PVkVfUVVFVUVEX01FU1NBR0VfT1VUQ09NRV9VTlNQRUNJRklFRBAAEikKJVJFTU9WRV9RVUVVRURfTUVTU0FHRV9PVVRDT01FX1JFTU9WRUQQARIsCihSRU1PVkVfUVVFVUVEX01FU1NBR0VfT1VUQ09NRV9OT1RfUVVFVUVEEAISKwonUkVNT1ZFX1FVRVVFRF9NRVNTQUdFX09VVENPTUVfTk9UX0ZPVU5EEAMy4AwKDlNlc3Npb25TZXJ2aWNlElwKD1dhdGNoVHJhbnNjcmlwdBIiLmFsaW5lcnkudjEuV2F0Y2hUcmFuc2NyaXB0UmVxdWVzdBojLmFsaW5lcnkudjEuV2F0Y2hUcmFuc2NyaXB0UmVzcG9uc2UwARJUCg1DcmVhdGVTZXNzaW9uEiAuYWxpbmVyeS52MS5DcmVhdGVTZXNzaW9uUmVxdWVzdBohLmFsaW5lcnkudjEuQ3JlYXRlU2Vzc2lvblJlc3BvbnNlElEKDFN0YXJ0U2Vzc2lvbhIfLmFsaW5lcnkudjEuU3RhcnRTZXNzaW9uUmVxdWVzdBogLmFsaW5lcnkudjEuU3RhcnRTZXNzaW9uUmVzcG9uc2USVAoNUmVzdW1lU2Vzc2lvbhIgLmFsaW5lcnkudjEuUmVzdW1lU2Vzc2lvblJlcXVlc3QaIS5hbGluZXJ5LnYxLlJlc3VtZVNlc3Npb25SZXNwb25zZRJUCg1SZW5hbWVTZXNzaW9uEiAuYWxpbmVyeS52MS5SZW5hbWVTZXNzaW9uUmVxdWVzdBohLmFsaW5lcnkudjEuUmVuYW1lU2Vzc2lvblJlc3BvbnNlElcKDkFyY2hpdmVTZXNzaW9uEiEuYWxpbmVyeS52MS5BcmNoaXZlU2Vzc2lvblJlcXVlc3QaIi5hbGluZXJ5LnYxLkFyY2hpdmVTZXNzaW9uUmVzcG9uc2USTgoLS2lsbFNlc3Npb24SHi5hbGluZXJ5LnYxLktpbGxTZXNzaW9uUmVxdWVzdBofLmFsaW5lcnkudjEuS2lsbFNlc3Npb25SZXNwb25zZRJjChJDbGVhck5vdGlmaWNhdGlvbnMSJS5hbGluZXJ5LnYxLkNsZWFyTm90aWZpY2F0aW9uc1JlcXVlc3QaJi5hbGluZXJ5LnYxLkNsZWFyTm90aWZpY2F0aW9uc1Jlc3BvbnNlEk4KC1JlYWRIaXN0b3J5Eh4uYWxpbmVyeS52MS5SZWFkSGlzdG9yeVJlcXVlc3QaHy5hbGluZXJ5LnYxLlJlYWRIaXN0b3J5UmVzcG9uc2USYwoSUmVhZFZpbmN1bHVtV2luZG93EiUuYWxpbmVyeS52MS5SZWFkVmluY3VsdW1XaW5kb3dSZXF1ZXN0GiYuYWxpbmVyeS52MS5SZWFkVmluY3VsdW1XaW5kb3dSZXNwb25zZRJUCg1BcnRpZmFjdFJlYWR5EiAuYWxpbmVyeS52MS5BcnRpZmFjdFJlYWR5UmVxdWVzdBohLmFsaW5lcnkudjEuQXJ0aWZhY3RSZWFkeVJlc3BvbnNlElQKDVByb21wdFNlc3Npb24SIC5hbGluZXJ5LnYxLlByb21wdFNlc3Npb25SZXF1ZXN0GiEuYWxpbmVyeS52MS5Qcm9tcHRTZXNzaW9uUmVzcG9uc2USZgoTUmVtb3ZlUXVldWVkTWVzc2FnZRImLmFsaW5lcnkudjEuUmVtb3ZlUXVldWVkTWVzc2FnZVJlcXVlc3QaJy5hbGluZXJ5LnYxLlJlbW92ZVF1ZXVlZE1lc3NhZ2VSZXNwb25zZRJICglSZXRyeVR1cm4SHC5hbGluZXJ5LnYxLlJldHJ5VHVyblJlcXVlc3QaHS5hbGluZXJ5LnYxLlJldHJ5VHVyblJlc3BvbnNlElEKDEFib3J0U2Vzc2lvbhIfLmFsaW5lcnkudjEuQWJvcnRTZXNzaW9uUmVxdWVzdBogLmFsaW5lcnkudjEuQWJvcnRTZXNzaW9uUmVzcG9uc2USWgoPU2V0U2Vzc2lvbk1vZGVsEiIuYWxpbmVyeS52MS5TZXRTZXNzaW9uTW9kZWxSZXF1ZXN0GiMuYWxpbmVyeS52MS5TZXRTZXNzaW9uTW9kZWxSZXNwb25zZRJyChdTZXRTZXNzaW9uVGhpbmtpbmdMZXZlbBIqLmFsaW5lcnkudjEuU2V0U2Vzc2lvblRoaW5raW5nTGV2ZWxSZXF1ZXN0GisuYWxpbmVyeS52MS5TZXRTZXNzaW9uVGhpbmtpbmdMZXZlbFJlc3BvbnNlElcKDkNvbXBhY3RTZXNzaW9uEiEuYWxpbmVyeS52MS5Db21wYWN0U2Vzc2lvblJlcXVlc3QaIi5hbGluZXJ5LnYxLkNvbXBhY3RTZXNzaW9uUmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common, file_alinery_v1_entities, file_alinery_v1_tasks, file_google_protobuf_struct]);
 
 /**
  * The session is named by id alone: a live session's id is unique in its daemon, and a chat thread has no task.
@@ -60,9 +60,22 @@ export const PromptSessionRequestSchema: GenMessage<PromptSessionRequest> = /*@_
   messageDesc(file_alinery_v1_sessions, 0);
 
 /**
+ * The submission the harness admitted. `submission_id` is its id and, while it waits, the queued item's id.
+ * `status` is what admit time decided: `queued` (it waits in the Queued panel), `placed` (it is already a user
+ * message), or empty when a deliberate skip admitted nothing.
+ *
  * @generated from message alinery.v1.PromptSessionResponse
  */
 export type PromptSessionResponse = Message<"alinery.v1.PromptSessionResponse"> & {
+  /**
+   * @generated from field: string submission_id = 1;
+   */
+  submissionId: string;
+
+  /**
+   * @generated from field: string status = 2;
+   */
+  status: string;
 };
 
 /**
@@ -71,6 +84,50 @@ export type PromptSessionResponse = Message<"alinery.v1.PromptSessionResponse"> 
  */
 export const PromptSessionResponseSchema: GenMessage<PromptSessionResponse> = /*@__PURE__*/
   messageDesc(file_alinery_v1_sessions, 1);
+
+/**
+ * @generated from message alinery.v1.RemoveQueuedMessageRequest
+ */
+export type RemoveQueuedMessageRequest = Message<"alinery.v1.RemoveQueuedMessageRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string session_id = 2;
+   */
+  sessionId: string;
+
+  /**
+   * @generated from field: string submission_id = 3;
+   */
+  submissionId: string;
+};
+
+/**
+ * Describes the message alinery.v1.RemoveQueuedMessageRequest.
+ * Use `create(RemoveQueuedMessageRequestSchema)` to create a new message.
+ */
+export const RemoveQueuedMessageRequestSchema: GenMessage<RemoveQueuedMessageRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_sessions, 2);
+
+/**
+ * @generated from message alinery.v1.RemoveQueuedMessageResponse
+ */
+export type RemoveQueuedMessageResponse = Message<"alinery.v1.RemoveQueuedMessageResponse"> & {
+  /**
+   * @generated from field: alinery.v1.RemoveQueuedMessageOutcome outcome = 1;
+   */
+  outcome: RemoveQueuedMessageOutcome;
+};
+
+/**
+ * Describes the message alinery.v1.RemoveQueuedMessageResponse.
+ * Use `create(RemoveQueuedMessageResponseSchema)` to create a new message.
+ */
+export const RemoveQueuedMessageResponseSchema: GenMessage<RemoveQueuedMessageResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_sessions, 3);
 
 /**
  * Resume the failed turn once in this conversation. An id for an older failure cannot start new work.
@@ -99,7 +156,7 @@ export type RetryTurnRequest = Message<"alinery.v1.RetryTurnRequest"> & {
  * Use `create(RetryTurnRequestSchema)` to create a new message.
  */
 export const RetryTurnRequestSchema: GenMessage<RetryTurnRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 2);
+  messageDesc(file_alinery_v1_sessions, 4);
 
 /**
  * @generated from message alinery.v1.RetryTurnResponse
@@ -112,7 +169,7 @@ export type RetryTurnResponse = Message<"alinery.v1.RetryTurnResponse"> & {
  * Use `create(RetryTurnResponseSchema)` to create a new message.
  */
 export const RetryTurnResponseSchema: GenMessage<RetryTurnResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 3);
+  messageDesc(file_alinery_v1_sessions, 5);
 
 /**
  * @generated from message alinery.v1.AbortSessionRequest
@@ -129,7 +186,7 @@ export type AbortSessionRequest = Message<"alinery.v1.AbortSessionRequest"> & {
  * Use `create(AbortSessionRequestSchema)` to create a new message.
  */
 export const AbortSessionRequestSchema: GenMessage<AbortSessionRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 4);
+  messageDesc(file_alinery_v1_sessions, 6);
 
 /**
  * @generated from message alinery.v1.AbortSessionResponse
@@ -142,7 +199,7 @@ export type AbortSessionResponse = Message<"alinery.v1.AbortSessionResponse"> & 
  * Use `create(AbortSessionResponseSchema)` to create a new message.
  */
 export const AbortSessionResponseSchema: GenMessage<AbortSessionResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 5);
+  messageDesc(file_alinery_v1_sessions, 7);
 
 /**
  * @generated from message alinery.v1.SetSessionModelRequest
@@ -171,7 +228,7 @@ export type SetSessionModelRequest = Message<"alinery.v1.SetSessionModelRequest"
  * Use `create(SetSessionModelRequestSchema)` to create a new message.
  */
 export const SetSessionModelRequestSchema: GenMessage<SetSessionModelRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 6);
+  messageDesc(file_alinery_v1_sessions, 8);
 
 /**
  * @generated from message alinery.v1.SetSessionThinkingLevelRequest
@@ -198,7 +255,7 @@ export type SetSessionThinkingLevelRequest = Message<"alinery.v1.SetSessionThink
  * Use `create(SetSessionThinkingLevelRequestSchema)` to create a new message.
  */
 export const SetSessionThinkingLevelRequestSchema: GenMessage<SetSessionThinkingLevelRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 7);
+  messageDesc(file_alinery_v1_sessions, 9);
 
 /**
  * Admits a manual compaction of the session. Returns when the compaction is admitted, not when the summary lands.
@@ -229,7 +286,7 @@ export type CompactSessionRequest = Message<"alinery.v1.CompactSessionRequest"> 
  * Use `create(CompactSessionRequestSchema)` to create a new message.
  */
 export const CompactSessionRequestSchema: GenMessage<CompactSessionRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 8);
+  messageDesc(file_alinery_v1_sessions, 10);
 
 /**
  * @generated from message alinery.v1.CompactSessionResponse
@@ -242,7 +299,7 @@ export type CompactSessionResponse = Message<"alinery.v1.CompactSessionResponse"
  * Use `create(CompactSessionResponseSchema)` to create a new message.
  */
 export const CompactSessionResponseSchema: GenMessage<CompactSessionResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 9);
+  messageDesc(file_alinery_v1_sessions, 11);
 
 /**
  * @generated from message alinery.v1.SetSessionModelResponse
@@ -259,7 +316,7 @@ export type SetSessionModelResponse = Message<"alinery.v1.SetSessionModelRespons
  * Use `create(SetSessionModelResponseSchema)` to create a new message.
  */
 export const SetSessionModelResponseSchema: GenMessage<SetSessionModelResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 10);
+  messageDesc(file_alinery_v1_sessions, 12);
 
 /**
  * @generated from message alinery.v1.SetSessionThinkingLevelResponse
@@ -276,7 +333,7 @@ export type SetSessionThinkingLevelResponse = Message<"alinery.v1.SetSessionThin
  * Use `create(SetSessionThinkingLevelResponseSchema)` to create a new message.
  */
 export const SetSessionThinkingLevelResponseSchema: GenMessage<SetSessionThinkingLevelResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 11);
+  messageDesc(file_alinery_v1_sessions, 13);
 
 /**
  * @generated from message alinery.v1.PrimaryTarget
@@ -305,7 +362,7 @@ export type PrimaryTarget = Message<"alinery.v1.PrimaryTarget"> & {
  * Use `create(PrimaryTargetSchema)` to create a new message.
  */
 export const PrimaryTargetSchema: GenMessage<PrimaryTarget> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 12);
+  messageDesc(file_alinery_v1_sessions, 14);
 
 /**
  * @generated from message alinery.v1.OccurrenceIds
@@ -322,7 +379,7 @@ export type OccurrenceIds = Message<"alinery.v1.OccurrenceIds"> & {
  * Use `create(OccurrenceIdsSchema)` to create a new message.
  */
 export const OccurrenceIdsSchema: GenMessage<OccurrenceIds> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 13);
+  messageDesc(file_alinery_v1_sessions, 15);
 
 /**
  * @generated from message alinery.v1.AuxiliaryTarget
@@ -349,7 +406,7 @@ export type AuxiliaryTarget = Message<"alinery.v1.AuxiliaryTarget"> & {
  * Use `create(AuxiliaryTargetSchema)` to create a new message.
  */
 export const AuxiliaryTargetSchema: GenMessage<AuxiliaryTarget> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 14);
+  messageDesc(file_alinery_v1_sessions, 16);
 
 /**
  * @generated from message alinery.v1.SubtaskManagerTarget
@@ -381,7 +438,7 @@ export type SubtaskManagerTarget = Message<"alinery.v1.SubtaskManagerTarget"> & 
  * Use `create(SubtaskManagerTargetSchema)` to create a new message.
  */
 export const SubtaskManagerTargetSchema: GenMessage<SubtaskManagerTarget> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 15);
+  messageDesc(file_alinery_v1_sessions, 17);
 
 /**
  * A session for a task ("" task_slug: a taskless one, the drawer terminal or a chat thread).
@@ -448,7 +505,7 @@ export type CreateSessionRequest = Message<"alinery.v1.CreateSessionRequest"> & 
  * Use `create(CreateSessionRequestSchema)` to create a new message.
  */
 export const CreateSessionRequestSchema: GenMessage<CreateSessionRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 16);
+  messageDesc(file_alinery_v1_sessions, 18);
 
 /**
  * The session and execution in the JSON form the app has always decoded; typed when the session views read entities.
@@ -484,7 +541,7 @@ export type SessionStarted = Message<"alinery.v1.SessionStarted"> & {
  * Use `create(SessionStartedSchema)` to create a new message.
  */
 export const SessionStartedSchema: GenMessage<SessionStarted> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 17);
+  messageDesc(file_alinery_v1_sessions, 19);
 
 /**
  * @generated from message alinery.v1.CreateSessionResponse
@@ -506,7 +563,7 @@ export type CreateSessionResponse = Message<"alinery.v1.CreateSessionResponse"> 
  * Use `create(CreateSessionResponseSchema)` to create a new message.
  */
 export const CreateSessionResponseSchema: GenMessage<CreateSessionResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 18);
+  messageDesc(file_alinery_v1_sessions, 20);
 
 /**
  * @generated from message alinery.v1.StartSessionRequest
@@ -533,7 +590,7 @@ export type StartSessionRequest = Message<"alinery.v1.StartSessionRequest"> & {
  * Use `create(StartSessionRequestSchema)` to create a new message.
  */
 export const StartSessionRequestSchema: GenMessage<StartSessionRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 19);
+  messageDesc(file_alinery_v1_sessions, 21);
 
 /**
  * @generated from message alinery.v1.StartSessionResponse
@@ -555,7 +612,7 @@ export type StartSessionResponse = Message<"alinery.v1.StartSessionResponse"> & 
  * Use `create(StartSessionResponseSchema)` to create a new message.
  */
 export const StartSessionResponseSchema: GenMessage<StartSessionResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 20);
+  messageDesc(file_alinery_v1_sessions, 22);
 
 /**
  * Spawns, resumes or (intent "attach") re-checks a session's process. The bytes come from TerminalService.Attach.
@@ -616,7 +673,7 @@ export type ResumeSessionRequest = Message<"alinery.v1.ResumeSessionRequest"> & 
  * Use `create(ResumeSessionRequestSchema)` to create a new message.
  */
 export const ResumeSessionRequestSchema: GenMessage<ResumeSessionRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 21);
+  messageDesc(file_alinery_v1_sessions, 23);
 
 /**
  * @generated from message alinery.v1.ResumeSessionResponse
@@ -633,7 +690,7 @@ export type ResumeSessionResponse = Message<"alinery.v1.ResumeSessionResponse"> 
  * Use `create(ResumeSessionResponseSchema)` to create a new message.
  */
 export const ResumeSessionResponseSchema: GenMessage<ResumeSessionResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 22);
+  messageDesc(file_alinery_v1_sessions, 24);
 
 /**
  * @generated from message alinery.v1.RenameSessionRequest
@@ -667,7 +724,7 @@ export type RenameSessionRequest = Message<"alinery.v1.RenameSessionRequest"> & 
  * Use `create(RenameSessionRequestSchema)` to create a new message.
  */
 export const RenameSessionRequestSchema: GenMessage<RenameSessionRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 23);
+  messageDesc(file_alinery_v1_sessions, 25);
 
 /**
  * @generated from message alinery.v1.RenameSessionResponse
@@ -696,7 +753,7 @@ export type RenameSessionResponse = Message<"alinery.v1.RenameSessionResponse"> 
  * Use `create(RenameSessionResponseSchema)` to create a new message.
  */
 export const RenameSessionResponseSchema: GenMessage<RenameSessionResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 24);
+  messageDesc(file_alinery_v1_sessions, 26);
 
 /**
  * @generated from message alinery.v1.ArchiveSessionRequest
@@ -718,7 +775,7 @@ export type ArchiveSessionRequest = Message<"alinery.v1.ArchiveSessionRequest"> 
  * Use `create(ArchiveSessionRequestSchema)` to create a new message.
  */
 export const ArchiveSessionRequestSchema: GenMessage<ArchiveSessionRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 25);
+  messageDesc(file_alinery_v1_sessions, 27);
 
 /**
  * @generated from message alinery.v1.ArchiveSessionResponse
@@ -740,7 +797,7 @@ export type ArchiveSessionResponse = Message<"alinery.v1.ArchiveSessionResponse"
  * Use `create(ArchiveSessionResponseSchema)` to create a new message.
  */
 export const ArchiveSessionResponseSchema: GenMessage<ArchiveSessionResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 26);
+  messageDesc(file_alinery_v1_sessions, 28);
 
 /**
  * @generated from message alinery.v1.KillSessionRequest
@@ -762,7 +819,7 @@ export type KillSessionRequest = Message<"alinery.v1.KillSessionRequest"> & {
  * Use `create(KillSessionRequestSchema)` to create a new message.
  */
 export const KillSessionRequestSchema: GenMessage<KillSessionRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 27);
+  messageDesc(file_alinery_v1_sessions, 29);
 
 /**
  * @generated from message alinery.v1.KillSessionResponse
@@ -779,7 +836,7 @@ export type KillSessionResponse = Message<"alinery.v1.KillSessionResponse"> & {
  * Use `create(KillSessionResponseSchema)` to create a new message.
  */
 export const KillSessionResponseSchema: GenMessage<KillSessionResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 28);
+  messageDesc(file_alinery_v1_sessions, 30);
 
 /**
  * @generated from message alinery.v1.ClearNotificationRef
@@ -801,7 +858,7 @@ export type ClearNotificationRef = Message<"alinery.v1.ClearNotificationRef"> & 
  * Use `create(ClearNotificationRefSchema)` to create a new message.
  */
 export const ClearNotificationRefSchema: GenMessage<ClearNotificationRef> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 29);
+  messageDesc(file_alinery_v1_sessions, 31);
 
 /**
  * @generated from message alinery.v1.ClearNotificationsRequest
@@ -830,7 +887,7 @@ export type ClearNotificationsRequest = Message<"alinery.v1.ClearNotificationsRe
  * Use `create(ClearNotificationsRequestSchema)` to create a new message.
  */
 export const ClearNotificationsRequestSchema: GenMessage<ClearNotificationsRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 30);
+  messageDesc(file_alinery_v1_sessions, 32);
 
 /**
  * @generated from message alinery.v1.ClearNotificationsResponse
@@ -847,7 +904,7 @@ export type ClearNotificationsResponse = Message<"alinery.v1.ClearNotificationsR
  * Use `create(ClearNotificationsResponseSchema)` to create a new message.
  */
 export const ClearNotificationsResponseSchema: GenMessage<ClearNotificationsResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 31);
+  messageDesc(file_alinery_v1_sessions, 33);
 
 /**
  * With no offset and limit: the tail of the scrollback (at most 8 MiB, terminal queries left out). With both: that
@@ -877,7 +934,7 @@ export type ReadHistoryRequest = Message<"alinery.v1.ReadHistoryRequest"> & {
  * Use `create(ReadHistoryRequestSchema)` to create a new message.
  */
 export const ReadHistoryRequestSchema: GenMessage<ReadHistoryRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 32);
+  messageDesc(file_alinery_v1_sessions, 34);
 
 /**
  * @generated from message alinery.v1.ReadHistoryResponse
@@ -915,7 +972,7 @@ export type ReadHistoryResponse = Message<"alinery.v1.ReadHistoryResponse"> & {
  * Use `create(ReadHistoryResponseSchema)` to create a new message.
  */
 export const ReadHistoryResponseSchema: GenMessage<ReadHistoryResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 33);
+  messageDesc(file_alinery_v1_sessions, 35);
 
 /**
  * One backward page of a Vinculum journal; `end` unset is the tail.
@@ -944,7 +1001,7 @@ export type ReadVinculumWindowRequest = Message<"alinery.v1.ReadVinculumWindowRe
  * Use `create(ReadVinculumWindowRequestSchema)` to create a new message.
  */
 export const ReadVinculumWindowRequestSchema: GenMessage<ReadVinculumWindowRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 34);
+  messageDesc(file_alinery_v1_sessions, 36);
 
 /**
  * @generated from message alinery.v1.ReadVinculumWindowResponse
@@ -976,7 +1033,7 @@ export type ReadVinculumWindowResponse = Message<"alinery.v1.ReadVinculumWindowR
  * Use `create(ReadVinculumWindowResponseSchema)` to create a new message.
  */
 export const ReadVinculumWindowResponseSchema: GenMessage<ReadVinculumWindowResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 35);
+  messageDesc(file_alinery_v1_sessions, 37);
 
 /**
  * @generated from message alinery.v1.ArtifactReadyRequest
@@ -993,7 +1050,7 @@ export type ArtifactReadyRequest = Message<"alinery.v1.ArtifactReadyRequest"> & 
  * Use `create(ArtifactReadyRequestSchema)` to create a new message.
  */
 export const ArtifactReadyRequestSchema: GenMessage<ArtifactReadyRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 36);
+  messageDesc(file_alinery_v1_sessions, 38);
 
 /**
  * @generated from message alinery.v1.ArtifactReadyResponse
@@ -1010,7 +1067,7 @@ export type ArtifactReadyResponse = Message<"alinery.v1.ArtifactReadyResponse"> 
  * Use `create(ArtifactReadyResponseSchema)` to create a new message.
  */
 export const ArtifactReadyResponseSchema: GenMessage<ArtifactReadyResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 37);
+  messageDesc(file_alinery_v1_sessions, 39);
 
 /**
  * `from_item` is an index into the item list. 0 starts with everything.
@@ -1034,7 +1091,7 @@ export type WatchTranscriptRequest = Message<"alinery.v1.WatchTranscriptRequest"
  * Use `create(WatchTranscriptRequestSchema)` to create a new message.
  */
 export const WatchTranscriptRequestSchema: GenMessage<WatchTranscriptRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 38);
+  messageDesc(file_alinery_v1_sessions, 40);
 
 /**
  * A frame covers items [next_item - items.length, next_item). With replace unset those are new items
@@ -1065,6 +1122,13 @@ export type WatchTranscriptResponse = Message<"alinery.v1.WatchTranscriptRespons
    * @generated from field: alinery.v1.SessionControls controls = 4;
    */
   controls?: SessionControls | undefined;
+
+  /**
+   * the waiting inputs beside the items: set on the first frame and whenever the queue changes
+   *
+   * @generated from field: alinery.v1.QueuedMessages queued = 5;
+   */
+  queued?: QueuedMessages | undefined;
 };
 
 /**
@@ -1072,7 +1136,67 @@ export type WatchTranscriptResponse = Message<"alinery.v1.WatchTranscriptRespons
  * Use `create(WatchTranscriptResponseSchema)` to create a new message.
  */
 export const WatchTranscriptResponseSchema: GenMessage<WatchTranscriptResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 39);
+  messageDesc(file_alinery_v1_sessions, 41);
+
+/**
+ * The inputs waiting on this session, carried beside the message list and never one of them. Set on the first
+ * frame and whenever the queue changes — the `controls` contract — so an unset field means "unchanged, keep what
+ * you have" and a set field with no items means "nothing is waiting". A queued item is accepted input that has not
+ * been delivered: the harness places it at the turn's next boundary and it then appears as an ordinary user
+ * message. Harness-internal writes are never in this list.
+ *
+ * @generated from message alinery.v1.QueuedMessages
+ */
+export type QueuedMessages = Message<"alinery.v1.QueuedMessages"> & {
+  /**
+   * @generated from field: repeated alinery.v1.QueuedMessage items = 1;
+   */
+  items: QueuedMessage[];
+};
+
+/**
+ * Describes the message alinery.v1.QueuedMessages.
+ * Use `create(QueuedMessagesSchema)` to create a new message.
+ */
+export const QueuedMessagesSchema: GenMessage<QueuedMessages> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_sessions, 42);
+
+/**
+ * One waiting input. `id` is the submission id the prompt call returned, so a client matches its own line to this
+ * item by identity. `mode` is the harness's own word ("steer" interrupts the running turn, "followUp" is delivered
+ * after it). `text` is the submitted text, unclipped. `images` are the attached images by name and type, never
+ * their bytes, exactly as a placed prompt's images travel.
+ *
+ * @generated from message alinery.v1.QueuedMessage
+ */
+export type QueuedMessage = Message<"alinery.v1.QueuedMessage"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: string mode = 2;
+   */
+  mode: string;
+
+  /**
+   * @generated from field: string text = 3;
+   */
+  text: string;
+
+  /**
+   * @generated from field: repeated alinery.v1.TranscriptImage images = 4;
+   */
+  images: TranscriptImage[];
+};
+
+/**
+ * Describes the message alinery.v1.QueuedMessage.
+ * Use `create(QueuedMessageSchema)` to create a new message.
+ */
+export const QueuedMessageSchema: GenMessage<QueuedMessage> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_sessions, 43);
 
 /**
  * The model and thinking level the next turn will use. No levels means no thinking menu.
@@ -1115,7 +1239,7 @@ export type SessionControls = Message<"alinery.v1.SessionControls"> & {
  * Use `create(SessionControlsSchema)` to create a new message.
  */
 export const SessionControlsSchema: GenMessage<SessionControls> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 40);
+  messageDesc(file_alinery_v1_sessions, 44);
 
 /**
  * One message of the pane, as `formatTranscript` builds it (transcript.ts). Pi stores thinking, text and
@@ -1201,7 +1325,7 @@ export type TranscriptItem = Message<"alinery.v1.TranscriptItem"> & {
  * Use `create(TranscriptItemSchema)` to create a new message.
  */
 export const TranscriptItemSchema: GenMessage<TranscriptItem> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 41);
+  messageDesc(file_alinery_v1_sessions, 45);
 
 /**
  * @generated from message alinery.v1.TranscriptPart
@@ -1250,7 +1374,7 @@ export type TranscriptPart = Message<"alinery.v1.TranscriptPart"> & {
  * Use `create(TranscriptPartSchema)` to create a new message.
  */
 export const TranscriptPartSchema: GenMessage<TranscriptPart> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 42);
+  messageDesc(file_alinery_v1_sessions, 46);
 
 /**
  * An image the person attached to a prompt: the part the model reads, named so the pane can read the same
@@ -1277,7 +1401,7 @@ export type TranscriptImage = Message<"alinery.v1.TranscriptImage"> & {
  * Use `create(TranscriptImageSchema)` to create a new message.
  */
 export const TranscriptImageSchema: GenMessage<TranscriptImage> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 43);
+  messageDesc(file_alinery_v1_sessions, 47);
 
 /**
  * @generated from message alinery.v1.RedactedThinking
@@ -1290,7 +1414,7 @@ export type RedactedThinking = Message<"alinery.v1.RedactedThinking"> & {
  * Use `create(RedactedThinkingSchema)` to create a new message.
  */
 export const RedactedThinkingSchema: GenMessage<RedactedThinking> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 44);
+  messageDesc(file_alinery_v1_sessions, 48);
 
 /**
  * @generated from message alinery.v1.ToolCallPart
@@ -1319,7 +1443,44 @@ export type ToolCallPart = Message<"alinery.v1.ToolCallPart"> & {
  * Use `create(ToolCallPartSchema)` to create a new message.
  */
 export const ToolCallPartSchema: GenMessage<ToolCallPart> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_sessions, 45);
+  messageDesc(file_alinery_v1_sessions, 49);
+
+/**
+ * @generated from enum alinery.v1.RemoveQueuedMessageOutcome
+ */
+export enum RemoveQueuedMessageOutcome {
+  /**
+   * @generated from enum value: REMOVE_QUEUED_MESSAGE_OUTCOME_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * the queue no longer holds it
+   *
+   * @generated from enum value: REMOVE_QUEUED_MESSAGE_OUTCOME_REMOVED = 1;
+   */
+  REMOVED = 1,
+
+  /**
+   * it is a message now; there is nothing to undo
+   *
+   * @generated from enum value: REMOVE_QUEUED_MESSAGE_OUTCOME_NOT_QUEUED = 2;
+   */
+  NOT_QUEUED = 2,
+
+  /**
+   * this conversation holds no such submission, whether it never existed or was already withdrawn
+   *
+   * @generated from enum value: REMOVE_QUEUED_MESSAGE_OUTCOME_NOT_FOUND = 3;
+   */
+  NOT_FOUND = 3,
+}
+
+/**
+ * Describes the enum alinery.v1.RemoveQueuedMessageOutcome.
+ */
+export const RemoveQueuedMessageOutcomeSchema: GenEnum<RemoveQueuedMessageOutcome> = /*@__PURE__*/
+  enumDesc(file_alinery_v1_sessions, 0);
 
 /**
  * Pi sessions have transcripts, not just bytes. The read side of a session is the `session/<slug>/<id>` entity; the
@@ -1455,6 +1616,19 @@ export const SessionService: GenService<{
     methodKind: "unary";
     input: typeof PromptSessionRequestSchema;
     output: typeof PromptSessionResponseSchema;
+  },
+  /**
+   * Withdraws one input the harness still holds: the item leaves the session's queue in every window and becomes
+   * nothing in the thread. A remove that arrives after the turn placed the item is not an error — it is a message now.
+   *
+   * ACT
+   *
+   * @generated from rpc alinery.v1.SessionService.RemoveQueuedMessage
+   */
+  removeQueuedMessage: {
+    methodKind: "unary";
+    input: typeof RemoveQueuedMessageRequestSchema;
+    output: typeof RemoveQueuedMessageResponseSchema;
   },
   /**
    * ACT

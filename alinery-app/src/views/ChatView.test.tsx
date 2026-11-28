@@ -42,9 +42,10 @@ const mocks = vi.hoisted(() => ({
   createChatThread: vi.fn(),
   chatSetModel: vi.fn(async () => ({ model: "anthropic/claude", thinking: "off", thinking_levels: [] as string[] })),
   chatSetThinkingLevel: vi.fn(async () => ({ model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] })),
-  chatPrompt: vi.fn(async (..._args: unknown[]) => undefined),
+  chatPrompt: vi.fn(async (..._args: unknown[]): Promise<{ submissionId: string; status: string } | undefined> => undefined),
   chatCompact: vi.fn(async (..._args: unknown[]) => undefined),
   chatAbort: vi.fn(async () => undefined),
+  removeQueuedMessage: vi.fn(async () => "REMOVED" as const),
   notifySessionAttention: vi.fn(async () => {}),
   openUrl: vi.fn(),
   startChatThread: vi.fn(),
@@ -80,7 +81,11 @@ vi.mock("../sync/chat", async (actual) => ({
   useCanvas: mocks.useCanvas,
   readCanvasPanel: mocks.readCanvasPanel,
 }));
-vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), renameSession: mocks.renameSession }));
+vi.mock("../sync/sessions", async (actual) => ({
+  ...(await actual<typeof import("../sync/sessions")>()),
+  renameSession: mocks.renameSession,
+  removeQueuedMessage: mocks.removeQueuedMessage,
+}));
 vi.mock("../ipc", () =>
   mockIpc({
     listChatRepos: mocks.listChatRepos,
@@ -386,6 +391,220 @@ describe("ChatView", () => {
     expect(await screen.findByRole("button", { name: "Resume" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Archive Chat s-arch" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Pin Chat s-arch" })).toBeNull();
+  });
+
+  it("a queued send adds a panel line and no thread row, and Send now does the same", async () => {
+    const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
+    fakeChat.set([row]);
+    for (const id of THREADS) showChat(id, observed("busy", "alive", "rpc"));
+    mocks.chatPrompt.mockResolvedValue({ submissionId: "7", status: "queued" });
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
+    await screen.findByText("seeded");
+    fireEvent.change(screen.getByLabelText("Send after this turn…"), { target: { value: "wait for me" } });
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    expect(document.querySelector(".chat-list")?.textContent).not.toContain("wait for me");
+
+    fireEvent.change(screen.getByLabelText("Send after this turn…"), { target: { value: "send this now" } });
+    mocks.chatPrompt.mockResolvedValue({ submissionId: "8", status: "queued" });
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    expect(await screen.findByText("send this now", { selector: ".queued-panel-text" })).toBeTruthy();
+    expect(document.querySelector(".chat-list")?.textContent).not.toContain("send this now");
+    expect(document.querySelector(".chat-list")?.textContent).not.toContain("wait for me");
+  });
+
+  it("a queued send with a staged file leaves the panel when the frame places its message", async () => {
+    const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
+    fakeChat.set([row]);
+    for (const id of THREADS) showChat(id, observed("busy", "alive", "rpc"));
+    mocks.pickAttachmentFilesDialog.mockResolvedValueOnce(["/tmp/notes.pdf"]);
+    mocks.copyChatThreadAttachments.mockResolvedValueOnce({ copied: ["notes.pdf"], failures: [] });
+    mocks.chatPrompt.mockResolvedValueOnce({ submissionId: "7", status: "queued" });
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
+    await screen.findByText("seeded");
+    fireEvent.click(await screen.findByRole("button", { name: "Attach files" }));
+    expect(await screen.findByRole("button", { name: "Remove notes.pdf" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Send after this turn…|Message or \/command/), { target: { value: "see" } });
+    fireEvent.click(screen.getByRole("button", { name: /^(Send|Queue)$/ }));
+    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalledTimes(1));
+    const prepared = vi.mocked(mocks.chatPrompt).mock.calls[0][2] as string;
+    // The line carries the prepared message, file trailers and all: the case no test covered.
+    expect(prepared).toContain("Attached file:");
+    expect(await screen.findByText("Queued · 1")).toBeTruthy();
+    expect(document.querySelector(".queued-panel-text")?.textContent).toContain("Attached file:");
+    // The frame that places the message carries the same words: the line is gone in that fold, and the count with it.
+    await act(async () => {
+      setTranscripts({
+        messages: [
+          { id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] },
+          { id: "u2", role: "user", content: [{ type: "text", text: prepared }] },
+        ],
+        queued: [],
+      });
+    });
+    expect(screen.queryByText(/^Queued · /)).toBeNull();
+    expect(document.querySelector(".queued-panel")).toBeNull();
+    expect(document.querySelector(".chat-list")?.textContent).toContain("see");
+  });
+
+  it("Remove calls removeQueuedMessage and a rejection restores the line", async () => {
+    const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
+    fakeChat.set([row]);
+    for (const id of THREADS) showChat(id, observed("busy", "alive", "rpc"));
+    mocks.chatPrompt.mockResolvedValueOnce({ submissionId: "7", status: "queued" });
+    let rejectRemove: (error: Error) => void = () => {};
+    mocks.removeQueuedMessage.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectRemove = reject;
+      }),
+    );
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
+    await screen.findByText("seeded");
+    fireEvent.change(screen.getByLabelText("Send after this turn…"), { target: { value: "wait for me" } });
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove wait for me" }));
+    await waitFor(() => expect(mocks.removeQueuedMessage).toHaveBeenCalledWith("/repo", "s-new", "7"));
+    await waitFor(() => expect(screen.queryByText("wait for me", { selector: ".queued-panel-text" })).toBeNull());
+    await act(async () => {
+      rejectRemove(new Error("daemon down"));
+    });
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+  });
+
+  it("Interrupt with an empty queue leaves the line a later queued send makes", async () => {
+    const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
+    fakeChat.set([row]);
+    for (const id of THREADS) showChat(id, observed("busy", "alive", "rpc"));
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
+    await screen.findByText("seeded");
+    fireEvent.click(screen.getByRole("button", { name: "Abort turn" }));
+    await waitFor(() => expect(mocks.chatAbort).toHaveBeenCalledWith("/repo", "s-new"));
+    mocks.chatPrompt.mockResolvedValueOnce({ submissionId: "7", status: "queued" });
+    fireEvent.change(screen.getByLabelText(/Send after this turn…|Message or \/command/), { target: { value: "wait for me" } });
+    fireEvent.click(screen.getByRole("button", { name: /^(Send|Queue)$/ }));
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    // The next streamed delta carries no queue, and an absent queue says nothing about what this send queued.
+    await act(async () => {
+      setTranscripts({ messages: [{ id: "m1", role: "assistant", content: [{ type: "text", text: "streaming" }] }] });
+    });
+    expect(screen.getByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+  });
+
+  it("Interrupt whose abort call rejects leaves the lines the server already held", async () => {
+    const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
+    fakeChat.set([row]);
+    for (const id of THREADS) showChat(id, observed("busy", "alive", "rpc"));
+    mocks.chatAbort.mockRejectedValueOnce(new Error("the daemon would not abort"));
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
+    await screen.findByText("seeded");
+    await act(async () => {
+      setTranscripts({
+        messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }],
+        queued: [{ id: "7", mode: "followUp", text: "wait for me", images: [] }],
+      });
+    });
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Abort turn" }));
+    await waitFor(() => expect(mocks.chatAbort).toHaveBeenCalledWith("/repo", "s-new"));
+    // The abort withdrew nothing: the panel still shows what the server holds, in the update that reports the error.
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    expect(screen.getByText("Queued · 1")).toBeTruthy();
+    // A frame that carries no queue says nothing about the queue and must not empty the panel.
+    await act(async () => {
+      setTranscripts({
+        messages: [
+          { id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] },
+          { id: "m1", role: "assistant", content: [{ type: "text", text: "streaming" }] },
+        ],
+      });
+    });
+    expect(screen.getByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    expect(screen.getByText("Queued · 1")).toBeTruthy();
+  });
+
+  it("Send now whose abort call rejects puts the lines it dropped back", async () => {
+    const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
+    fakeChat.set([row]);
+    for (const id of THREADS) showChat(id, observed("busy", "alive", "rpc"));
+    mocks.chatAbort.mockRejectedValueOnce(new Error("the daemon would not abort"));
+    mocks.chatPrompt.mockResolvedValueOnce({ submissionId: "8", status: "queued" });
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
+    await screen.findByText("seeded");
+    await act(async () => {
+      setTranscripts({
+        messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }],
+        queued: [{ id: "7", mode: "followUp", text: "wait for me", images: [] }],
+      });
+    });
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Send after this turn…|Message or \/command/), { target: { value: "send this now" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalled());
+    // The abort withdrew nothing, so the line its clear dropped is back and the new one waits with it.
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    expect(screen.getByText("send this now", { selector: ".queued-panel-text" })).toBeTruthy();
+    expect(screen.getByText("Queued · 2")).toBeTruthy();
+  });
+
+  it("Send now whose abort call rejects after a frame folded in between puts the lines back", async () => {
+    const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
+    fakeChat.set([row]);
+    for (const id of THREADS) showChat(id, observed("busy", "alive", "rpc"));
+    let rejectAbort: (error: Error) => void = () => {};
+    mocks.chatAbort.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectAbort = reject;
+      }),
+    );
+    mocks.chatPrompt.mockResolvedValueOnce({ submissionId: "8", status: "queued" });
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
+    await screen.findByText("seeded");
+    await act(async () => {
+      setTranscripts({
+        messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }],
+        queued: [{ id: "7", mode: "followUp", text: "wait for me", images: [] }],
+      });
+    });
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Send after this turn…|Message or \/command/), { target: { value: "send this now" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(mocks.chatAbort).toHaveBeenCalledWith("/repo", "s-new"));
+    // A frame folds while the abort call is still in flight — the coalesce window hides the emptied queue. The list it
+    // must put back after a rejection is the one from before the cue was raised, not whatever this fold leaves.
+    await act(async () => {
+      setTranscripts({
+        messages: [
+          { id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] },
+          { id: "m1", role: "assistant", content: [{ type: "text", text: "streaming" }] },
+        ],
+      });
+    });
+    await act(async () => {
+      rejectAbort(new Error("the daemon would not abort"));
+    });
+    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalled());
+    // The abort withdrew nothing: the line the server still holds is back, and the new one waits with it.
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    expect(screen.getByText("send this now", { selector: ".queued-panel-text" })).toBeTruthy();
+    // And no later queue-less frame takes the lines again.
+    await act(async () => {
+      setTranscripts({
+        messages: [
+          { id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] },
+          { id: "m1", role: "assistant", content: [{ type: "text", text: "streaming more" }] },
+        ],
+      });
+    });
+    expect(screen.getByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    expect(screen.getByText("Queued · 2")).toBeTruthy();
   });
 
   it("shows the transcript and sends through Vinculum without a Vinculum attach", async () => {
