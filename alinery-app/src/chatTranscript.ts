@@ -690,20 +690,25 @@ export function applyVinculumTranscript(reply: VinculumMessage[] | VinculumTrans
   };
   const state = { ...applyFilePage(emptyTranscript(), page, "initial"), ready: true, fileStart: 0 };
   const base = Array.isArray(reply) ? state : applySessionControls(state, transcript);
-  // The delivery race: the send answered `queued`, and this same fold appended the one user message the line became. A
-  // genuine append is one new message at the end of what the client held: a replace fold or a replay is not one, and the
-  // message another window's line became is never this client's to remove. Everything the client held except its last
-  // entry must be unchanged at the same indices — the held last entry is the streaming partial that may settle in this
-  // very frame (a real turn boundary coalesces both into one), so it is the one entry allowed to differ. The delivery
-  // match below is what actually identifies the line, so a loose guess cannot drop a line this message did not become.
+  // The delivery race: the send answered `queued`, and this same fold appended the user message the line became. A
+  // genuine append adds one or more messages at the end of what the client held: a fold that is shorter than what the
+  // client held, or that changes more than the end, is a replay, and the message another window's line became is never
+  // this client's to remove. Everything the client held except its last entry must be unchanged at the same indices —
+  // the held last entry is the streaming partial that may settle in this very frame (a real turn boundary coalesces
+  // both into one), so it is the one entry allowed to differ. The append is not always one message: a coalesced frame
+  // can carry the placed message and the reply it started together, and because the daemon sends the queue only when
+  // it changes, that one fold is the last frame the line will ever see — an unrecognised placement would leave a stale
+  // line no later frame drops. So the trailing user messages the append added are all delivery candidates; the
+  // content-gated match below is what actually identifies the line, so a loose guess cannot drop a line one of these
+  // messages did not become.
   const held = previous?.messages ?? [];
   const appended =
     previous !== undefined &&
-    page.messages.length === held.length + 1 &&
+    page.messages.length >= held.length &&
     held.slice(0, -1).every((message, index) => messageSignature(page.messages[index]) === messageSignature(message))
-      ? page.messages[page.messages.length - 1]
+      ? page.messages.slice(held.length)
       : undefined;
-  const delivered = appended?.role === "user" ? deliveryOf(appended) : undefined;
+  const delivered = appended?.flatMap((message) => (message.role === "user" ? [deliveryOf(message)] : []));
   const carried = Array.isArray(reply) ? undefined : transcript.queued;
   const authoritative = (!Array.isArray(reply) && transcript.queueAuthoritative === true) || cue?.ended === true;
   // An ended session has no queue. A withdrawal whose frame carries no queue is the same fact about the server's lines:
@@ -715,7 +720,7 @@ export function applyVinculumTranscript(reply: VinculumMessage[] | VinculumTrans
   return { ...base, queued, sessionMeta: { ...base.sessionMeta, queuedMessageCount: queued.length } };
 }
 
-/** The user message a fold appended at the end of what the client held: the queued line it became is gone in that fold. */
+/** Each user message a fold appended at the end of what the client held: the queued line one of them became is gone in that fold. */
 export type DeliveredMessage = { text: string; images: string[] };
 
 /** What a message says, for the append test: its parts, not the row id the fold gives it. */
@@ -767,21 +772,29 @@ function isDeliveryOf(line: QueuedPanelLine, delivered: DeliveredMessage): boole
  *  - an id the queue holds is updated in place and is the server's line again (delivery has not happened yet);
  *  - an id the queue omits is gone when the server made it (delivered or withdrawn — the thread shows which), and when
  *    this client's own line was already `stale`;
- *  - the one line the fold's appended user message became is gone at once (the delivery race), and no other line with it;
+ *  - the trailing user messages the fold appended are the delivery candidates: each one removes the line it became
+ *    at once (the delivery race) and is then consumed, so no candidate takes a second line and no other line with it;
  *  - an authoritative frame drops the server lines it omits (the ghosts of a queue that is gone) but still only marks a
  *    line this client made `stale` — a read that lands before the send's commit cannot make the line blink, and the
  *    ordinary stale-then-drop rule owns it from there;
  *  - otherwise a pending line only turns `stale`, so a frame read before the send's commit cannot make it blink.
  */
-export function reconcileQueued(lines: readonly QueuedPanelLine[], queued: QueuedLine[] | undefined, delivered?: DeliveredMessage, authoritative = false): QueuedPanelLine[] {
+export function reconcileQueued(
+  lines: readonly QueuedPanelLine[],
+  queued: QueuedLine[] | undefined,
+  delivered?: readonly DeliveredMessage[],
+  authoritative = false,
+): QueuedPanelLine[] {
   if (queued === undefined) return authoritative ? reconcileQueued(lines, [], delivered, false) : [...lines];
   const held = new Set(queued.map((item) => item.id));
   const next: QueuedPanelLine[] = queued.map((item) => ({ ...item, origin: "server", stale: false }));
-  let deliveredLine = false;
+  // A candidate is spent by the line it matched, so a fold's own words can never take a second line.
+  const unmatched = delivered ? [...delivered] : [];
   for (const line of lines) {
     if (held.has(line.id) || line.origin === "server" || line.stale) continue;
-    if (!deliveredLine && delivered !== undefined && isDeliveryOf(line, delivered)) {
-      deliveredLine = true;
+    const delivery = unmatched.findIndex((message) => isDeliveryOf(line, message));
+    if (delivery >= 0) {
+      unmatched.splice(delivery, 1);
       continue;
     }
     next.push({ ...line, stale: true });

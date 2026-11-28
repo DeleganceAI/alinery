@@ -950,7 +950,7 @@ describe("queued panel reconciliation", () => {
   });
 
   it("the delivery-race frame removes a pending line immediately", () => {
-    const raced = reconcileQueued([pending], [], { text: "later", images: [] });
+    const raced = reconcileQueued([pending], [], [{ text: "later", images: [] }]);
     expect(raced).toEqual([]);
   });
 
@@ -979,6 +979,78 @@ describe("queued panel reconciliation", () => {
     );
     // The line the placement became is gone at once — not marked stale, which would leave a phantom panel line for a
     // message already in the thread and keep the count at one.
+    expect(placed.queued).toEqual([]);
+    expect(placed.sessionMeta.queuedMessageCount).toBe(0);
+  });
+
+  it("a coalesced delivery that appends the reply behind the placed message still removes the line", () => {
+    // The inbox emptied and the placement and the reply it started landed inside one coalesce window, so this +2 fold
+    // is the last frame the daemon ever sends for the queue: the line it did not recognise would go stale and stay —
+    // the phantom "Queued · 1" the panel kept for a message already in the thread.
+    const held: ChatTranscriptState = {
+      ...emptyTranscript(),
+      messages: [{ role: "user", content: [{ type: "text", text: "seeded" }] }],
+      queued: [pending],
+      sessionMeta: { queuedMessageCount: 1 },
+    };
+    const placed = applyVinculumTranscript(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "seeded" }] },
+          { role: "user", content: [{ type: "text", text: "later" }] },
+          { role: "assistant", content: [{ type: "text", text: "the reply" }] },
+        ],
+        queued: [],
+      },
+      held,
+    );
+    expect(placed.queued).toEqual([]);
+    expect(placed.sessionMeta.queuedMessageCount).toBe(0);
+  });
+
+  it("a replace-shaped delivering fold — the partial settles and two messages place in one frame — removes the line", () => {
+    // The daemon's frame covers from the streaming row's index, so the client's list changes at the end and grows by
+    // two: the settle takes the one allowed difference, and the placed message and the reply follow as the append.
+    const held: ChatTranscriptState = {
+      ...emptyTranscript(),
+      messages: [
+        { role: "user", content: [{ type: "text", text: "seeded" }] },
+        { role: "assistant", content: [{ type: "text", text: "work" }], streaming: true },
+      ],
+      queued: [pending],
+      sessionMeta: { queuedMessageCount: 1 },
+    };
+    const placed = applyVinculumTranscript(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "seeded" }] },
+          { role: "assistant", content: [{ type: "text", text: "working on it" }] },
+          { role: "user", content: [{ type: "text", text: "later" }] },
+          { role: "assistant", content: [{ type: "text", text: "the reply" }] },
+        ],
+        queued: [],
+      },
+      held,
+    );
+    expect(placed.queued).toEqual([]);
+    expect(placed.sessionMeta.queuedMessageCount).toBe(0);
+  });
+
+  it("two placements coalesced into one fold remove two lines, one per message", () => {
+    const lines = [
+      { ...pending, id: "1", text: "first" },
+      { ...pending, id: "2", text: "second" },
+    ];
+    const placed = applyVinculumTranscript(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "first" }] },
+          { role: "user", content: [{ type: "text", text: "second" }] },
+        ],
+        queued: [],
+      },
+      { ...emptyTranscript(), queued: lines, sessionMeta: { queuedMessageCount: 2 } },
+    );
     expect(placed.queued).toEqual([]);
     expect(placed.sessionMeta.queuedMessageCount).toBe(0);
   });
