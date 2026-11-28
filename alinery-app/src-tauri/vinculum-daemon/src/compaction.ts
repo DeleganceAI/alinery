@@ -1,5 +1,5 @@
-// Pi compacts inside the harness. The Settings checkbox is the switch; the limit is a
-// percent of the model window or a token ceiling, whichever the user picked.
+// Pi compacts inside the harness. The Settings checkbox is the automatic policy; a manual /compact runs
+// regardless of it. The limit is a percent of the model window or a token ceiling, whichever the user picked.
 import { readFileSync } from "node:fs";
 import type { CompactionPolicy, CompactionSettings } from "@earendil-works/pi-durable";
 import { parse } from "smol-toml";

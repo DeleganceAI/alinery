@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findCommand, groupCommands, matchCommands, parseSlash } from "./commands";
+import { findCommand, groupCommands, matchCommands, parseSlash, withLocalBuiltins } from "./commands";
 import type { ChatCommand } from "./types";
 
 const catalog: ChatCommand[] = [
@@ -41,5 +41,14 @@ describe("matchCommands", () => {
 describe("groupCommands", () => {
   it("groups by Vinculum source, not invented Session/Model buckets", () => {
     expect(groupCommands(catalog).map((g) => g.group)).toEqual(["builtin", "skill"]);
+  });
+});
+
+describe("withLocalBuiltins", () => {
+  it("appends compact and tools, and skips a name the catalog already carries", () => {
+    const merged = withLocalBuiltins([{ name: "tools", description: "from the harness", source: "builtin" }]);
+    expect(merged.map((command) => command.name)).toEqual(["tools", "compact"]);
+    expect(merged[0]?.description).toBe("from the harness");
+    expect(matchCommands("/comp", merged).map((command) => command.name)).toEqual(["compact"]);
   });
 });

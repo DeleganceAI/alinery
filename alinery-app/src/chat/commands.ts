@@ -1,5 +1,13 @@
 import { type ChatCommand, type CommandSource, SOURCE_GROUPS } from "./types";
 
+// Commands Vinculum answers locally; the harness catalog does not carry them. (REQ-16)
+export const LOCAL_BUILTINS: ChatCommand[] = [
+  { name: "compact", description: "Compact the conversation context; optional focus instructions", source: "builtin" },
+  { name: "tools", description: "List the available commands", source: "builtin" },
+];
+
+export const withLocalBuiltins = (catalog: ChatCommand[]): ChatCommand[] => [...catalog, ...LOCAL_BUILTINS.filter((b) => !catalog.some((c) => c.name.toLowerCase() === b.name))];
+
 export function parseSlash(raw: string): { name: string; args: string } | null {
   const t = raw.trim();
   if (!t.startsWith("/")) return null;

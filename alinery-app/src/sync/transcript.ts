@@ -43,6 +43,7 @@ export function messageOf(item: TranscriptItem): VinculumMessage {
     ...(item.turnError ? { turnError: item.turnError } : {}),
     ...(item.nudgeDeliveryId ? { nudgeDeliveryId: item.nudgeDeliveryId } : {}),
     ...(item.runningToolIds.length > 0 ? { runningToolIds: item.runningToolIds } : {}),
+    ...(item.compactionReason ? { compactionReason: item.compactionReason } : {}),
     ...(item.at ? { at: Number(item.at) } : {}),
   };
 }

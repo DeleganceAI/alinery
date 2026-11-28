@@ -40,6 +40,7 @@ const sessionStatus = {
 const sessionArtifactReady = vi.hoisted(() => vi.fn(async () => false));
 const startSession = vi.hoisted(() => vi.fn(async () => undefined));
 const sessionPrompt = vi.hoisted(() => vi.fn(async () => undefined));
+const sessionCompact = vi.hoisted(() => vi.fn(async () => undefined));
 const retryTurn = vi.hoisted(() => vi.fn<(_repo: string, _sessionId: string, _entryId: string) => Promise<void>>());
 const nudgeExecution = vi.hoisted(() => vi.fn<typeof import("../sync/execution").nudgeExecution>());
 const sessionAbort = vi.hoisted(() => vi.fn(async () => undefined));
@@ -147,6 +148,7 @@ vi.mock("../sync/sessions", async (actual) => ({
   sessionArtifactReady,
   startSession,
   promptSession: sessionPrompt,
+  compactSession: sessionCompact,
   retryTurn,
   abortSession: sessionAbort,
   setSessionModel: sessionSetModel,
@@ -772,6 +774,8 @@ function liveObservation(transport: "rpc" | "pty", agent: AgentState = { state: 
       playbook: { state: "in_progress" },
       adapter: "vinculum",
       message_adapter: "vinculum_bracketed_paste",
+      compactions: [],
+      compactionFailure: null,
     },
     checkpoint: {},
   };
@@ -1409,6 +1413,140 @@ describe("Vinculum session chat", () => {
     expect(send).toHaveProperty("disabled", true);
     expect(message.closest(".terminal-frame")?.nextElementSibling).toBe(send.closest(".chat-composer"));
     expect(startSession).not.toHaveBeenCalled();
+  });
+
+  it("admits /compact without prompting, for a bare command, focus text, and a former mode word", async () => {
+    for (const body of ["/compact", "/Compact focus text", "/compact soft remote"]) {
+      sessionPrompt.mockClear();
+      sessionCompact.mockClear();
+      const view = renderSession({ intent: "attach", messageDraft: { body, pendingActions: [], attachments: [] }, onMessageDraftChange: vi.fn() });
+      fireEvent.click(await screen.findByRole("button", { name: "Send" }));
+      const instructions = body === "/compact" ? undefined : body.slice(body.indexOf(" ") + 1);
+      await waitFor(() => expect(sessionCompact).toHaveBeenCalledWith("/repo", "session", instructions));
+      expect(sessionPrompt).not.toHaveBeenCalled();
+      view.unmount();
+    }
+    sessionPrompt.mockClear();
+    sessionCompact.mockClear();
+    fakeArtifacts.finalize.mockClear();
+    const pendingActions = [{ type: "review_approval" as const, review_artifact: "review.md" }];
+    const onMessageDraftChange = vi.fn();
+    renderSession({
+      intent: "attach",
+      messageDraft: { body: "/compact keep the names", pendingActions, attachments: [] },
+      onMessageDraftChange,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sessionCompact).toHaveBeenCalledWith("/repo", "session", "keep the names"));
+    expect(sessionPrompt).not.toHaveBeenCalled();
+    expect(fakeArtifacts.finalize).not.toHaveBeenCalled();
+    expect(onMessageDraftChange).toHaveBeenCalledWith({ body: "", pendingActions, attachments: [] });
+  });
+
+  it("Send now of /compact compacts without aborting or prompting", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    for (const body of ["/compact", "/Compact focus text", "/compact soft remote"]) {
+      sessionPrompt.mockClear();
+      sessionCompact.mockClear();
+      sessionAbort.mockClear();
+      const view = renderSession({ intent: "attach", messageDraft: { body, pendingActions: [], attachments: [] }, onMessageDraftChange: vi.fn() });
+      fireEvent.click(await screen.findByRole("button", { name: "Send now" }));
+      const instructions = body === "/compact" ? undefined : body.slice(body.indexOf(" ") + 1);
+      await waitFor(() => expect(sessionCompact).toHaveBeenCalledWith("/repo", "session", instructions));
+      expect(sessionPrompt).not.toHaveBeenCalled();
+      expect(sessionAbort).not.toHaveBeenCalled();
+      const pane = within(screen.getByTestId("chat-pane"));
+      expect(pane.getByText("/compact")).toBeTruthy();
+      if (instructions) expect(pane.getByText(instructions)).toBeTruthy();
+      view.unmount();
+    }
+    sessionPrompt.mockClear();
+    sessionCompact.mockClear();
+    sessionAbort.mockClear();
+    fakeArtifacts.finalize.mockClear();
+    const pendingActions = [{ type: "review_approval" as const, review_artifact: "review.md" }];
+    const kept = vi.fn();
+    const keptView = renderSession({
+      intent: "attach",
+      messageDraft: { body: "/compact keep the names", pendingActions, attachments: [] },
+      onMessageDraftChange: kept,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(sessionCompact).toHaveBeenCalledWith("/repo", "session", "keep the names"));
+    expect(sessionPrompt).not.toHaveBeenCalled();
+    expect(sessionAbort).not.toHaveBeenCalled();
+    expect(fakeArtifacts.finalize).not.toHaveBeenCalled();
+    expect(kept).toHaveBeenCalledWith({ body: "", pendingActions, attachments: [] });
+    const keptPane = within(screen.getByTestId("chat-pane"));
+    expect(keptPane.getByText("/compact")).toBeTruthy();
+    expect(keptPane.getByText("keep the names")).toBeTruthy();
+    keptView.unmount();
+    sessionPrompt.mockClear();
+    sessionCompact.mockClear();
+    sessionAbort.mockClear();
+    fakeArtifacts.finalize.mockClear();
+    sessionCompact.mockRejectedValueOnce(new Error("compaction refused"));
+    const thrownDraft = vi.fn();
+    const thrownError = vi.spyOn(toast, "error").mockImplementation(() => undefined);
+    renderSession({
+      intent: "attach",
+      messageDraft: { body: "/compact keep the names", pendingActions, attachments: [] },
+      onMessageDraftChange: thrownDraft,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(sessionCompact).toHaveBeenCalled());
+    expect(sessionPrompt).not.toHaveBeenCalled();
+    expect(sessionAbort).not.toHaveBeenCalled();
+    expect(fakeArtifacts.finalize).not.toHaveBeenCalled();
+    expect(thrownDraft).not.toHaveBeenCalled();
+    expect(within(screen.getByTestId("chat-pane")).queryByText("/compact")).toBeNull();
+    expect(screen.getByDisplayValue("/compact keep the names")).toBeTruthy();
+    thrownError.mockRestore();
+    sessionCompact.mockResolvedValue(undefined);
+    cleanup();
+    sessionPrompt.mockClear();
+    sessionCompact.mockClear();
+    sessionAbort.mockClear();
+    const refused = vi.fn();
+    const error = vi.spyOn(toast, "error").mockImplementation(() => undefined);
+    const staged = {
+      body: "/compact keep",
+      pendingActions,
+      attachments: [{ id: "file-1", kind: "file" as const, name: "notes.md", mimeType: "text/markdown", bytes: 8, sourcePath: "/tmp/notes.md" }],
+    };
+    renderSession({ intent: "attach", messageDraft: staged, onMessageDraftChange: refused });
+    fireEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(error).toHaveBeenCalledWith("Remove attachments or clear the slash command");
+    expect(sessionCompact).not.toHaveBeenCalled();
+    expect(sessionPrompt).not.toHaveBeenCalled();
+    expect(sessionAbort).not.toHaveBeenCalled();
+    expect(fakeArtifacts.finalize).not.toHaveBeenCalled();
+    expect(refused).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("/compact keep")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove notes.md" })).toBeTruthy();
+    error.mockRestore();
+    cleanup();
+    sessionPrompt.mockClear();
+    sessionCompact.mockClear();
+    sessionAbort.mockClear();
+    renderSession({ intent: "attach", messageDraft: { body: "keep going", pendingActions: [], attachments: [] }, onMessageDraftChange: vi.fn() });
+    fireEvent.click(await screen.findByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(sessionAbort).toHaveBeenCalledWith("/repo", "session"));
+    expect(sessionPrompt).toHaveBeenCalledWith("/repo", "session", "keep going", undefined, undefined);
+    expect(sessionCompact).not.toHaveBeenCalled();
+  });
+
+  it("shows a compacting tail row from the session observation and no approval wait", async () => {
+    const observed = liveObservation("rpc");
+    const observedState = observed.state;
+    if (!observedState) throw new Error("live observation has no state");
+    daemon.show("/repo", "task", "session", {
+      ...observed,
+      state: { ...observedState, compactions: [{ reason: "threshold", blocking: false, attempt: 1 }], compactionFailure: null },
+    });
+    renderSession({ intent: "attach" });
+    expect(await screen.findByText("Compacting context · threshold · attempt 1")).toBeTruthy();
+    expect(screen.queryByText(/waiting for approval/i)).toBeNull();
   });
 
   it("sends and aborts through the Vinculum ops", async () => {

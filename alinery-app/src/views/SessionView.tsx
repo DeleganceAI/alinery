@@ -21,6 +21,7 @@ import {
   taskAttachmentDir,
 } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, type PathLinks, PathLinksContext } from "../chat/CopyMessage";
+import { parseSlash, withLocalBuiltins } from "../chat/commands";
 import { formatDuration } from "../chat/format";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
@@ -95,6 +96,7 @@ import { observationNow, sessionObservationKey, useSessionObservation, useSessio
 import {
   abortSession,
   archiveSession,
+  compactSession,
   promptSession,
   readSessionVinculum,
   renameSession,
@@ -835,6 +837,16 @@ export function SessionView({
     setMessageError("");
     try {
       if (transport === "rpc") {
+        const slash = parseSlash(caption);
+        if (slash?.name.toLowerCase() === "compact") {
+          await compactSession(repoPath, id, slash.args || undefined);
+          const next = appendOptimisticUser(chatRef.current, caption, "slash", { name: "compact", args: slash.args || undefined });
+          chatRef.current = next;
+          setChat(next);
+          // Compact does not deliver the review, so its provenance stays for the next real send.
+          updateMessageDraft({ body: "", pendingActions: messageDraftRef.current.pendingActions, attachments: [] });
+          return;
+        }
         const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
         await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images, chatRef.current.sessionMeta.model);
         if (reviewKey) setInvalidatedReview(reviewKey);
@@ -865,6 +877,10 @@ export function SessionView({
     const caption = messageDraftRef.current.body.trim();
     const attachments = messageDraftRef.current.attachments ?? [];
     if (finishingStep || messageSending || (caption.length === 0 && attachments.length === 0)) return;
+    if (caption.startsWith("/") && attachments.length > 0) {
+      toast.error("Remove attachments or clear the slash command");
+      return;
+    }
     if (observation?.transport !== "rpc") {
       setMessageError("The session is still connecting.");
       return;
@@ -872,6 +888,17 @@ export function SessionView({
     setMessageSending(true);
     setMessageError("");
     try {
+      const slash = parseSlash(caption);
+      if (slash?.name.toLowerCase() === "compact") {
+        await compactSession(repoPath, id, slash.args || undefined);
+        // Same slash row as Send. Paint it only after admission: a throw must not show a command that did not run.
+        const next = appendOptimisticUser(chatRef.current, caption, "slash", { name: "compact", args: slash.args || undefined });
+        chatRef.current = next;
+        setChat(next);
+        // Compact does not deliver the review, so its provenance stays for the next real send.
+        updateMessageDraft({ body: "", pendingActions: messageDraftRef.current.pendingActions, attachments: [] });
+        return;
+      }
       const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
       await abortSession(repoPath, id);
       await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images, chatRef.current.sessionMeta.model);
@@ -1121,12 +1148,16 @@ export function SessionView({
   };
 
   const chatVisibility = useMemo(() => chatVisibilityFromAppearance(appearance), [appearance]);
+  const compactionState = useMemo(
+    () => (observation?.state ? { compactions: observation.state.compactions, failure: observation.state.compactionFailure } : undefined),
+    [observation?.state],
+  );
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
     observation,
   });
-  const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting ? "waiting_approval" : turnActive ? "running" : "idle";
+  const chatStatus: SessionChatStatus = turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;
   const ownsRunningExecution = executionAvailable && execution?.owner_session_id === id && execution.lifecycle === "running" && !execution.receipt_id;
   const sessionActionAvailable =
@@ -1135,7 +1166,6 @@ export function SessionView({
     (!hasTask || live.sessionsCurrent) &&
     !messageSending &&
     !messageInterrupting &&
-    !chat.sessionMeta.isCompacting &&
     !completionBusy &&
     !archiveBusy &&
     !live.session?.archived &&
@@ -1168,7 +1198,6 @@ export function SessionView({
     turnActive &&
     agentState !== "waiting_for_input" &&
     agentState !== "waiting_for_approval" &&
-    !chat.sessionMeta.isCompacting &&
     (messageDraft.body.trim().length > 0 || (messageDraft.attachments?.length ?? 0) > 0);
   const queuedMeta = chat.sessionMeta.queuedMessageCount ?? 0;
   const canShowReview =
@@ -1177,7 +1206,6 @@ export function SessionView({
     !messageSending &&
     !messageInterrupting &&
     !turnRetry?.pending &&
-    !chat.sessionMeta.isCompacting &&
     queuedMeta === 0 &&
     !chat.pendingUi.some((request) => needsUiReply(request.method));
   const readyEndpoint = canShowReview && review?.endpoint && executionAvailable && rpcProcessLive;
@@ -1689,6 +1717,7 @@ export function SessionView({
                         deliveryNotice={deliveryNotice}
                         wrapUpPrompt={nudge.prompt}
                         status={chatStatus}
+                        compactionState={compactionState}
                         visibility={chatVisibility}
                         onLoadOlder={loadOlder}
                         loadingOlder={loadingOlder}
@@ -1721,6 +1750,7 @@ export function SessionView({
                             deliveryNotice={deliveryNotice}
                             wrapUpPrompt={nudge.prompt}
                             status={chatStatus}
+                            compactionState={compactionState}
                             turnRetry={turnRetry}
                             stepActivity={finishingStep ? "Finishing step…" : readyEndpoint && agentState !== "errored" ? "Ready for review" : undefined}
                             visibility={chatVisibility}
@@ -1761,7 +1791,7 @@ export function SessionView({
                                   end={continuationControls}
                                   body={messageDraft.body}
                                   status={chatStatus}
-                                  catalog={chat.commands}
+                                  catalog={withLocalBuiltins(chat.commands)}
                                   sending={messageSending}
                                   readOnly={finishingStep}
                                   showHints={false}
@@ -1852,6 +1882,7 @@ export function SessionView({
                             deliveryNotice={deliveryNotice}
                             wrapUpPrompt={nudge.prompt}
                             status="idle"
+                            compactionState={compactionState}
                             visibility={chatVisibility}
                             onLoadOlder={loadOlder}
                             loadingOlder={loadingOlder}

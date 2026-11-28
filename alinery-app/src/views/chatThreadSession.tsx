@@ -1,7 +1,8 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { canStage, chatThreadAttachmentDir, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
-import { applySendPlan, planChatSend } from "../chat/send";
+import { applySendPlan, type ChatSendPlan, planChatSend } from "../chat/send";
 import type { McpServerRow, ProvidersDialogTab } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
 import {
@@ -13,6 +14,7 @@ import {
   emptyTranscript,
   needsUiReply,
   type SessionControls,
+  settleRefusedSend,
 } from "../chatTranscript";
 import * as ipc from "../ipc";
 import type { SessionTerminalIo } from "../SessionTerminal";
@@ -21,6 +23,7 @@ import { isTurnActive } from "../sessionMessage";
 import { attentionBody } from "../shared";
 import {
   abortChatThread,
+  compactChatThread,
   copyChatThreadAttachments,
   promptChatThread,
   readChatThreadImage,
@@ -34,7 +37,7 @@ import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
 import { type TurnRetryControl, useTurnRetry } from "../useTurnRetry";
-import { compactCommand, getStateCommand, type ImageContent, promptCommand } from "../vinculumRpc";
+import { getStateCommand, type ImageContent, promptCommand } from "../vinculumRpc";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatToolsDialog } from "./ChatToolsDialog";
 import { applyPlainSend, chatTerminalIo, sendCommand, sendNowCommand } from "./chatSession";
@@ -181,6 +184,10 @@ type Entry = {
   attachments: DraftAttachment[];
   verdicts: Map<string, Verdict>;
   autoCompaction: boolean;
+  /** Slash row painted before the successor hook mounts, so rebind does not abandon it. */
+  seededTranscript?: ChatTranscriptState;
+  /** Wakes a compact that is waiting for the chat-scope stream to set started_at. */
+  onThread?: (thread: ChatThread) => void;
   kick?: () => void;
   snapshot: ChatThreadSnapshot;
   listeners: Set<() => void>;
@@ -197,6 +204,7 @@ type Registry = {
   sendingKey: string | null;
   setSending: (key: string | null) => void;
   pendingPrompt: { key: string; text: string; attachments: DraftAttachment[] } | null;
+  pendingCompact: { key: string; text: string; plan: ChatSendPlan } | null;
   pendingFocus: string | null;
   focusListeners: Set<() => void>;
   requestOpen: (key: string) => void;
@@ -235,6 +243,7 @@ function createRegistry(): Registry {
     errorListeners: new Set(),
     sendingKey: null,
     pendingPrompt: null,
+    pendingCompact: null,
     pendingFocus: null,
     focusListeners: new Set(),
     setError: () => {},
@@ -337,7 +346,9 @@ function createRegistry(): Registry {
 
   registry.noteThread = (thread) => {
     const entry = registry.entries.get(threadKey(thread));
-    if (entry) entry.thread = thread;
+    if (!entry) return;
+    entry.thread = thread;
+    entry.onThread?.(thread);
   };
 
   registry.subFor = (key, id) => registry.entries.get(key)?.subs.get(id);
@@ -366,6 +377,7 @@ function createRegistry(): Registry {
     const key = threadKey(thread);
     const entry = ensure(key);
     entry.thread = thread;
+    entry.onThread?.(thread);
     entry.subs.set(sub.id, sub);
     registry.host();
     return () => {
@@ -392,6 +404,7 @@ export function ChatSessionProvider({ children }: { children: ReactNode }) {
       for (const entry of reg.entries.values()) revokeDraftPreviewUrls(entry.attachments);
       reg.entries.clear();
       reg.pendingPrompt = null;
+      reg.pendingCompact = null;
       reg.sendingKey = null;
       reg.error = "";
       reg.pendingFocus = null;
@@ -568,6 +581,35 @@ function entryIsActive(entry: Entry): boolean {
   return false;
 }
 
+/** Exited, or a failed open that is still starting. A missing observation is not this: that is the first paint. */
+function successorWillNotStart(observation: SessionObservation | null | undefined): boolean {
+  return successorExited(observation) || observation?.state?.playbook.state === "failed";
+}
+
+/** Process or lifecycle already exited. A playbook failure while still starting is not this. */
+function successorExited(observation: SessionObservation | null | undefined): boolean {
+  const process = observation?.state?.process.state;
+  const lifecycle = observation?.lifecycle.state;
+  return process === "exited" || lifecycle === "exited" || lifecycle === "live_exited";
+}
+
+/** Shown on the Reconnect banner when a resumed /compact is abandoned because the successor exited. */
+const RESUMED_COMPACT_EXITED_DETAIL = "The resumed chat exited before it could start.";
+
+/** Resolves when the thread the attach effect reads has started_at. The chat-scope stream is what writes it. */
+function whenThreadStarted(entry: Entry): Promise<void> {
+  if (entry.thread?.session.started_at != null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const previous = entry.onThread;
+    entry.onThread = (thread) => {
+      previous?.(thread);
+      if (thread.session.started_at == null) return;
+      entry.onThread = previous;
+      resolve();
+    };
+  });
+}
+
 /**
  * The single attach for one thread. Chat and the pinned window are subscribers; this is the owner.
  * Dialogs opened by a slash command render here so the two windows don't each open one.
@@ -579,11 +621,18 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   const id = thread.session.id;
   const key = entry.key;
   const [epoch, setEpoch] = useState(0);
-  const [transcript, setTranscript] = useState<ChatTranscriptState>(NO_TRANSCRIPT);
+  const [transcript, setTranscript] = useState<ChatTranscriptState>(() => {
+    const seeded = entry.seededTranscript;
+    entry.seededTranscript = undefined;
+    return seeded ?? NO_TRANSCRIPT;
+  });
   const transcriptRef = useRef(transcript);
   transcriptRef.current = transcript;
   const observation = useSessionObservation(repo, "", id);
   const endedRef = useRef<(() => void) | null>(null);
+  // Set when a resumed /compact is abandoned because the successor exited. The stopped effect must not
+  // put that connection back to offline: Reconnect is the recovery, and it only shows while failed.
+  const compactExitFailed = useRef(false);
   const [connection, setConnection] = useState<Connection>({ state: "connecting" });
   const [providersDialog, setProvidersDialog] = useState<{ tab: ProvidersDialogTab; preselect: string } | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -619,12 +668,18 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     const claimed = registry.pendingPrompt?.key === key ? registry.pendingPrompt : null;
     let cancelled = false;
     registry.setError((current) => (current === "cannot continue" ? "" : current));
-    setConnection({ state: "connecting" });
+    // A reconnect while the successor is still exited must keep the failed mark. Clearing it here would
+    // let the stopped effect hide Reconnect again. A fresh attach that is not exited starts clean.
+    if (!successorExited(observation)) compactExitFailed.current = false;
+    // ended_at on a failed open must not overwrite this with offline, and a still-exited reconnect must
+    // not flash connecting or ready. The ref stays set so the stopped effect can put the mark back.
+    const keepFailedExit = compactExitFailed.current && successorExited(observation);
+    if (!keepFailedExit) setConnection({ state: "connecting" });
     let endedSeen = false;
     const ended = () => {
       if (cancelled || endedSeen) return;
       endedSeen = true;
-      setConnection({ state: "offline" });
+      setConnection(compactExitFailed.current ? { state: "failed", detail: RESUMED_COMPACT_EXITED_DETAIL } : { state: "offline" });
       for (const sub of entry.subs.values()) void Promise.resolve(sub.onReload()).catch(() => {});
     };
     endedRef.current = ended;
@@ -637,7 +692,9 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     const stopTranscript = watchSessionTranscript(repo, { taskSlug: "", id }, (reply) => {
       if (!cancelled) updateTranscript(() => applyVinculumTranscript(reply));
     });
-    if (threadNow.session.started_at == null || threadNow.session.ended_at != null || threadNow.session.archived) {
+    if (keepFailedExit) {
+      setConnection({ state: "failed", detail: RESUMED_COMPACT_EXITED_DETAIL });
+    } else if (threadNow.session.started_at == null || threadNow.session.ended_at != null || threadNow.session.archived) {
       setConnection({ state: "offline" });
       dropClaim("Ava is not running in this thread, so the message was not sent. It is still in the composer.");
     } else {
@@ -668,11 +725,57 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     };
   }, [epoch, repo, id]);
 
+  // Resume's reply does not mean the successor conversation exists. started_at, and the
+  // connection-ready path above, are earlier. Process alive is published only after openHarness
+  // has a conversation, which is when a compaction can admit. A successor that has exited or
+  // whose playbook has failed will not become alive; holding the stash would disable Send forever.
+  useEffect(() => {
+    const claimed = registry.pendingCompact;
+    if (!claimed || claimed.key !== key) return;
+    if (successorWillNotStart(observation)) {
+      registry.pendingCompact = null;
+      if (registry.sendingKey === key) registry.setSending(null);
+      registry.setError("The resumed chat will not start, so /compact was not sent. It is still in the composer.");
+      // Playbook-failed while still starting stays ready: an ordinary send must still prompt. An exit
+      // is a dead connection. Mark it failed before the stopped effect runs, so that effect cannot
+      // overwrite this with offline and hide Reconnect. A later alive does not admit the abandoned command.
+      if (successorExited(observation)) {
+        compactExitFailed.current = true;
+        setConnection({ state: "failed", detail: RESUMED_COMPACT_EXITED_DETAIL });
+      }
+      return;
+    }
+    // Missing on the first paint, or still starting with a playbook that has not failed: keep waiting.
+    if (observation?.state?.process.state !== "alive") return;
+    registry.pendingCompact = null;
+    const { text, plan } = claimed;
+    registry.setSending(key);
+    void (async () => {
+      try {
+        const instructions = plan.dispatch.kind === "compact" ? plan.dispatch.customInstructions : undefined;
+        await compactChatThread(repo, id, instructions);
+        // A refusal from an earlier attempt must not outlive a compact that then succeeds.
+        registry.setError("");
+        if (entry.draft === text) {
+          entry.draft = "";
+          registry.touch(entry);
+        }
+      } catch (cause) {
+        registry.setError(errorMessage(cause));
+      } finally {
+        if (registry.sendingKey === key) registry.setSending(null);
+      }
+    })();
+  }, [observation, key, registry, repo, id, entry, updateTranscript]);
+
   // A thread whose process has exited ends the attach, once per attach.
   const stopped = observation?.lifecycle.state === "exited" || observation?.lifecycle.state === "live_exited";
   // biome-ignore lint/correctness/useExhaustiveDependencies: epoch is a new attach, which may need ending again
   useEffect(() => {
-    if (stopped && (entry.thread ?? thread).session.ended_at == null && entryIsActive(entry)) endedRef.current?.();
+    // A failed open stamps ended_at before the person can click Reconnect. The ref still has to win, or
+    // that stamp leaves the connection offline and the banner's Reconnect disappears.
+    const recordEnded = (entry.thread ?? thread).session.ended_at != null;
+    if (stopped && entryIsActive(entry) && (!recordEnded || compactExitFailed.current)) endedRef.current?.();
   }, [stopped, epoch]);
 
   async function writeSend(
@@ -706,7 +809,8 @@ function ChatThreadController({ entry }: { entry: Entry }) {
 
   async function send(who: symbol, override?: string) {
     const currentThread = entry.thread;
-    if (!currentThread || registry.sendingKey === key) return;
+    // pendingCompact is the stashed resume. A second send must not take the live compact branch while it is armed.
+    if (!currentThread || registry.sendingKey === key || registry.pendingCompact?.key === key) return;
     const text = override ?? entry.draft;
     const attachments = override === undefined ? entry.attachments.slice() : [];
     if (!text.trim() && attachments.length === 0) return;
@@ -716,11 +820,18 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     }
     const sub = () => entry.subs.get(who);
     registry.setError("");
+    // A first send and a resume replay the draft as a prompt. /compact must not take that path:
+    // the command would reach the model, which is the bug this intercept exists to stop.
+    const compactPlan = planChatSend(text, transcript.commands, false);
+    const compact = compactPlan.dispatch.kind === "compact" ? compactPlan : null;
     if (currentThread.session.ended_at != null || currentThread.session.archived) {
       registry.setSending(key);
+      let successorKey = key;
+      let stashedCompact = false;
+      let rebound = false;
       try {
         const successorId = await resumeChatThread(repo, id);
-        const next = `${repo}:${successorId}`;
+        successorKey = `${repo}:${successorId}`;
         const refresh = sub()?.onResumeRefresh;
         const rebind = sub()?.onRebind;
         // Checked before the list refresh: that refresh drops the ended row, and flushing it
@@ -729,12 +840,35 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           registry.setSending(null);
           return;
         }
-        registry.moveDraft(key, next, text);
-        registry.pendingPrompt = { key: next, text, attachments };
-        registry.setSending(next);
-        await refresh?.();
-        rebind?.(next);
+        if (compact?.dispatch.kind === "compact") {
+          // Resume returns before the successor conversation exists. Stash the command; the
+          // successor admits it once its process is alive. The slash row is seeded on that entry,
+          // not painted here: rebind abandons this hook. sendingKey stays on the successor until
+          // that admit finishes, so Send and Send now cannot admit a second compaction first.
+          registry.moveDraft(key, successorKey, text);
+          const dest = registry.entries.get(successorKey);
+          if (dest) dest.seededTranscript = applySendPlan(emptyTranscript(), text, compact).state;
+          registry.pendingCompact = { key: successorKey, text, plan: compact };
+          stashedCompact = true;
+          registry.setSending(successorKey);
+          await refresh?.();
+          if (rebind) {
+            rebind(successorKey);
+            rebound = true;
+          }
+        } else {
+          registry.moveDraft(key, successorKey, text);
+          registry.pendingPrompt = { key: successorKey, text, attachments };
+          registry.setSending(successorKey);
+          await refresh?.();
+          rebind?.(successorKey);
+        }
       } catch (cause) {
+        // A thrown refresh or rebind must not leave the stash armed for a later visit.
+        if (stashedCompact && registry.pendingCompact?.key === successorKey) registry.pendingCompact = null;
+        // rebind did not return, so this thread is still on screen. Put the text back, including
+        // attachments moveDraft moved. Do not re-arm the stash. The ordinary resume branch is untouched.
+        if (stashedCompact && !rebound) registry.moveDraft(successorKey, key, text);
         registry.setSending(null);
         registry.setError(errorMessage(cause));
       }
@@ -754,11 +888,43 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           registry.setSending(null);
           return;
         }
-        registry.pendingPrompt = { key, text, attachments };
-        setEpoch((value) => value + 1);
+        if (compact?.dispatch.kind === "compact") {
+          // onReload does not set started_at. The chat-scope stream writes it onto the thread the
+          // attach effect reads. Bump epoch only after that write, or the effect sees null and sets offline again.
+          void whenThreadStarted(entry).then(() => {
+            if (!alive.current || entry.thread?.session.started_at == null) return;
+            setEpoch((value) => value + 1);
+          });
+          let paintedId = "";
+          // Commit the row before the call so a same-tick refusal has its id. The updater does not run until React renders.
+          flushSync(() => {
+            updateTranscript((current) => {
+              const added = applySendPlan(current, text, compact);
+              paintedId = added.entryId;
+              return added.state;
+            });
+          });
+          try {
+            await compactChatThread(repo, id, compact.dispatch.customInstructions);
+          } catch (cause) {
+            // A refusal must not leave a slash row for a command that did not run.
+            const refusedId = paintedId;
+            updateTranscript((current) => settleRefusedSend(current, refusedId, text, true));
+            throw cause;
+          }
+          if (entry.draft === text) {
+            entry.draft = "";
+            registry.touch(entry);
+          }
+        } else {
+          registry.pendingPrompt = { key, text, attachments };
+          setEpoch((value) => value + 1);
+        }
       } catch (cause) {
         registry.setSending(null);
         registry.setError(errorMessage(cause));
+      } finally {
+        if (compact && registry.sendingKey === key) registry.setSending(null);
       }
       return;
     }
@@ -787,7 +953,33 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       }
       return;
     }
-    const carriesAttachments = dispatch.kind !== "compact" && dispatch.kind !== "get-tools" && dispatch.kind !== "mcp-list";
+    if (dispatch.kind === "compact") {
+      registry.setSending(key);
+      let paintedId = "";
+      try {
+        // Commit the row before the call so a same-tick refusal has its id. The updater does not run until React renders.
+        flushSync(() => {
+          updateTranscript((current) => {
+            const added = applySendPlan(current, text, plan);
+            paintedId = added.entryId;
+            return added.state;
+          });
+        });
+        await compactChatThread(repo, id, dispatch.customInstructions);
+        if (entry.draft === text) {
+          entry.draft = "";
+          registry.touch(entry);
+        }
+      } catch (cause) {
+        const refusedId = paintedId;
+        updateTranscript((current) => settleRefusedSend(current, refusedId, text, true));
+        registry.setError(errorMessage(cause));
+      } finally {
+        if (registry.sendingKey === key) registry.setSending(null);
+      }
+      return;
+    }
+    const carriesAttachments = dispatch.kind !== "get-tools" && dispatch.kind !== "mcp-list";
     registry.setSending(key);
     try {
       let wire = text;
@@ -799,14 +991,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
         images = prepared.images;
         row = draftToRowAttachments(prepared.copied);
       }
-      const command =
-        dispatch.kind === "compact"
-          ? compactCommand(dispatch.customInstructions)
-          : dispatch.kind === "get-tools"
-            ? getStateCommand()
-            : dispatch.kind === "mcp-list"
-              ? promptCommand("/mcp list")
-              : sendCommand(wire, busy, images);
+      const command = dispatch.kind === "get-tools" ? getStateCommand() : dispatch.kind === "mcp-list" ? promptCommand("/mcp list") : sendCommand(wire, busy, images);
       if (dispatch.kind === "mcp-list") mcpListWait.current = true;
       await writeSend(wire, command, (current) => applySendPlan(current, text, plan, row), carriesAttachments ? attachments : []);
       if (dispatch.kind === "get-tools") setToolsOpen(true);
@@ -820,6 +1005,8 @@ function ChatThreadController({ entry }: { entry: Entry }) {
 
   async function sendNow(who: symbol) {
     void who;
+    // The button lock is not enough: Send now does not consult it. A stashed resume must not admit twice.
+    if (registry.sendingKey === key || registry.pendingCompact?.key === key) return;
     const text = entry.draft;
     const attachments = entry.attachments.slice();
     if (!text.trim() && attachments.length === 0) return;
@@ -828,6 +1015,33 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       return;
     }
     registry.setError("");
+    const compactPlan = planChatSend(text, transcript.commands, true);
+    if (compactPlan.dispatch.kind === "compact") {
+      registry.setSending(key);
+      let paintedId = "";
+      try {
+        // Commit the row before the call so a same-tick refusal has its id. The updater does not run until React renders.
+        flushSync(() => {
+          updateTranscript((current) => {
+            const added = applySendPlan(current, text, compactPlan);
+            paintedId = added.entryId;
+            return added.state;
+          });
+        });
+        await compactChatThread(repo, id, compactPlan.dispatch.customInstructions);
+        if (entry.draft === text) {
+          entry.draft = "";
+          registry.touch(entry);
+        }
+      } catch (cause) {
+        const refusedId = paintedId;
+        updateTranscript((current) => settleRefusedSend(current, refusedId, text, true));
+        registry.setError(errorMessage(cause));
+      } finally {
+        if (registry.sendingKey === key) registry.setSending(null);
+      }
+      return;
+    }
     try {
       const prepared = attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments) : null;
       const row = prepared ? draftToRowAttachments(prepared.copied) : undefined;

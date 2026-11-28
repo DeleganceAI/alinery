@@ -4,7 +4,7 @@
 import { create, fromJson, type JsonValue, type MessageInitShape } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import type { ServiceImpl, Transport } from "@connectrpc/connect";
-import { type Entity, EntitySchema, SessionSchema, TaskSchema } from "alinery-proto/alinery/v1/entities_pb";
+import { type Entity, EntitySchema, SessionCompactionFailureSchema, SessionCompactionSchema, SessionSchema, TaskSchema } from "alinery-proto/alinery/v1/entities_pb";
 import { type SessionService, type TranscriptPartSchema, WatchTranscriptResponseSchema } from "alinery-proto/alinery/v1/sessions_pb";
 import type { SubscribeResponse } from "alinery-proto/alinery/v1/sync_pb";
 import type { VinculumMessage, VinculumTranscript } from "../chatTranscript";
@@ -41,6 +41,16 @@ export function sessionEntity(taskSlug: string, id: string, o: SessionObservatio
             adapter: s?.adapter ?? "unsupported",
             messageAdapter: s?.message_adapter ?? "unsupported",
             transport: o.transport ?? "",
+            compactions: (s?.compactions ?? []).map((c) =>
+              create(SessionCompactionSchema, {
+                reason: c.reason,
+                blocking: c.blocking,
+                attempt: c.attempt,
+                retryAt: c.retryAt !== undefined ? BigInt(Math.trunc(c.retryAt)) : undefined,
+                retryError: c.retryError ?? "",
+              }),
+            ),
+            compactionFailure: s?.compactionFailure ? create(SessionCompactionFailureSchema, { reason: s.compactionFailure.reason, error: s.compactionFailure.error }) : undefined,
           }
         : undefined,
     wait,

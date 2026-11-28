@@ -18,6 +18,74 @@ function pane(entries: ChatEntry[], visibility = DEFAULT_CHAT_VISIBILITY, status
   return renderToStaticMarkup(<ChatPane entries={entries} visibility={visibility} status={status} />);
 }
 
+describe("ChatPane compaction tail", () => {
+  it("renders one row per in-flight compaction and a failure sentence, and removes them when cleared", () => {
+    const running = {
+      compactions: [{ reason: "threshold", blocking: false, attempt: 1 }],
+      failure: null,
+    };
+    const two = render(
+      <ChatPane
+        entries={[]}
+        compactionState={{
+          compactions: [...running.compactions, { reason: "manual", blocking: true, attempt: 2, retryAt: Date.parse("2026-09-05T12:11:00Z"), retryError: "busy" }],
+          failure: { reason: "overflow", error: "no room" },
+        }}
+      />,
+    );
+    expect(two.getAllByText(/Compacting context/)).toHaveLength(2);
+    expect(two.container.textContent).toContain("Compacting context · threshold · attempt 1");
+    expect(two.container.textContent).toContain("Compacting context · manual · attempt 2");
+    expect(two.container.textContent).toContain("retrying at 2026-09-05T12:11:00.000Z");
+    expect(two.container.textContent).toContain("busy");
+    expect(two.container.textContent).toContain("Compaction failed: no room. The conversation is unchanged.");
+    expect(two.container.textContent).not.toContain("waiting");
+    two.unmount();
+    const cleared = render(<ChatPane entries={[]} compactionState={{ compactions: [], failure: null }} />);
+    expect(cleared.container.textContent).not.toContain("Compacting context");
+    expect(cleared.container.textContent).not.toContain("Compaction failed");
+    cleared.unmount();
+  });
+
+  it("renders two compactions that share a reason, attempt, blocking flag, and retry time", () => {
+    const same = { reason: "manual", blocking: false, attempt: 1 };
+    const view = render(<ChatPane entries={[]} compactionState={{ compactions: [same, { ...same }], failure: null }} />);
+    expect(view.getAllByText("Compacting context · manual · attempt 1")).toHaveLength(2);
+    view.unmount();
+  });
+
+  it("follows a compaction or failure to the bottom only while stuck", () => {
+    const stub = stubScrollSize();
+    const entries = [{ id: "1", at, actor: ACTOR.you, type: "prompt" as const, text: "hello" }];
+    try {
+      const view = render(<ChatPane entries={entries} />);
+      const list = view.container.querySelector(".chat-list") as HTMLElement;
+      expect(list.scrollTop).toBe(2000);
+      stub.writes.length = 0;
+      view.rerender(<ChatPane entries={entries} compactionState={{ compactions: [{ reason: "manual", blocking: false, attempt: 1 }], failure: null }} />);
+      expect(stub.writes).toEqual([2000]);
+      stub.writes.length = 0;
+      view.rerender(<ChatPane entries={entries} compactionState={{ compactions: [], failure: { reason: "overflow", error: "no room" } }} />);
+      expect(stub.writes).toEqual([2000]);
+
+      list.scrollTop = 40;
+      fireEvent.scroll(list);
+      stub.writes.length = 0;
+      view.rerender(
+        <ChatPane
+          entries={entries}
+          compactionState={{ compactions: [{ reason: "threshold", blocking: true, attempt: 2, retryAt: 9 }], failure: { reason: "overflow", error: "still no room" } }}
+        />,
+      );
+      expect(stub.writes).toEqual([]);
+      expect(list.scrollTop).toBe(40);
+      view.unmount();
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
 describe("ChatPane", () => {
   it("shows a wrap-up prompt immediately and reconciles the same bubble by delivery ID within the active turn", () => {
     const text = "Please wrap up this step.";

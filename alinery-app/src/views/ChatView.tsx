@@ -3,6 +3,7 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
 import { DROP_WITHOUT_FILE } from "../chat/attachments";
+import { withLocalBuiltins } from "../chat/commands";
 import type { ChatPrefs } from "../chat/visibility";
 import { emptyTranscript, NEXT_TURN_MODEL_TITLE, NEXT_TURN_THINKING_TITLE } from "../chatTranscript";
 import { askConfirm, confirmDanger } from "../confirm";
@@ -212,6 +213,10 @@ function ChatViewBody({
     },
   });
   const { transcript, observation, connection, activity } = chat;
+  const compactionState = useMemo(
+    () => (observation?.state ? { compactions: observation.state.compactions, failure: observation.state.compactionFailure } : undefined),
+    [observation?.state],
+  );
   const error = chat.error;
   // A prompt's images are the thread's own copies: read back by name, so they survive a reload of the pane.
   // The scope names the thread, so a cached read from one thread is never served to another.
@@ -625,6 +630,7 @@ function ChatViewBody({
             status={activity.status}
             visibility={visibility}
             atStart={transcript.fileStart === 0}
+            compactionState={compactionState}
             turnRetry={chat.turnRetry}
             readImage={readThreadImages}
           />
@@ -679,7 +685,7 @@ function ChatViewBody({
             actions={<ComposerStats usage={transcript.sessionMeta.contextUsage} events={transcript.entries.length} />}
             body={body}
             status={activity.status}
-            catalog={transcript.commands}
+            catalog={withLocalBuiltins(transcript.commands)}
             sending={sending}
             showHints={false}
             attachments={chat.attachments}

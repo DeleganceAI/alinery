@@ -256,6 +256,8 @@ const observation = (agent: "busy" | "idle"): SessionObservation => ({
     playbook: { state: "in_progress" },
     adapter: "vinculum",
     message_adapter: "unsupported",
+    compactions: [],
+    compactionFailure: null,
   },
   checkpoint: {},
 });
@@ -1217,6 +1219,8 @@ describe("Task Detail sub-task manager projection", () => {
         playbook: { state: "failed", reason: "Process exited" },
         adapter: "vinculum",
         message_adapter: "unsupported",
+        compactions: [],
+        compactionFailure: null,
       },
       checkpoint: {},
     };
@@ -1431,6 +1435,8 @@ describe("Task Detail sub-task manager projection", () => {
         playbook: { state: "in_progress" },
         adapter: "vinculum",
         message_adapter: "vinculum_bracketed_paste",
+        compactions: [],
+        compactionFailure: null,
       },
       checkpoint: {},
     };
@@ -2350,6 +2356,8 @@ describe("session time columns and sorting", () => {
         playbook: { state: "failed", reason },
         adapter: "vinculum",
         message_adapter: "unsupported",
+        compactions: [],
+        compactionFailure: null,
       },
       checkpoint: {},
     });

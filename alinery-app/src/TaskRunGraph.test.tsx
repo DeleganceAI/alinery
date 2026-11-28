@@ -97,6 +97,8 @@ it("keeps queued owners queued after observation polling and shows live activity
             playbook: { state: "in_progress" },
             adapter: "vinculum",
             message_adapter: "vinculum_bracketed_paste",
+            compactions: [],
+            compactionFailure: null,
           },
         },
       }}

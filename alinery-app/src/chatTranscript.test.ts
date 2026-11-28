@@ -1677,3 +1677,19 @@ describe("applyVinculumTranscript context usage", () => {
     expect(silent.sessionMeta.contextUsage).toBeUndefined();
   });
 });
+
+describe("compaction hydration", () => {
+  it("turns one compaction message into one compaction entry and keeps earlier user text", () => {
+    const state = applyVinculumTranscript([
+      { id: "u1", role: "user", content: [{ type: "text", text: "earlier question\n\nAttached: notes.md" }] },
+      { id: "c1", role: "compaction", compactionReason: "threshold", content: [{ type: "text", text: "folded summary\n\nAttached: secret.md" }] },
+    ]);
+    const compaction = state.entries.filter((entry) => entry.type === "compaction");
+    expect(compaction).toEqual([
+      { id: "f:c1", actor: { kind: "harness", name: "Vinculum" }, type: "compaction", text: "folded summary\n\nAttached: secret.md", reason: "threshold" },
+    ]);
+    expect(state.entries.filter((entry) => entry.type === "prompt")).toHaveLength(1);
+    expect(state.entries.some((entry) => entry.type === "prompt" && "attachments" in entry)).toBe(false);
+    expect(JSON.stringify(compaction)).not.toContain("attachments");
+  });
+});

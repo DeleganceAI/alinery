@@ -27,7 +27,15 @@ const session = (id: string, created: number): SessionDisplayMeta => ({
 const busy: SessionObservation = {
   lifecycle: { state: "live" },
   transport: "rpc",
-  state: { process: { state: "alive" }, agent: { state: "busy" }, playbook: { state: "in_progress" }, adapter: "vinculum", message_adapter: "vinculum_bracketed_paste" },
+  state: {
+    process: { state: "alive" },
+    agent: { state: "busy" },
+    playbook: { state: "in_progress" },
+    adapter: "vinculum",
+    message_adapter: "vinculum_bracketed_paste",
+    compactions: [],
+    compactionFailure: null,
+  },
   checkpoint: {},
 };
 

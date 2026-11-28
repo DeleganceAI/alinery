@@ -1,6 +1,7 @@
 // Session status from the daemon's Session entities: what the `session_status` family of
-// commands answered, read from a subscription instead of a poll. The mapping below is the same one
-// `classify` and `observation_of` made in Rust, over the fields the entity carries.
+// commands answered, read from a subscription instead of a poll. Lifecycle and the structured axes
+// follow the Rust classify/session-state mapping. The compaction fields are copied here from session
+// status only; they are not part of that struct.
 import { create } from "@bufbuild/protobuf";
 import type { Entity } from "alinery-proto/alinery/v1/entities_pb";
 import { type Scope, ScopeSchema } from "alinery-proto/alinery/v1/sync_pb";
@@ -42,6 +43,14 @@ function stateOf(status: NonNullable<Extract<Entity["value"], { case: "session" 
     playbook: (status.playbook === "failed" ? { state: "failed", reason: status.playbookReason } : { state: status.playbook || "in_progress" }) as SessionState["playbook"],
     adapter: status.adapter === "vinculum" ? "vinculum" : "unsupported",
     message_adapter: status.messageAdapter === "vinculum_bracketed_paste" ? "vinculum_bracketed_paste" : "unsupported",
+    compactions: status.compactions.map((c) => ({
+      reason: c.reason,
+      blocking: c.blocking,
+      attempt: c.attempt,
+      ...(c.retryAt !== undefined ? { retryAt: Number(c.retryAt) } : {}),
+      ...(c.retryError ? { retryError: c.retryError } : {}),
+    })),
+    compactionFailure: status.compactionFailure ? { reason: status.compactionFailure.reason, error: status.compactionFailure.error } : null,
   };
 }
 

@@ -19,10 +19,13 @@ import { writeAtomic } from "./platform/fs.ts";
 import { agentShellEnv, libreOfficeDir, runtimePart, writeShims } from "./agentShell.ts";
 import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
 import { closeFailedOpen, stopOwningHarness } from "./runtime/sessionStop.ts";
+import { handleLiveDocTick } from "./runtime/compactionState.ts";
 import { latestFailedTurn, retryFailedTurn, committedTurnMessages } from "./runtime/failedTurn.ts";
 import { answeredReviewFollowUp, hasSettledAnswer } from "./runtime/reviewFollowUp.ts";
 import { steerWrapUp } from "./runtime/nudge.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
+import { modelMessages, seedPrompt, userMessageCount } from "./conversationCounts.ts";
+import { compactionFocus } from "./rpc/sessions.ts";
 import { serveRpc } from "./rpc/server.ts";
 import { removeBoxRecord, writeBoxRecord } from "./domain/boxRegistry.ts";
 import { commitJoinRequests, Members } from "./domain/members.ts";
@@ -74,7 +77,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 57;
+const PROTOCOL = 58;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -111,6 +114,8 @@ type Live = {
   executionId: string;
   titledBucket: number;
   titleInFlight: boolean;
+  compactions?: { reason: string; blocking: boolean; attempt: number; retry?: { at: number; error: string } }[];
+  compaction_failure?: { reason: string; error: string };
   stopping?: Promise<void>;
   closedControls?: Awaited<ReturnType<typeof sessionControls>>;
   wait?: { kind: string; correlationId: string; prompt?: string };
@@ -472,6 +477,8 @@ function sessionState(row: Live) {
     playbook,
     adapter: "vinculum",
     message_adapter: "unsupported",
+    compactions: row.compactions,
+    compaction_failure: row.compaction_failure,
   };
 }
 
@@ -582,15 +589,6 @@ function removedTools(taskSlug: string, id: string) {
   return canvasEnabled(repo, id) ? [sessionNameTool] : [sessionNameTool, ...canvas.tools];
 }
 
-async function seedPrompt(conversation: Conversation, prompt: string) {
-  if (!prompt) return;
-  const page = await conversation.entries({ order: "ascending" }, 200, undefined, context);
-  const hasUser = page.items.some((entry) => entry.kind === "pi.user" || (entry.model ?? []).some((message) => message.role === "user"));
-  if (hasUser) return;
-  // Admission only. The model run continues after this returns.
-  await conversation.submit({ type: "input", content: prompt, whenBusy: "followUp" }, context);
-}
-
 // conversation.context() is the next model request. It drops assistant messages whose stop reason is error, aborted, or deferred, so a failed turn never reaches the pane. The transcript is the stored entries, plus the in-flight partial. Nested tool slots stay out.
 
 async function transcriptMessages(row: Live, conversation: Conversation): Promise<{ messages: TranscriptSource[]; tools: TranscriptToolSlot[] }> {
@@ -604,22 +602,6 @@ async function transcriptMessages(row: Live, conversation: Conversation): Promis
   } finally {
     live?.dispose();
   }
-}
-
-async function modelMessages(conversation: Conversation) {
-  const messages: Awaited<ReturnType<Conversation["context"]>>["messages"] = [];
-  let cursor: Awaited<ReturnType<Conversation["entries"]>>["next"];
-  for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-    const page = await conversation.entries({ order: "ascending" }, 200, cursor, context);
-    for (const entry of page.items) messages.push(...(entry.model ?? []));
-    cursor = page.next;
-    if (!cursor) break;
-  }
-  return messages;
-}
-
-async function userMessageCount(conversation: Conversation): Promise<number> {
-  return (await modelMessages(conversation)).filter((message) => message.role === "user").length;
 }
 
 async function maybeTitleChat(row: Live) {
@@ -670,8 +652,7 @@ async function sessionControls(conversation: Conversation) {
 }
 
 function watch(row: Live, harness: OpenedHarness, conversationId: string) {
-  let watchVersion = 0;
-  let lastRunning: boolean | undefined;
+  const liveDoc: Parameters<typeof handleLiveDocTick>[0] = { version: 0, lastRunning: undefined, owedFinish: false, compaction: { signature: undefined } };
   const settledAgent = () => row.failedTurn ? { state: "errored", correlation_id: row.failedTurn.id, reason: row.failedTurn.reason } : { state: "idle" };
   const attach = <T>(pending: Promise<WatchHandle<T> | undefined>, apply: (value: T, initial?: boolean) => void) => {
     pending
@@ -705,29 +686,15 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
     commitSession(row.taskSlug, row.id);
   });
   attach(harness.watchDoc(LiveDoc, conversationId, context), (value) => {
-    const running = Boolean(value?.run);
-    const runId = value?.run?.inputs[0]?.toString();
-    if (lastRunning === running && row.runId === runId) return;
-    const finished = lastRunning === true && !running;
-    lastRunning = running;
-    row.runId = runId;
-    const version = ++watchVersion;
-    row.liveRun = running;
-    if (running) {
-      row.failedTurn = undefined;
-      if (row.agent.state !== "waiting_for_input" && row.agent.state !== "waiting_for_approval") row.agent = { state: "busy" };
-      commitSession(row.taskSlug, row.id);
-      return;
-    }
-    // Read the terminal receipt on initial attachment too, so a daemon restart restores the same failed turn.
-    void conversationFor(row).then(async (conversation) => {
-      const failure = conversation ? await latestFailedTurn(conversation) : undefined;
-      if (watchVersion !== version || live.get(row.id) !== row || row.process === "exited" || row.stopping) return;
-      row.failedTurn = failure;
-      if (row.agent.state !== "waiting_for_input" && row.agent.state !== "waiting_for_approval") row.agent = settledAgent();
-      commitSession(row.taskSlug, row.id);
-      if (finished && !row.taskSlug && !failure) void maybeTitleChat(row);
-    }).catch((error) => console.error(`turn outcome unavailable for ${row.id}: ${error}`));
+    handleLiveDocTick(liveDoc, row, value, {
+      publish: () => commitSession(row.taskSlug, row.id),
+      readFailure: async () => {
+        const conversation = await conversationFor(row);
+        return conversation ? await latestFailedTurn(conversation) : undefined;
+      },
+      title: () => void maybeTitleChat(row),
+      abandoned: () => live.get(row.id) !== row || row.process === "exited" || Boolean(row.stopping),
+    });
   });
   attach(harness.watchDoc(PhaseRequest, conversationId, context), (value, initial) => {
     if (!value?.nonce || value.nonce === row.seenNonce) return;
@@ -950,7 +917,7 @@ async function harnessSession(id: string): Promise<{ row: Live; conversation: Co
 }
 
 /** The turn controls of a live harness session: SessionService and ChatService call these (they were the `prompt`, `abort`, `set_model`
- * and `set_thinking_level` ops of the JSON-lines wire). */
+ * and `set_thinking_level` ops of the JSON-lines wire). Compact is another turn control; it admits and returns, and abort remains the write with no mutation identity. */
 const rawTurns: TurnControl = {
   async retry(id, failedEntryId) {
     const { row, conversation } = await harnessSession(id);
@@ -1014,6 +981,11 @@ const rawTurns: TurnControl = {
     await changeThinkingLevel(conversation, level, catalog, context);
     return sessionControls(conversation);
   },
+  async compact(id, instructions) {
+    const { conversation } = await harnessSession(id);
+    const focus = compactionFocus(instructions);
+    await conversation.compact(focus, context);
+  },
 };
 /** What the harness refuses (a model it does not have, a thinking level it does not offer) reaches the caller as a failed precondition with its text. */
 const refused = async <T>(run: () => Promise<T>): Promise<T> => {
@@ -1029,6 +1001,7 @@ const turns: TurnControl = {
   abort: (id) => refused(() => rawTurns.abort(id)),
   setModel: (id, model) => refused(() => rawTurns.setModel(id, model)),
   setThinkingLevel: (id, level) => refused(() => rawTurns.setThinkingLevel(id, level)),
+  compact: (id, instructions) => refused(() => rawTurns.compact(id, instructions)),
 };
 
 async function resumeInterrupted() {

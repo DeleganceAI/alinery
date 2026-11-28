@@ -19,6 +19,7 @@ import { Store } from "../sync/store.ts";
 import { createExecutionSession, startSession } from "../tasks.ts";
 import { DomainError } from "../platform/lock.ts";
 import { serveRpc } from "./server.ts";
+import { TokenRegistry } from "./auth.ts";
 import type { TurnControl } from "./sessions.ts";
 
 const SECRET = "cd".repeat(32);
@@ -78,6 +79,7 @@ async function start() {
       turnCalls.push(`thinking ${id} ${level}`);
       return { model: "m", thinking: level, thinking_levels: ["low", "high"] };
     },
+    compact: async (id, instructions) => void turnCalls.push(`compact ${id} ${instructions === undefined ? "<none>" : JSON.stringify(instructions)}`),
   };
   const sessions = {
     repo,
@@ -89,7 +91,10 @@ async function start() {
     telemetryIds: () => ({ session: "sess-id", task: "task-id" }),
   };
   const socketPath = join(dir, "rpc.sock");
+  const tokens = new TokenRegistry();
+  const agentToken = tokens.mint("agent");
   const net = await serveRpc({
+    tokens,
     socketPath,
     secret: Buffer.from(SECRET),
     hostExecutable: process.execPath,
@@ -105,12 +110,14 @@ async function start() {
     net.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  const transport = createGrpcTransport({
+  const transportFor = (token: string) => createGrpcTransport({
     baseUrl: "http://daemon",
     nodeOptions: { createConnection: () => connect(socketPath) } as never,
-    interceptors: [(next) => (req) => (req.header.set("authorization", `Bearer ${SECRET}`), next(req))],
+    interceptors: [(next) => (req) => (req.header.set("authorization", `Bearer ${token}`), next(req))],
   });
-  return { runner, canvasCalls, turnCalls, repo, alinery, task, store, feed: f, events, running, metaAtKill, storeAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport) };
+  const transport = transportFor(SECRET);
+  const agentTransport = transportFor(agentToken);
+  return { runner, canvasCalls, turnCalls, repo, alinery, task, store, feed: f, events, running, metaAtKill, storeAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport), agentSession: createClient(SessionService, agentTransport), agentChat: createClient(ChatService, agentTransport) };
 }
 type Ctx = Awaited<ReturnType<typeof start>>;
 
@@ -287,6 +294,32 @@ test("a prompt's images reach the runner as image parts, and one the composer co
   expect(await code(c.session.promptSession({ meta: meta(), sessionId: "s1", text: "x", images: [svg] }))).toBe(Code.InvalidArgument);
   expect(await code(c.chat.promptChatThread({ meta: meta(), threadId: "chat1", text: "x", images: Array(5).fill(png) }))).toBe(Code.InvalidArgument);
   expect(c.turnCalls).toHaveLength(2);
+});
+
+test("compact admits once per mutation, normalizes a blank instruction, and refuses an agent credential", async () => {
+  const c = await start();
+  sessionMeta(c, "", "chat1", { harness: "vinculum", generic: true });
+  await c.session.compactSession({ meta: meta(), sessionId: "s1", instructions: "keep the names" });
+  await c.chat.compactChatThread({ meta: meta(), threadId: "chat1", instructions: "fold the plan" });
+  await c.session.compactSession({ meta: meta(), sessionId: "s1", instructions: "  keep  " });
+  await c.session.compactSession({ meta: meta(), sessionId: "s1", instructions: "" });
+  await c.chat.compactChatThread({ meta: meta(), threadId: "chat1", instructions: "   " });
+  const same = meta();
+  await c.session.compactSession({ meta: same, sessionId: "s1", instructions: "once" });
+  await c.session.compactSession({ meta: same, sessionId: "s1", instructions: "once" });
+  expect(c.turnCalls.filter((line) => line.startsWith("compact"))).toEqual([
+    "compact s1 \"keep the names\"",
+    "compact chat1 \"fold the plan\"",
+    "compact s1 \"  keep  \"",
+    "compact s1 <none>",
+    "compact chat1 <none>",
+    "compact s1 \"once\"",
+  ]);
+  expect(await code(c.chat.compactChatThread({ meta: meta(), threadId: "task-session" }))).toBe(Code.NotFound);
+  const denied = await c.agentSession.compactSession({ meta: meta(), sessionId: "s1", instructions: "no" }).then(() => "", (e) => String(e));
+  expect(denied).toContain("ACT");
+  expect(await code(c.agentChat.compactChatThread({ meta: meta(), threadId: "chat1" }))).toBe(Code.PermissionDenied);
+  expect(c.turnCalls.some((line) => line.includes("\"no\""))).toBe(false);
 });
 
 test("a chat thread's turn controls refuse an id that is not a chat thread", async () => {

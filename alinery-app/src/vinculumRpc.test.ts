@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { abortAndPromptCommand, compactCommand, followUpCommand, getStateCommand, promptCommand, TRANSPORT_LIMIT_HINT, transportLimitMessage } from "./vinculumRpc";
+import { abortAndPromptCommand, followUpCommand, getStateCommand, promptCommand, TRANSPORT_LIMIT_HINT, transportLimitMessage } from "./vinculumRpc";
 
 describe("vinculumRpc", () => {
   it("sends official { type, message } commands, never JSON-RPC method/params", () => {
     expect(promptCommand("hi", "c1")).toEqual({ id: "c1", type: "prompt", message: "hi" });
     expect(getStateCommand("c6")).toEqual({ id: "c6", type: "get_state" });
-    expect(compactCommand("keep the API", "c9")).toEqual({ id: "c9", type: "compact", customInstructions: "keep the API" });
-    expect(compactCommand(undefined, "c10")).toEqual({ id: "c10", type: "compact" });
     expect(abortAndPromptCommand("now", "c21")).toEqual({ id: "c21", type: "abort_and_prompt", message: "now" });
     expect(JSON.stringify(promptCommand("hi", "c1"))).not.toContain("method");
     expect(JSON.stringify(promptCommand("hi", "c1"))).not.toContain("params");

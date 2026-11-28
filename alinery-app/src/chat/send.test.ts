@@ -48,6 +48,14 @@ describe("planChatSend", () => {
     expect(plan.notice).toContain("not-a-command");
   });
 
+  it("keeps /compact off the model, including a former mode word", () => {
+    const plan = planChatSend("/compact soft remote", catalog, true);
+    expect(plan.dispatch).toEqual({ kind: "compact", customInstructions: "soft remote" });
+    expect(plan.invokesModel).toBe(false);
+    expect(plan.optimisticKind).toBe("slash");
+    expect(plan).not.toHaveProperty("pendingTurn");
+  });
+
   it("sends a plain body as prompt or follow_up", () => {
     expect(planChatSend("hello", catalog, false)).toEqual({
       dispatch: { kind: "plain", message: "hello" },

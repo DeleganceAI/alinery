@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { ScopeSchema } from "alinery-proto/alinery/v1/sync_pb";
-import type { Entity } from "alinery-proto/alinery/v1/entities_pb";
+import { EntitySchema, SessionSchema, type Entity } from "alinery-proto/alinery/v1/entities_pb";
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { Feed } from "../sync/feed.ts";
 import { Store } from "../sync/store.ts";
 import { hasPty, killPty, startShell, writePty } from "../terminal.ts";
-import { daemonStatusKey, type LiveRow, SessionPublisher } from "./sessions.ts";
+import { daemonStatusKey, type LiveRow, SessionPublisher, withLive } from "./sessions.ts";
 
 const ids: string[] = [];
 afterEach(() => {
@@ -173,6 +173,34 @@ test("daemon status reports an exhausted watcher", () => {
   exhausted = true;
   p.commitStatus();
   expect(flag()).toBe(true);
+});
+
+test("a live session maps every in-flight compaction and an uncleared failure, and nothing in flight is an empty list", () => {
+  const base = create(EntitySchema, { key: "session/t/s1", value: { case: "session", value: create(SessionSchema, { id: "s1" }) } });
+  const live = {
+    process: { state: "alive" },
+    agent: { state: "idle" },
+    playbook: { state: "in_progress" },
+    adapter: "vinculum",
+    message_adapter: "unsupported",
+    compactions: [
+      { reason: "threshold", blocking: true, attempt: 1 },
+      { reason: "manual", blocking: false, attempt: 2, retry: { at: 1_700_000_000_000.9, error: "later" } },
+    ],
+    compaction_failure: { reason: "overflow", error: "prompt is too long" },
+  };
+  const busy = withLive(base, live);
+  const status = busy.value.case === "session" ? busy.value.value.status : undefined;
+  expect(status?.compactions).toMatchObject([
+    { reason: "threshold", blocking: true, attempt: 1, retryError: "" },
+    { reason: "manual", blocking: false, attempt: 2, retryAt: 1_700_000_000_000n, retryError: "later" },
+  ]);
+  expect(status?.compactionFailure).toMatchObject({ reason: "overflow", error: "prompt is too long" });
+  const quiet = withLive(base, { ...live, compactions: undefined, compaction_failure: undefined });
+  const empty = quiet.value.case === "session" ? quiet.value.value.status : undefined;
+  expect(empty?.compactions).toEqual([]);
+  expect(empty?.compactionFailure).toBeUndefined();
+  expect(withLive(base, undefined).value.case === "session" && withLive(base, undefined).value.value.status).toBeUndefined();
 });
 
 test("daemon/_/status counts busy and waiting sessions, and leaves exited ones out", async () => {

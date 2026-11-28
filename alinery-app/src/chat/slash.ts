@@ -2,7 +2,6 @@ import { findCommand, parseSlash } from "./commands";
 import type { ChatCommand } from "./types";
 
 const MCP_HATCH = new Set(["reauth", "unauth", "smithery-login", "smithery-logout", "reconnect", "notifications"]);
-const COMPACT_MODES = new Set(["soft", "remote", "snapcompact"]);
 
 export type ProvidersDialogTab = "accounts" | "models";
 
@@ -13,7 +12,6 @@ export type SlashDispatch =
   | { kind: "mcp-list" }
   | { kind: "mcp-prompt"; message: string }
   | { kind: "compact"; customInstructions?: string }
-  | { kind: "compact-mode"; message: string }
   | { kind: "prompt"; message: string }
   | { kind: "unknown-prompt"; message: string };
 
@@ -58,8 +56,6 @@ export function routeSlash(raw: string, catalog: ChatCommand[]): SlashDispatch |
   }
 
   if (name === "compact") {
-    const mode = args.split(/\s+/)[0]?.toLowerCase() ?? "";
-    if (COMPACT_MODES.has(mode)) return { kind: "compact-mode", message };
     return { kind: "compact", customInstructions: args || undefined };
   }
 

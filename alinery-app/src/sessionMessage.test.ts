@@ -173,6 +173,8 @@ describe("isTurnActive", () => {
       playbook: { state: "in_progress" },
       adapter: "unsupported",
       message_adapter: "unsupported",
+      compactions: [],
+      compactionFailure: null,
     },
     checkpoint: {},
     transport: "rpc",

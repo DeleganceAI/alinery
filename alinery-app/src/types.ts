@@ -698,13 +698,19 @@ export type AgentState =
 // Mirrors alinery-core PlaybookState
 export type PlaybookState = { state: "in_progress" } | { state: "ready_to_advance" } | { state: "completed" } | { state: "failed"; reason: string };
 
-// Mirrors alinery-core SessionState (structured daemon-owned axes)
+/** Vinculum live compaction state, copied from session status (not a stored field, not a lifecycle word). */
+export type SessionCompactionLive = { reason: string; blocking: boolean; attempt: number; retryAt?: number; retryError?: string };
+
+// The process, agent, playbook, adapter and message-adapter axes mirror the Rust struct. Compaction and
+// compaction failure are Vinculum live state copied from session status, not part of that struct.
 export type SessionState = {
   process: ProcessState;
   agent: AgentState;
   playbook: PlaybookState;
   adapter: HarnessAdapter;
   message_adapter: MessageAdapter;
+  compactions: SessionCompactionLive[];
+  compactionFailure: { reason: string; error: string } | null;
 };
 
 // Mirrors alinery-core SemanticCheckpoint (daemon-written, meta-persisted)
@@ -739,7 +745,9 @@ export type ChatPart =
   | { type: "image"; mimeType: string; data?: string; name?: string };
 
 export type ChatMessage = {
-  role: "user" | "assistant" | "toolResult";
+  role: "user" | "assistant" | "toolResult" | "compaction";
+  /** Set when `role` is `compaction`: why the harness folded the context. */
+  compactionReason?: string;
   content: ChatPart[];
   nudgeDeliveryId?: string;
   stopReason?: string;

@@ -129,6 +129,8 @@ const busyObservation = {
     playbook: { state: "in_progress" },
     adapter: "vinculum",
     message_adapter: "unsupported",
+    compactions: [],
+    compactionFailure: null,
   },
   checkpoint: {},
 } satisfies SessionObservation;
@@ -351,6 +353,8 @@ describe("SessionsList time sorting and presentation", () => {
         playbook: { state: "failed", reason },
         adapter: "vinculum",
         message_adapter: "unsupported",
+        compactions: [],
+        compactionFailure: null,
       },
       checkpoint: {},
     });

@@ -47,6 +47,8 @@ const waiting = (correlation = "corr-1"): SessionObservation => ({
     playbook: { state: "in_progress" },
     adapter: "vinculum",
     message_adapter: "unsupported",
+    compactions: [],
+    compactionFailure: null,
   },
   checkpoint: {},
 });

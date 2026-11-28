@@ -56,6 +56,7 @@ export function toItem(item: TranscriptReply): Item {
     at: BigInt(Math.trunc(item.at ?? 0)),
     turnError: item.turnError,
     nudgeDeliveryId: item.nudgeDeliveryId,
+    compactionReason: item.compactionReason,
   };
 }
 
@@ -97,7 +98,13 @@ export type TurnControl = {
   abort(id: string): Promise<void>;
   setModel(id: string, model: string): Promise<Controls>;
   setThinkingLevel(id: string, level: string): Promise<Controls>;
+  compact(id: string, instructions?: string): Promise<void>;
 };
+
+/** The harness appends an Additional focus line for any defined string, including empty. Blank means none. */
+export function compactionFocus(instructions?: string): string | undefined {
+  return instructions?.trim() ? instructions : undefined;
+}
 export type Controls = { model: string; thinking: string; thinking_levels: string[]; context_tokens?: number; context_window?: number };
 export const controlsOf = (c: Controls) => ({
   controls: { model: c.model, thinking: c.thinking, thinkingLevels: c.thinking_levels, contextTokens: c.context_tokens ?? 0, contextWindow: c.context_window ?? 0 },
@@ -292,6 +299,13 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
     setSessionThinkingLevel: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return once(req.meta, async () => controlsOf(await c().turns.setThinkingLevel(req.sessionId, req.level)));
+    },
+    compactSession: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => {
+        await c().turns.compact(req.sessionId, compactionFocus(req.instructions));
+        return {};
+      });
     },
   };
 }
