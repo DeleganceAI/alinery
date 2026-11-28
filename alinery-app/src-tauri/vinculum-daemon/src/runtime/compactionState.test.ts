@@ -358,6 +358,7 @@ test("a thrown publish during the finish read does not leave the retry note stuc
   const mid = { compactions: [{ reason: "threshold", blocking: false, attempt: 1, retry: { at: 50, error: "busy" } }] };
   const published: string[] = [];
   let reads = 0;
+  let midAttempts = 0;
   let rejectFirst: (error: Error) => void = () => {};
   const first = new Promise<never>((_, reject) => {
     rejectFirst = reject;
@@ -365,7 +366,11 @@ test("a thrown publish during the finish read does not leave the retry note stuc
   const deps = {
     publish: () => {
       published.push(row.compactions?.[0]?.retry?.error ?? "stop");
-      if (row.compactions?.[0]?.retry?.error === "busy") throw new Error("publish failed");
+      // The first delivery of the retry throws. The module must retry that publish itself.
+      if (row.compactions?.[0]?.retry?.error === "busy" && midAttempts === 0) {
+        midAttempts += 1;
+        throw new Error("publish failed");
+      }
     },
     readFailure: () => {
       reads += 1;
@@ -376,13 +381,16 @@ test("a thrown publish during the finish read does not leave the retry note stuc
   };
   handleLiveDocTick(state, row, stop, deps);
   handleLiveDocTick(state, row, mid, deps);
-  // The thrown publish put the row back. The signature of the value that failed to publish is not stored.
-  expect(row.compactions).toEqual(stop.compactions);
-  expect(row.compactions?.[0]?.retry).toBeUndefined();
-  expect(state.compaction.signature).toBeUndefined();
+  // The first publish threw. The module retried once, so the scheduled note is on the row without another tick.
+  expect(midAttempts).toBe(1);
+  expect(row.compactions?.[0]?.retry?.error).toBe("busy");
+  expect(state.compaction.signature).toBe(compactionSignature(mid));
   rejectFirst(new Error("read failed"));
   await flush();
   expect(reads).toBe(2);
+  // The stop path must not stamp stop over the retry this window recovered.
+  expect(row.compactions?.[0]?.retry?.error).toBe("busy");
+  expect(state.compaction.signature).toBe(compactionSignature(mid));
   const beforeLater = published.length;
   const rowBeforeLater = JSON.stringify(row.compactions ?? null);
   handleLiveDocTick(state, row, stop, deps);

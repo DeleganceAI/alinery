@@ -776,11 +776,63 @@ describe("ChatView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(screen.getByTestId("chat-view").getAttribute("data-link")).toBe("ready"));
     expect(mocks.chatCompact).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText("/compact", { selector: ".chat-face-strong" })).toBeTruthy());
+    expect(screen.getByText("keep the names", { selector: "p.chat-work-meta" })).toBeTruthy();
     conversationReady = true;
     showChat("s-next", observed("idle", "alive", "rpc"));
     expect((await screen.findByRole("alert")).textContent).toContain("compaction refused");
     expect(screen.getByLabelText("Message or /command")).toHaveProperty("value", "/compact keep the names");
+    // The row paints `/{name}` and the args apart. queryByText of the whole command matches the composer field, not the row.
+    expect(screen.queryByText("/compact", { selector: ".chat-face-strong" })).toBeNull();
+    expect(screen.queryByText("keep the names", { selector: "p.chat-work-meta" })).toBeNull();
     expect(mocks.chatPrompt).not.toHaveBeenCalled();
+  });
+
+  it("drops the seeded /compact row when a resumed successor will not start", async () => {
+    const ended = thread("s-ended", { session: meta("s-ended", { started_at: 1, ended_at: 5 }) });
+    const starting = observed("unknown", "alive", "rpc");
+    const flips = [
+      { name: "exited", observation: observed("unknown", "exited", "rpc") },
+      {
+        name: "failed",
+        observation: {
+          ...starting,
+          state: { ...starting.state, process: { state: "starting" as const }, playbook: { state: "failed" as const, reason: "open failed" } },
+        },
+      },
+    ];
+    for (const flip of flips) {
+      cleanup();
+      fakeChat.reset();
+      mocks.chatCompact.mockClear();
+      mocks.chatPrompt.mockClear();
+      mocks.resumeChatThread.mockReset().mockImplementation(async () => {
+        fakeChat.set([ended, thread("s-next", { session: meta("s-next", { started_at: 3, ended_at: null, archived: false }) })]);
+        return "s-next";
+      });
+      // A previous case may have left s-next alive. Replay must not admit before this case's flip.
+      showChat("s-next", { ...starting, state: { ...starting.state, process: { state: "starting" } } });
+      fakeChat.set([ended]);
+      render(chat());
+      fireEvent.click(await screen.findByRole("button", { name: threadRow("s-ended") }));
+      fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "/compact keep the names" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(screen.getByText("/compact", { selector: ".chat-face-strong" })).toBeTruthy());
+      expect(screen.getByText("keep the names", { selector: "p.chat-work-meta" })).toBeTruthy();
+      showChat("s-next", flip.observation);
+      expect((await screen.findByText(/will not start/)).textContent).toContain("will not start");
+      await waitFor(() => expect(screen.queryByText("/compact", { selector: ".chat-face-strong" })).toBeNull());
+      expect(screen.queryByText("keep the names", { selector: "p.chat-work-meta" })).toBeNull();
+      expect(screen.getByLabelText("Message or /command")).toHaveProperty("value", "/compact keep the names");
+      expect(mocks.chatCompact).not.toHaveBeenCalled();
+      expect(mocks.chatPrompt).not.toHaveBeenCalled();
+      showChat("s-next", observed("idle", "alive", "rpc"));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+      expect(mocks.chatCompact).not.toHaveBeenCalled();
+      expect(screen.queryByText("/compact", { selector: ".chat-face-strong" })).toBeNull();
+    }
   });
 
   it("Send now of /compact compacts without aborting or prompting", async () => {

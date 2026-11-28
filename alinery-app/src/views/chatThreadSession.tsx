@@ -204,7 +204,7 @@ type Registry = {
   sendingKey: string | null;
   setSending: (key: string | null) => void;
   pendingPrompt: { key: string; text: string; attachments: DraftAttachment[] } | null;
-  pendingCompact: { key: string; text: string; plan: ChatSendPlan } | null;
+  pendingCompact: { key: string; text: string; plan: ChatSendPlan; entryId: string } | null;
   pendingFocus: string | null;
   focusListeners: Set<() => void>;
   requestOpen: (key: string) => void;
@@ -732,8 +732,15 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   useEffect(() => {
     const claimed = registry.pendingCompact;
     if (!claimed || claimed.key !== key) return;
+    // The slash row was seeded before admission. Refusal and abandonment must take it back, including
+    // a seed the successor has not consumed yet, so a later mount cannot paint a command that never ran.
+    const dropSeededSlash = () => {
+      entry.seededTranscript = undefined;
+      updateTranscript((current) => settleRefusedSend(current, claimed.entryId, claimed.text, true));
+    };
     if (successorWillNotStart(observation)) {
       registry.pendingCompact = null;
+      dropSeededSlash();
       if (registry.sendingKey === key) registry.setSending(null);
       registry.setError("The resumed chat will not start, so /compact was not sent. It is still in the composer.");
       // Playbook-failed while still starting stays ready: an ordinary send must still prompt. An exit
@@ -761,6 +768,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           registry.touch(entry);
         }
       } catch (cause) {
+        dropSeededSlash();
         registry.setError(errorMessage(cause));
       } finally {
         if (registry.sendingKey === key) registry.setSending(null);
@@ -846,9 +854,10 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           // not painted here: rebind abandons this hook. sendingKey stays on the successor until
           // that admit finishes, so Send and Send now cannot admit a second compaction first.
           registry.moveDraft(key, successorKey, text);
+          const seeded = applySendPlan(emptyTranscript(), text, compact);
           const dest = registry.entries.get(successorKey);
-          if (dest) dest.seededTranscript = applySendPlan(emptyTranscript(), text, compact).state;
-          registry.pendingCompact = { key: successorKey, text, plan: compact };
+          if (dest) dest.seededTranscript = seeded.state;
+          registry.pendingCompact = { key: successorKey, text, plan: compact, entryId: seeded.entryId };
           stashedCompact = true;
           registry.setSending(successorKey);
           await refresh?.();
@@ -864,8 +873,12 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           rebind?.(successorKey);
         }
       } catch (cause) {
-        // A thrown refresh or rebind must not leave the stash armed for a later visit.
+        // A thrown refresh or rebind must not leave the stash armed for a later visit, or a seed a later mount would paint.
         if (stashedCompact && registry.pendingCompact?.key === successorKey) registry.pendingCompact = null;
+        if (stashedCompact) {
+          const dest = registry.entries.get(successorKey);
+          if (dest) dest.seededTranscript = undefined;
+        }
         // rebind did not return, so this thread is still on screen. Put the text back, including
         // attachments moveDraft moved. Do not re-arm the stash. The ordinary resume branch is untouched.
         if (stashedCompact && !rebound) registry.moveDraft(successorKey, key, text);
