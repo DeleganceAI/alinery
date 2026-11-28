@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, statSync 
 import { dirname, join, resolve } from "node:path";
 import { userInfo } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { WatchHandle } from "@earendil-works/pi-durable";
+import type { SubmissionId, WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
@@ -23,7 +23,7 @@ import { handleLiveDocTick } from "./runtime/compactionState.ts";
 import { latestFailedTurn, retryFailedTurn, committedTurnMessages } from "./runtime/failedTurn.ts";
 import { answeredReviewFollowUp, hasSettledAnswer } from "./runtime/reviewFollowUp.ts";
 import { steerWrapUp } from "./runtime/nudge.ts";
-import { eventsChanges } from "./runtime/transcript.ts";
+import { eventsChanges, queuedInputs, type QueuedInput } from "./runtime/transcript.ts";
 import { modelMessages, seedPrompt, userMessageCount } from "./conversationCounts.ts";
 import { compactionFocus } from "./rpc/sessions.ts";
 import { serveRpc } from "./rpc/server.ts";
@@ -77,7 +77,8 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 58;
+// The same number as PROTOCOL_VERSION in alinery-core/src/protocol.rs. The app refuses a daemon that reports another.
+const PROTOCOL = 59;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -604,6 +605,23 @@ async function transcriptMessages(row: Live, conversation: Conversation): Promis
   }
 }
 
+/** The inputs waiting on a live conversation, in delivery order. A read only: no commit, no lock, no cache. */
+async function queuedNow(row: Live, conversation: Conversation): Promise<QueuedInput[]> {
+  if (!row.harness) return [];
+  const inbox = await row.harness.documentState(InboxDoc, conversation.id, context);
+  try {
+    return queuedInputs(inbox?.value?.items ?? []);
+  } finally {
+    inbox?.dispose();
+  }
+}
+
+/** A submission id as the wire carries it (text) read back as the record number it names, or nothing. */
+function submissionIdOf(id: string): SubmissionId | undefined {
+  const value = Number(id);
+  return Number.isSafeInteger(value) && value > 0 ? (value as SubmissionId) : undefined;
+}
+
 async function maybeTitleChat(row: Live) {
   if (row.taskSlug || row.titleInFlight || !row.harness || !row.conversationId) return;
   const conversation = await conversationFor(row);
@@ -955,10 +973,36 @@ const rawTurns: TurnControl = {
     // Images ride in the same user message; a model that reads none gets Pi's placeholder in their place.
     const content = images.length > 0 ? [{ type: "text" as const, text }, ...images] : text;
     const requestId = randomUUID();
-    await submitSessionWork(row.taskSlug, id, async () => {
-      if (live.get(id) !== row || row.stopping || row.process === "exited") throw new DomainError("failed_precondition", "the session owner changed");
-      await conversation.submit({ type: "input", content, whenBusy: "followUp", requestId }, context);
-    }, undefined, requestId);
+    // The submission's id is the queued item's id while it waits, and its status says whether it waits or was placed at
+    // once. A deliberate skip (the check refuses) admits nothing, so the caller gets no id and behaves as before.
+    return submitSessionWork(
+      row.taskSlug,
+      id,
+      async () => {
+        if (live.get(id) !== row || row.stopping || row.process === "exited") throw new DomainError("failed_precondition", "the session owner changed");
+        const submission = await conversation.submit({ type: "input", content, whenBusy: "followUp", requestId }, context);
+        const record = await submission.status(context);
+        return { submissionId: String(submission.id), status: record.status };
+      },
+      undefined,
+      requestId,
+    );
+  },
+  async removeQueued(id, submissionId) {
+    const { row, conversation } = await harnessSession(id);
+    if (!row.harness) throw new DomainError("not_found", "unknown-session");
+    // Ids cross the wire as text and name a submission record by number here; anything else names nothing.
+    const queued = submissionIdOf(submissionId);
+    if (queued === undefined) return "not_found";
+    const answer = await row.harness.abortSubmission(queued, context, conversation.id);
+    if (answer === "aborted") return "removed";
+    if (answer === "not_found") return "not_found";
+    // The turn took it in that instant: it is a message now, so the panel's line goes and the message stays.
+    if (answer === "already_placed") return "not_queued";
+    // Settled: answered (a message, nothing to undo) or withdrawn earlier, by this call or by a stop. Only the first is
+    // still a submission the panel can name; a withdrawn one is gone from the queue and never became a message.
+    const record = await row.harness.submission(queued, context);
+    return (await record?.status(context))?.status === "done" ? "not_queued" : "not_found";
   },
   async abort(id) {
     const { conversation } = await harnessSession(id);
@@ -998,6 +1042,7 @@ const refused = async <T>(run: () => Promise<T>): Promise<T> => {
 const turns: TurnControl = {
   retry: (id, failedEntryId) => refused(() => rawTurns.retry(id, failedEntryId)),
   prompt: (id, text, images) => refused(() => rawTurns.prompt(id, text, images)),
+  removeQueued: (id, submissionId) => refused(() => rawTurns.removeQueued(id, submissionId)),
   abort: (id) => refused(() => rawTurns.abort(id)),
   setModel: (id, model) => refused(() => rawTurns.setModel(id, model)),
   setThinkingLevel: (id, level) => refused(() => rawTurns.setThinkingLevel(id, level)),
@@ -1229,7 +1274,7 @@ await serveRpc({
           return history;
         }
         const { messages, tools } = await transcriptMessages(row, conversation);
-        return { items: formatTranscript(messages, tools), controls: await sessionControls(conversation) };
+        return { items: formatTranscript(messages, tools), controls: await sessionControls(conversation), queued: await queuedNow(row, conversation) };
       },
       subscribe: eventsChanges(row.harness, conversation.id, context),
     };

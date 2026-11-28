@@ -708,7 +708,8 @@ function ChatViewBody({
             onAbort={abort}
             onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
             sendNowEnabled={sendNowEnabled}
-            queuedCount={transcript.sessionMeta.queuedMessageCount}
+            queued={transcript.queued}
+            onRemoveQueued={chat.removeQueued}
           />
         )}
       </section>

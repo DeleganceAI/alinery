@@ -100,6 +100,18 @@ export function transcriptFrame(t: VinculumTranscript | VinculumMessage[]) {
     nextItem: BigInt(reply.messages.length),
     replace: true,
     controls: reply.model === undefined ? undefined : { model: reply.model, thinking: reply.thinking ?? "", thinkingLevels: reply.thinking_levels ?? [] },
+    ...(reply.queued === undefined
+      ? {}
+      : {
+          queued: {
+            items: reply.queued.map((item) => ({
+              id: item.id,
+              mode: item.mode,
+              text: item.text,
+              images: item.images.map((image) => ({ mimeType: image.mimeType, name: image.name })),
+            })),
+          },
+        }),
   });
 }
 

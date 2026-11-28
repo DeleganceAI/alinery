@@ -7024,6 +7024,42 @@ button.chat-prompt-image:focus-visible {
   border-radius: var(--radius-sm);
   font-size: 12px;
 }
+/* Accepted input waiting for delivery. Stable text only: no orb, no motion. */
+.queued-panel {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.queued-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.queued-panel-title {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.queued-panel-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.queued-panel-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.queued-panel-names,
+.queued-panel-marker {
+  color: var(--text-muted);
+}
 /* History view: the composer keeps its shape so a finished session still reads as a chat, but
    nothing about it invites typing. */
 .chat-composer-box[data-mode="readonly"] {

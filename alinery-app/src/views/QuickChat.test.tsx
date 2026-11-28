@@ -300,6 +300,18 @@ describe("QuickChat", () => {
     expect(screen.getByRole("tab", { name: "Beta" }).getAttribute("aria-selected")).toBe("true");
   });
 
+  it("a queued send adds a panel line and no thread row", async () => {
+    fakeChat.set([thread("s-a", "/repos/one", { name: "Alpha", session: meta("s-a", { pinned: true }) })]);
+    daemon.showId("s-a", observed({ state: "busy" }));
+    mocks.chatPrompt.mockResolvedValue({ submissionId: "7", status: "queued" });
+    render(windowOf());
+    const field = await screen.findByLabelText("Send after this turn…");
+    fireEvent.change(field, { target: { value: "wait for me" } });
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+    expect(await screen.findByText("wait for me", { selector: ".queued-panel-text" })).toBeTruthy();
+    expect(document.querySelector(".quick-chat .chat-list")?.textContent).not.toContain("wait for me");
+  });
+
   it("stages a picked file and a pasted image, and does not take window drops", async () => {
     fakeChat.set([thread("s-a", "/repos/one", { name: "Alpha", session: meta("s-a", { pinned: true }) })]);
     mocks.pickAttachmentFilesDialog.mockResolvedValueOnce(["/tmp/notes.pdf"]);

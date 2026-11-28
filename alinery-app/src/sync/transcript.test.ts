@@ -10,9 +10,10 @@ import {
 } from "alinery-proto/alinery/v1/sessions_pb";
 import { describe, expect, it, vi } from "vitest";
 import type { VinculumTranscript } from "../chatTranscript";
+import { applyVinculumTranscript, type ChatTranscriptState, emptyTranscript } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
 import { daemonHarness, untilAborted } from "../test/daemonHarness";
-import { applyFrame, messageOf, watchSessionTranscript } from "./transcript";
+import { applyFrame, messageOf, queuedOf, watchSessionTranscript } from "./transcript";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 
@@ -103,6 +104,114 @@ describe("watchSessionTranscript", () => {
     ]);
     expect(got[2]?.messages.map((m) => m.id)).toEqual(["u1", "live", "a2"]);
     expect(got[2]?.model).toBe("p/m"); // controls are kept until a frame changes them
+  });
+
+  it("a queue-only change folds as an empty append at the client's own index: no replay, and the queue lands", async () => {
+    // What the daemon really emits when only the inbox changed: an empty item list, no replace, the client's own next
+    // index. The fake daemon always sends the full list with replace set, so this shape is the one a real busy submit
+    // produces and the fold must take it without re-reading anything.
+    const requests = serve(async function* (_req, _call, signal) {
+      yield frame([item("u1", "hi"), item("live", "He")], 2);
+      yield create(WatchTranscriptResponseSchema, {
+        items: [],
+        nextItem: 2n,
+        replace: false,
+        queued: { items: [{ id: "7", mode: "followUp", text: "later", images: [] }] },
+      });
+      await untilAborted(signal);
+    });
+    const { got, apply } = replies();
+    const stop = watchSessionTranscript("/repo", { taskSlug: "t", id: "s1" }, apply);
+    await until(() => got.length === 2);
+    stop();
+    // No replay: the same list as before — same rows, no restart from 0, one request — and the queue is applied.
+    expect(got[1]?.messages.map((m) => m.id)).toEqual(["u1", "live"]);
+    expect(got[1]?.queued).toEqual([{ id: "7", mode: "followUp", text: "later", images: [] }]);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("a coalesced delivery that appends the placed message and the reply whole drops the panel line, with no replay", async () => {
+    // The one shape the old delivery match could not recognise: the inbox emptied and the turn ended inside one
+    // coalesce window, so a single frame carries the placement, the reply it started and the emptied queue — and
+    // because the daemon sends the queue only when it changes, no later frame ever comes to drop a stale line.
+    let releaseDelivery = () => {};
+    const sendAnswered = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    const requests = serve(async function* (_req, _call, signal) {
+      yield frame([item("u1", "seed", { role: "user" })], 1);
+      await sendAnswered;
+      yield create(WatchTranscriptResponseSchema, {
+        items: [item("u2", "later", { role: "user" }), item("a1", "the reply")],
+        nextItem: 3n,
+        replace: false,
+        queued: { items: [] },
+      });
+      await untilAborted(signal);
+    });
+    const got: ChatTranscriptState[] = [];
+    let state = emptyTranscript();
+    const stop = watchSessionTranscript("/repo", { taskSlug: "t", id: "s1" }, (reply) => {
+      state = applyVinculumTranscript(reply, state);
+      got.push(state);
+    });
+    await until(() => got.length === 1);
+    // The prompt call answered `queued`, so the chat makes its panel line now — between the two frames, as a real send does.
+    state = {
+      ...state,
+      queued: [{ id: "7", mode: "followUp", text: "later", images: [], origin: "pending", stale: false }],
+      sessionMeta: { ...state.sessionMeta, queuedMessageCount: 1 },
+    };
+    releaseDelivery();
+    await until(() => got.length === 2);
+    stop();
+    expect(got[1]?.queued).toEqual([]);
+    expect(got[1]?.sessionMeta.queuedMessageCount).toBe(0);
+    expect(requests).toHaveLength(1); // the fold is taken in place: the delivering frame is the last one, so nothing re-reads
+  });
+
+  it("a replace-shaped delivering fold — the streaming row settles and the message places in one frame — drops the panel line", async () => {
+    // The daemon's frame covers from the streaming row's index (replace), so the assembled list changes the partial
+    // in place and appends the placement and the reply behind it: a fold the exact +1 append rule never recognised.
+    let releaseDelivery = () => {};
+    const sendAnswered = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    const requests = serve(async function* (_req, _call, signal) {
+      yield frame([item("u1", "seed", { role: "user" }), item("partial", "Work", { streaming: true })], 2);
+      await sendAnswered;
+      yield create(WatchTranscriptResponseSchema, {
+        items: [item("a1", "Working on it"), item("u2", "later", { role: "user" }), item("a2", "the reply")],
+        nextItem: 4n,
+        replace: true,
+        queued: { items: [] },
+      });
+      await untilAborted(signal);
+    });
+    const got: ChatTranscriptState[] = [];
+    let state = emptyTranscript();
+    const stop = watchSessionTranscript("/repo", { taskSlug: "t", id: "s1" }, (reply) => {
+      state = applyVinculumTranscript(reply, state);
+      got.push(state);
+    });
+    await until(() => got.length === 1);
+    state = {
+      ...state,
+      queued: [{ id: "7", mode: "followUp", text: "later", images: [], origin: "pending", stale: false }],
+      sessionMeta: { ...state.sessionMeta, queuedMessageCount: 1 },
+    };
+    releaseDelivery();
+    await until(() => got.length === 2);
+    stop();
+    expect(got[1]?.messages.map((m) => [m.role, m.content.find((part) => part.type === "text")])).toEqual([
+      ["user", { type: "text", text: "seed" }],
+      ["assistant", { type: "text", text: "Working on it" }],
+      ["user", { type: "text", text: "later" }],
+      ["assistant", { type: "text", text: "the reply" }],
+    ]);
+    expect(got[1]?.queued).toEqual([]);
+    expect(got[1]?.sessionMeta.queuedMessageCount).toBe(0);
+    expect(requests).toHaveLength(1);
   });
 
   it("after a drop it reconnects from the end of its list and keeps what it had", async () => {
@@ -230,6 +339,15 @@ describe("transcript frames", () => {
       { type: "image", mimeType: "image/png", name: "shot.png" },
       { type: "image", mimeType: "image/jpeg" },
     ]);
+  });
+
+  it("maps a carried queue and treats an absent field as unchanged, not as an empty queue", () => {
+    const carried = create(WatchTranscriptResponseSchema, {
+      queued: { items: [{ id: "7", mode: "followUp", text: "later", images: [{ name: "shot.png", mimeType: "image/png" }] }] },
+    });
+    expect(queuedOf(carried)).toEqual([{ id: "7", mode: "followUp", text: "later", images: [{ name: "shot.png", mimeType: "image/png" }] }]);
+    expect(queuedOf(create(WatchTranscriptResponseSchema, {}))).toBeUndefined();
+    expect(queuedOf(create(WatchTranscriptResponseSchema, { queued: { items: [] } }))).toEqual([]);
   });
 
   it("applyFrame appends at the end, replaces from the start index, and refuses a gap", () => {

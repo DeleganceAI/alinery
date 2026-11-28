@@ -68,7 +68,14 @@ async function start() {
   const turnCalls: string[] = [];
   const turns: TurnControl = {
     retry: async (id, failed) => void turnCalls.push(`retry ${id} ${failed}`),
-    prompt: async (id, text, images = []) => void turnCalls.push(`prompt ${id} ${text}${images.map((i) => ` +${i.mimeType}:${i.data}`).join("")}`),
+    prompt: async (id, text, images = []) => {
+      turnCalls.push(`prompt ${id} ${text}${images.map((i) => ` +${i.mimeType}:${i.data}`).join("")}`);
+      return { submissionId: "7", status: "queued" };
+    },
+    removeQueued: async (id, submissionId) => {
+      turnCalls.push(`remove ${id} ${submissionId}`);
+      return "removed";
+    },
     abort: async (id) => void turnCalls.push(`abort ${id}`),
     setModel: async (id, model) => {
       if (id === "gone") throw new DomainError("not_found", "unknown-session");

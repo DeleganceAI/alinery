@@ -5,7 +5,7 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { SessionRefSchema } from "alinery-proto/alinery/v1/entities_pb";
-import { type SessionControls as SessionControlsMessage, SessionService, type SessionStarted } from "alinery-proto/alinery/v1/sessions_pb";
+import { RemoveQueuedMessageOutcome, type SessionControls as SessionControlsMessage, SessionService, type SessionStarted } from "alinery-proto/alinery/v1/sessions_pb";
 import type { SessionControls } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
@@ -164,9 +164,34 @@ export const promptImages = (images: ImageContent[] = []) =>
   images.map((image) => ({ name: image.name ?? "", mimeType: image.mimeType, bytes: Uint8Array.from(atob(image.data), (c) => c.charCodeAt(0)) }));
 
 /** `images` go to the model with the text, in the same user message. */
-export async function promptSession(repo: string, id: string, text: string, images?: ImageContent[], model?: string): Promise<void> {
+/** What the daemon admitted: the submission's id — which is the queued line's id while it waits — and `queued` or
+ *  `placed`. Both empty means nothing was admitted (the daemon's check refused), which the views read as before. */
+export type PromptResult = { submissionId: string; status: string };
+
+export async function promptSession(repo: string, id: string, text: string, images?: ImageContent[], model?: string): Promise<PromptResult> {
   if (model) await ipc.prepareHostedInference(model);
-  await call(() => sessionApi.sessions(repo).promptSession({ meta: newMutationMeta(), sessionId: id, text, images: promptImages(images) }));
+  const reply = await call(() => sessionApi.sessions(repo).promptSession({ meta: newMutationMeta(), sessionId: id, text, images: promptImages(images) }));
+  return { submissionId: reply.submissionId, status: reply.status };
+}
+
+/**
+ * Withdraw one queued input. All three answers mean the same thing to the panel — the line is gone — and none is an
+ * error: `REMOVED`, `NOT_QUEUED` (the turn took it, so it is a message now) and `NOT_FOUND` (it was already withdrawn).
+ * Only a rejected call is surfaced, and the caller puts the line back.
+ */
+export async function removeQueuedMessage(repo: string, id: string, submissionId: string): Promise<"REMOVED" | "NOT_QUEUED" | "NOT_FOUND"> {
+  const reply = await call(() => sessionApi.sessions(repo).removeQueuedMessage({ meta: newMutationMeta(), sessionId: id, submissionId }));
+  switch (reply.outcome) {
+    case RemoveQueuedMessageOutcome.REMOVED:
+      return "REMOVED";
+    case RemoveQueuedMessageOutcome.NOT_QUEUED:
+      return "NOT_QUEUED";
+    case RemoveQueuedMessageOutcome.NOT_FOUND:
+      return "NOT_FOUND";
+    default:
+      // An outcome this client does not know is the older daemon's silence: the line is not the panel's to keep.
+      return "NOT_FOUND";
+  }
 }
 
 /** Admits a manual compaction; returns when it is admitted, not when the summary lands. */

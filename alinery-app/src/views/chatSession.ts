@@ -12,17 +12,18 @@ export function journalState(buffer: ArrayBuffer): ChatTranscriptState {
 }
 
 /**
- * Idle sends a prompt; a running turn queues a follow-up. Never route on "has this thread started":
- * Vinculum drains follow-ups only after an assistant/toolResult message, so a follow-up on an empty
- * session is accepted and never run.
+ * Idle sends a prompt command; a running turn is still classified as a follow-up so the verdict treats it as a judged
+ * send. That classification is not a thread row: a waiting input is a Queued panel line, never a follow_up entry.
+ * Never route on "has this thread started": Vinculum drains follow-ups only after an assistant/toolResult message, so
+ * a follow-up on an empty session is accepted and never run.
  */
 export function sendCommand(text: string, busy: boolean, images?: ImageContent[]) {
   return busy ? followUpCommand(text, undefined, images) : promptCommand(text, undefined, images);
 }
 
-/** The optimistic row for a send that resumed the thread: plain text, so it claims the turn. */
-export function applyPlainSend(state: ChatTranscriptState, text: string, busy: boolean, attachments?: UserRowAttachment[]): { state: ChatTranscriptState; entryId: string } {
-  return applySendPlan(state, text, { dispatch: { kind: "plain", message: text }, invokesModel: true, optimisticKind: busy ? "follow_up" : "prompt" }, attachments);
+/** The optimistic row for a send the daemon already placed. Always a prompt: a busy send is a panel line, not a follow_up row. */
+export function applyPlainSend(state: ChatTranscriptState, text: string, _busy: boolean, attachments?: UserRowAttachment[]): { state: ChatTranscriptState; entryId: string } {
+  return applySendPlan(state, text, { dispatch: { kind: "plain", message: text }, invokesModel: true, optimisticKind: "prompt" }, attachments);
 }
 
 /** Send now: abort the running turn and prompt with this text instead of queueing it. */

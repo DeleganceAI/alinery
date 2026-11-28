@@ -492,7 +492,8 @@ export function QuickChat({
                 onAbort={chat.abort}
                 onSendNow={chat.sendNowEnabled ? () => chat.sendNow() : undefined}
                 sendNowEnabled={chat.sendNowEnabled}
-                queuedCount={chat.transcript.sessionMeta.queuedMessageCount}
+                queued={chat.transcript.queued}
+                onRemoveQueued={chat.removeQueued}
               />
             )}
           </div>

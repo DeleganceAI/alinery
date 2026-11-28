@@ -19,7 +19,7 @@ import { sessionDisplayOf } from "./board";
 import { acquireScope, useEntity, useScope } from "./hooks";
 import { newMutationMeta } from "./mutation";
 import type { Replica } from "./replica";
-import { call, controlsOf, promptImages, startedOf } from "./sessions";
+import { call, controlsOf, type PromptResult, promptImages, startedOf } from "./sessions";
 import { MAX_FILE_BYTES, readBlob, upload } from "./tasks";
 
 export const chatApi = {
@@ -194,9 +194,11 @@ export async function resumeChatThread(repo: string, threadId: string): Promise<
 
 // ---- the turn controls ---------------------------------------------------------------------------------------
 
-export async function promptChatThread(repo: string, threadId: string, text: string, images?: ImageContent[], model?: string): Promise<void> {
+/** The thread's prompt answers what a session's does: the submission's id and whether it waits or was placed. */
+export async function promptChatThread(repo: string, threadId: string, text: string, images?: ImageContent[], model?: string): Promise<PromptResult> {
   if (model) await ipc.prepareHostedInference(model);
-  await call(() => chatApi.chat(repo).promptChatThread({ meta: newMutationMeta(), threadId, text, images: promptImages(images) }));
+  const reply = await call(() => chatApi.chat(repo).promptChatThread({ meta: newMutationMeta(), threadId, text, images: promptImages(images) }));
+  return { submissionId: reply.submissionId, status: reply.status };
 }
 
 /** Admits a manual compaction; returns when it is admitted, not when the summary lands. */

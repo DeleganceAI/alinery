@@ -2,7 +2,17 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useL
 import { flushSync } from "react-dom";
 import { canStage, chatThreadAttachmentDir, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
-import { applySendPlan, type ChatSendPlan, planChatSend } from "../chat/send";
+import {
+  applySendPlan,
+  type ChatSendPlan,
+  dropQueuedLine,
+  planChatSend,
+  queuedLineOf,
+  queueOptimisticLine,
+  removeQueuedAndRestore,
+  restoreAfterRejectedAbort,
+  restoreQueuedLine,
+} from "../chat/send";
 import type { McpServerRow, ProvidersDialogTab } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
 import {
@@ -11,10 +21,13 @@ import {
   applySessionControls,
   applyVinculumTranscript,
   type ChatTranscriptState,
+  consumeQueueCue,
   emptyTranscript,
   needsUiReply,
+  type QueueAbortCue,
   type SessionControls,
   settleRefusedSend,
+  withoutQueued,
 } from "../chatTranscript";
 import * as ipc from "../ipc";
 import type { SessionTerminalIo } from "../SessionTerminal";
@@ -33,6 +46,7 @@ import {
   writeChatThreadAttachmentBytes,
 } from "../sync/chat";
 import { useSessionObservation } from "../sync/sessionObservation";
+import { removeQueuedMessage } from "../sync/sessions";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
@@ -113,6 +127,7 @@ type ChatThreadApi = {
   send: (who: symbol, override?: string) => void;
   sendNow: (who: symbol) => void;
   abort: () => void;
+  removeQueued: (submissionId: string) => void;
   reconnect: () => void;
   setDraft: (value: string) => void;
   stagePaths: (paths: string[]) => void;
@@ -153,6 +168,7 @@ const NO_API: ChatThreadApi = {
   send: () => {},
   sendNow: () => {},
   abort: () => {},
+  removeQueued: () => {},
   reconnect: () => {},
   setDraft: () => {},
   stagePaths: () => {},
@@ -455,6 +471,7 @@ export type ChatThreadHandle = ChatThreadSnapshot & {
   send: (override?: string) => void;
   sendNow: () => void;
   abort: () => void;
+  removeQueued: (submissionId: string) => void;
   reconnect: () => void;
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
@@ -551,6 +568,7 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
       if (key) api.sendNow(subId.current);
     },
     abort: () => api.abort(),
+    removeQueued: (submissionId) => api.removeQueued(submissionId),
     reconnect: () => api.reconnect(),
     setProvidersDialog: (value) => api.setProvidersDialog(value),
     setToolsOpen: (value) => api.setToolsOpen(value),
@@ -629,6 +647,9 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   const transcriptRef = useRef(transcript);
   transcriptRef.current = transcript;
   const observation = useSessionObservation(repo, "", id);
+  const queueCue = useRef<QueueAbortCue>({ ended: false, withdrawn: false, settled: false });
+  const sessionEnded = thread.session.ended_at != null || thread.session.archived || observation?.lifecycle.state === "exited" || observation?.lifecycle.state === "live_exited";
+  queueCue.current.ended = sessionEnded;
   const endedRef = useRef<(() => void) | null>(null);
   // Set when a resumed /compact is abandoned because the successor exited. The stopped effect must not
   // put that connection back to offline: Reconnect is the recovery, and it only shows while failed.
@@ -660,6 +681,11 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     setTranscript(update);
   }, []);
 
+  useEffect(() => {
+    if (!sessionEnded) return;
+    updateTranscript((current) => withoutQueued(current));
+  }, [sessionEnded, updateTranscript]);
+
   // The thread object is read at the start of the run. A later list refresh must not restart the attach.
   // biome-ignore lint/correctness/useExhaustiveDependencies: epoch, repo, and id are the attach identity.
   useEffect(() => {
@@ -690,7 +716,10 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       registry.setError(message);
     };
     const stopTranscript = watchSessionTranscript(repo, { taskSlug: "", id }, (reply) => {
-      if (!cancelled) updateTranscript(() => applyVinculumTranscript(reply));
+      if (cancelled) return;
+      // The fold consumes the withdrawal cue: it covers the frames in flight at the abort and the first one after it settles.
+      const cue = consumeQueueCue(queueCue.current);
+      updateTranscript((current) => applyVinculumTranscript(reply, current, cue));
     });
     if (keepFailedExit) {
       setConnection({ state: "failed", detail: RESUMED_COMPACT_EXITED_DETAIL });
@@ -786,27 +815,41 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     if (stopped && entryIsActive(entry) && (!recordEnded || compactExitFailed.current)) endedRef.current?.();
   }, [stopped, epoch]);
 
+  /**
+   * Send one message. The daemon answers whether the input waits (`queued`) or is already a message (`placed`); only a
+   * queued admission becomes a panel line, whether or not the caller passed a routing plan. A missing plan — a claimed
+   * prompt after a start or resume, or a send that aborted the turn first — still follows that answer. The pending-turn
+   * flag follows the plan when one was given, and is set when there was none.
+   */
   async function writeSend(
     text: string,
     command: { id: string; type: string; images?: ImageContent[] },
     addRow: (current: ChatTranscriptState) => { state: ChatTranscriptState; entryId: string },
     attachments: DraftAttachment[] = [],
+    plan?: ChatSendPlan,
   ) {
     const verdict: Verdict = { text, attachments, entryId: null, refused: false };
     const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
     if (judged) entry.verdicts.set(command.id, verdict);
+    let admitted: Awaited<ReturnType<typeof promptChatThread>>;
     try {
-      await promptChatThread(repo, id, text, command.images, transcript.sessionMeta.model);
+      admitted = await promptChatThread(repo, id, text, command.images, transcript.sessionMeta.model);
     } catch (cause) {
       entry.verdicts.delete(command.id);
       throw cause;
     }
     if (verdict.refused || !alive.current) return;
-    updateTranscript((current) => {
-      const added = addRow(current);
-      verdict.entryId = added.entryId;
-      return added.state;
-    });
+    if (admitted?.status === "queued" && admitted.submissionId !== "") {
+      // The panel's line appears only now, when the id that names it exists: the id is the send's own answer.
+      const line = queuedLineOf(admitted, text, command.images ?? []);
+      updateTranscript((current) => queueOptimisticLine(current, line, plan ?? { invokesModel: true }));
+    } else {
+      updateTranscript((current) => {
+        const added = addRow(current);
+        verdict.entryId = added.entryId;
+        return added.state;
+      });
+    }
     if (entry.draft === text || (entry.draft.length > 0 && text.startsWith(entry.draft))) entry.draft = "";
     if (attachments.length > 0) {
       const sent = new Set(attachments.map((item) => item.id));
@@ -1006,7 +1049,10 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       }
       const command = dispatch.kind === "get-tools" ? getStateCommand() : dispatch.kind === "mcp-list" ? promptCommand("/mcp list") : sendCommand(wire, busy, images);
       if (dispatch.kind === "mcp-list") mcpListWait.current = true;
-      await writeSend(wire, command, (current) => applySendPlan(current, text, plan, row), carriesAttachments ? attachments : []);
+      // The daemon's answer, not the busy guess, says whether this is a message: a placed send is a prompt row even if
+      // a turn looked open when it left, and a queued one is no row at all.
+      const placed = busy ? planChatSend(text, transcript.commands, false) : plan;
+      await writeSend(wire, command, (current) => applySendPlan(current, text, placed, row), carriesAttachments ? attachments : [], plan);
       if (dispatch.kind === "get-tools") setToolsOpen(true);
     } catch (cause) {
       if (dispatch.kind === "mcp-list") mcpListWait.current = false;
@@ -1058,7 +1104,26 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     try {
       const prepared = attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments) : null;
       const row = prepared ? draftToRowAttachments(prepared.copied) : undefined;
-      await abortChatThread(repo, id).catch(() => undefined);
+      // Abort can withdraw the queue inside the coalesce window, so no frame will say it is empty. Drop the lines here.
+      // The cue is this abort's own: it is raised here and settled when the call answers, resolved or rejected.
+      // Captured before the cue is raised: a fold while the abort is in flight empties the panel, and that is the list
+      // a rejected abort must put back — read it after the call settles and the restore is a no-op exactly when needed.
+      const held = transcriptRef.current.queued;
+      queueCue.current.withdrawn = true;
+      queueCue.current.settled = false;
+      let aborted = false;
+      try {
+        await abortChatThread(repo, id);
+        aborted = true;
+      } catch {
+        // The daemon refused the abort and withdrew nothing: the lines it holds are kept, not dropped.
+      } finally {
+        queueCue.current.settled = true;
+      }
+      updateTranscript((current) => {
+        const cleared = withoutQueued(current);
+        return aborted ? cleared : restoreAfterRejectedAbort(queueCue.current, cleared, held);
+      });
       await writeSend(
         prepared?.message ?? text,
         sendNowCommand(prepared?.message ?? text, prepared?.images),
@@ -1074,8 +1139,20 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   }
 
   function abort() {
-    updateTranscript((current) => appendOptimisticAbort(current));
-    abortChatThread(repo, id).catch((cause: unknown) => registry.setError(String(cause)));
+    // The cue is this abort's own: raised here, and settled when the call answers — resolved or rejected.
+    queueCue.current.withdrawn = true;
+    queueCue.current.settled = false;
+    // The lines this clear drops are kept: an abort that rejects withdraws nothing, and the server still holds them.
+    const held = transcriptRef.current.queued;
+    updateTranscript((current) => withoutQueued(appendOptimisticAbort(current)));
+    void abortChatThread(repo, id)
+      .catch((cause: unknown) => {
+        registry.setError(String(cause));
+        updateTranscript((current) => restoreAfterRejectedAbort(queueCue.current, current, held));
+      })
+      .finally(() => {
+        queueCue.current.settled = true;
+      });
   }
 
   const activity = chatActivity(observation, transcript);
@@ -1177,6 +1254,18 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       void sendNow(who);
     },
     abort,
+    removeQueued: (submissionId) => {
+      void removeQueuedAndRestore(
+        () => {
+          const line = transcriptRef.current.queued.find((item) => item.id === submissionId);
+          if (!line) return undefined;
+          updateTranscript((current) => dropQueuedLine(current, submissionId).state);
+          return line;
+        },
+        () => removeQueuedMessage(repo, id, submissionId),
+        (line) => updateTranscript((current) => restoreQueuedLine(current, line)),
+      );
+    },
     reconnect: () => setEpoch((value) => value + 1),
     setDraft: (value) => {
       entry.draft = value;

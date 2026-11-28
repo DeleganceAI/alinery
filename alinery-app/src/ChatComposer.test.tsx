@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer, chatComposerLineCap } from "./ChatComposer";
 import type { ChatCommand } from "./chat/types";
+import type { QueuedPanelLine } from "./chatTranscript";
 
 afterEach(cleanup);
 
@@ -266,5 +267,26 @@ describe("ChatComposer", () => {
     );
     expect(html).toContain("chat-composer-box");
     expect(html).toContain("drop");
+  });
+
+  it("renders the Queued panel above the input when a line is waiting, and nothing when the queue is empty", () => {
+    const waiting: QueuedPanelLine = { id: "7", mode: "followUp", text: "later", images: [], origin: "pending", stale: false };
+    const onRemoveQueued = vi.fn();
+    const view = render(
+      <ChatComposer body="" status="running" catalog={[]} queued={[waiting]} onRemoveQueued={onRemoveQueued} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />,
+    );
+    expect(screen.getByText("later")).toBeDefined();
+    expect(screen.queryByText(/queued$/)).toBeNull();
+    const panel = view.container.querySelector(".queued-panel");
+    const field = view.container.querySelector(".chat-composer-field");
+    expect(panel && field && (panel.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Remove later" }));
+    expect(onRemoveQueued).toHaveBeenCalledExactlyOnceWith("7");
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(screen.queryByRole("listitem")).toBeNull();
+    view.rerender(<ChatComposer body="" status="running" catalog={[]} queued={[]} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />);
+    expect(screen.queryByText("Queued · 1")).toBeNull();
+    view.rerender(<ChatComposer body="" status="running" catalog={[]} queued={[waiting]} onBodyChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Hide" }).getAttribute("aria-expanded")).toBe("true");
   });
 });

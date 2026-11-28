@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { emptyTranscript } from "../chatTranscript";
-import { applySendPlan, planChatSend } from "./send";
+import { applyVinculumTranscript, emptyTranscript } from "../chatTranscript";
+import { applySendPlan, dropQueuedLine, planChatSend, queueOptimisticLine, restoreQueuedLine } from "./send";
 import type { ChatCommand } from "./types";
 
 const catalog: ChatCommand[] = [
@@ -35,9 +35,10 @@ describe("planChatSend", () => {
     expect(plan.optimisticKind).toBe("slash");
   });
 
-  it("sends catalog names as slash when idle and follow_up when busy", () => {
+  it("sends catalog names as slash when idle; a busy send no longer names a follow_up row", () => {
     expect(planChatSend("/thinking high", catalog, false).optimisticKind).toBe("slash");
-    expect(planChatSend("/thinking high", catalog, true).optimisticKind).toBe("follow_up");
+    // The Queued panel replaced the in-thread follow_up row, so a busy plan must not produce one.
+    expect(planChatSend("/thinking high", catalog, true).optimisticKind).toBe("prompt");
     expect(planChatSend("/thinking high", catalog, true).slash).toBeUndefined();
   });
 
@@ -56,13 +57,14 @@ describe("planChatSend", () => {
     expect(plan).not.toHaveProperty("pendingTurn");
   });
 
-  it("sends a plain body as prompt or follow_up", () => {
+  it("sends a plain body as a prompt; a busy send no longer names a follow_up row", () => {
     expect(planChatSend("hello", catalog, false)).toEqual({
       dispatch: { kind: "plain", message: "hello" },
       invokesModel: true,
       optimisticKind: "prompt",
     });
-    expect(planChatSend("hello", catalog, true).optimisticKind).toBe("follow_up");
+    // Same retirement as the catalog case: waiting input is a panel line, not a follow_up entry.
+    expect(planChatSend("hello", catalog, true).optimisticKind).toBe("prompt");
   });
 
   it("guesses a turn on a model send so the next submit steers, without faking Vinculum's own state", () => {
@@ -82,6 +84,46 @@ describe("planChatSend", () => {
     expect(claims("/skill:review")).toBe(true);
     expect(claims("/deploy")).toBe(true);
     expect(claims("/summarize")).toBe(true);
+  });
+
+  it("a frame carrying the id folded first, then the send reply, leaves exactly one line", () => {
+    const line = { id: "7", mode: "followUp", text: "later", images: [] };
+    const folded = applyVinculumTranscript({ messages: [], queued: [line] });
+    const afterReply = queueOptimisticLine(folded, line, { invokesModel: true });
+    expect(afterReply.queued).toEqual(folded.queued);
+    expect(afterReply.queued).toHaveLength(1);
+    expect(afterReply.sessionMeta.queuedMessageCount).toBe(1);
+    expect(afterReply.pendingTurn).toBe(true);
+    expect(afterReply.queued[0]?.origin).toBe("server");
+  });
+
+  it("a busy send adds one pending line and no thread row", () => {
+    const line = { id: "7", mode: "followUp", text: "later", images: [] };
+    const next = queueOptimisticLine(emptyTranscript(), line, { invokesModel: true });
+    expect(next.queued).toEqual([{ ...line, origin: "pending", stale: false }]);
+    expect(next.entries).toEqual([]);
+    expect(next.messages).toEqual([]);
+    expect(next.pendingTurn).toBe(true);
+    expect(next.sessionMeta.queuedMessageCount).toBe(1);
+  });
+
+  it("an idle send is still a prompt row and adds no queued line", () => {
+    const next = applySendPlan(emptyTranscript(), "hello", planChatSend("hello", catalog, false)).state;
+    expect(next.entries.map((entry) => entry.type)).toEqual(["prompt"]);
+    expect(next.queued).toEqual([]);
+  });
+
+  it("a failed remove restores the line with its previous origin and stale flag", () => {
+    const line = { id: "7", mode: "followUp", text: "later", images: [], origin: "pending" as const, stale: true };
+    const held = { ...emptyTranscript(), queued: [line], sessionMeta: { queuedMessageCount: 1 } };
+    const dropped = dropQueuedLine(held, "7");
+    expect(dropped.removed).toEqual(line);
+    expect(dropped.state.queued).toEqual([]);
+    expect(dropped.state.sessionMeta.queuedMessageCount).toBe(0);
+    const restored = restoreQueuedLine(dropped.state, line);
+    expect(restored.queued).toEqual([line]);
+    expect(restored.sessionMeta.queuedMessageCount).toBe(1);
+    expect(restoreQueuedLine(restored, line)).toBe(restored);
   });
 
   it("appends a hatch notice onto the journal", () => {

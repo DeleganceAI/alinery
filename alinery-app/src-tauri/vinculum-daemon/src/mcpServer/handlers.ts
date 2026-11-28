@@ -20,6 +20,7 @@ import { TaskService } from "alinery-proto/alinery/v1/tasks_pb";
 import { validateArtifactFilename } from "../domain/artifactFiles.ts";
 import { overridesToml, parseOverrides } from "../domain/settings.ts";
 import { git } from "../platform/git.ts";
+import { queuedInputOf, type QueuedInput } from "../runtime/transcript.ts";
 import { DaemonConnection, type Endpoint, newMeta, reason, taggedError, ToolError } from "./client.ts";
 import type { Endpoints } from "./endpoints.ts";
 import { plain } from "./plain.ts";
@@ -398,7 +399,8 @@ const PART_MAX = 4000;
 const clip = (value: string) => (value.length > PART_MAX ? `${value.slice(0, PART_MAX)}… [${value.length - PART_MAX} more characters]` : value);
 
 /** One transcript item for a model to read: its text, thinking and tool calls as strings, each clipped, and only the fields it has.
- *  A `compaction` role is the context-compaction summary, unwrapped and clipped like any other long text — not a user prompt. */
+ *  A `compaction` role is the context-compaction summary, unwrapped and clipped like any other long text — not a user prompt.
+ *  `queuedJson` is its counterpart for one input that waits. */
 export function itemJson(item: TranscriptItem): Args {
   const of = (kind: "text" | "thinking") => item.content.flatMap((p) => (p.kind.case === kind ? [p.kind.value] : [])).join("\n");
   const calls = item.content.flatMap((p) =>
@@ -417,13 +419,25 @@ export function itemJson(item: TranscriptItem): Args {
   };
 }
 
-/** A page of the agent session's conversation from the first frame of its transcript watch. */
+/** One waiting input for a model to read: its id, mode, text and image names, and the fact that it is not a message yet. */
+export function queuedJson(item: QueuedInput): Args {
+  return { id: item.id, mode: item.mode, text: clip(item.text), images: item.images.map((image) => image.name), status: "accepted_not_delivered" };
+}
+
+/**
+ * A page of the agent session's conversation from the first frame of its transcript watch. A live session's first frame
+ * also carries the inputs waiting to be delivered: they ride beside `items`, are not messages, and are not counted in
+ * `total`. The key is present exactly when that frame carried the queue — always for a live session, possibly empty — and
+ * absent for a retained read, so an older daemon's silence is not read as an empty queue.
+ */
 async function transcriptHistory(conn: DaemonConnection, slug: string, id: string, offset: number | undefined, limit: number | undefined): Promise<Reply> {
   const abort = new AbortController();
   let items: TranscriptItem[] = [];
+  let queued: QueuedInput[] | undefined;
   try {
     for await (const frame of conn.api(SessionService).watchTranscript({ session: sessionRef(slug, id), fromItem: 0n }, { signal: abort.signal })) {
       items = frame.items;
+      queued = frame.queued === undefined ? undefined : frame.queued.items.map(queuedInputOf);
       break;
     }
   } catch (e) {
@@ -437,7 +451,17 @@ async function transcriptHistory(conn: DaemonConnection, slug: string, id: strin
   const count = Math.min(limit ?? TRANSCRIPT_DEFAULT, TRANSCRIPT_MAX);
   const start = offset ?? Math.max(0, items.length - count);
   const page = items.slice(start, start + count);
-  return json({ task_slug: slug, session_id: id, mode: "transcript", items: page.map(itemJson), offset: start, total: items.length, next_offset: start + page.length, eof: start + page.length >= items.length });
+  return json({
+    task_slug: slug,
+    session_id: id,
+    mode: "transcript",
+    items: page.map(itemJson),
+    ...(queued === undefined ? {} : { queued: queued.map(queuedJson) }),
+    offset: start,
+    total: items.length,
+    next_offset: start + page.length,
+    eof: start + page.length >= items.length,
+  });
 }
 
 /** One `tools/call`. A failure the caller must read as text is a `ToolError`; anything else the RPC refused is `error: <its reason>`. */

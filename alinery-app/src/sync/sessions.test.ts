@@ -1,5 +1,5 @@
 import { Code, ConnectError, createRouterTransport, type Transport } from "@connectrpc/connect";
-import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
+import { RemoveQueuedMessageOutcome, SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
@@ -15,6 +15,7 @@ import {
   promptSession,
   readSessionHistory,
   readSessionVinculum,
+  removeQueuedMessage,
   renameSession,
   retryTurn,
   SessionConflict,
@@ -49,6 +50,7 @@ beforeEach(() => {
             "readHistory",
             "readVinculumWindow",
             "promptSession",
+            "removeQueuedMessage",
             "retryTurn",
             "abortSession",
             "setSessionModel",
@@ -168,6 +170,20 @@ describe("the turn controls and the process", () => {
   it("an image with no name of its own still travels, unnamed", async () => {
     await promptSession("/r", "s1", "look", [{ type: "image", data: "AQID", mimeType: "image/png" }]);
     expect((seen[0].req.images as { name: string }[])[0]?.name).toBe("");
+  });
+
+  it("remove answers REMOVED, NOT_QUEUED and NOT_FOUND, and a rejected call is surfaced", async () => {
+    impl.removeQueuedMessage = () => ({ outcome: RemoveQueuedMessageOutcome.REMOVED });
+    expect(await removeQueuedMessage("/r", "s1", "7")).toBe("REMOVED");
+    impl.removeQueuedMessage = () => ({ outcome: RemoveQueuedMessageOutcome.NOT_QUEUED });
+    expect(await removeQueuedMessage("/r", "s1", "7")).toBe("NOT_QUEUED");
+    impl.removeQueuedMessage = () => ({ outcome: RemoveQueuedMessageOutcome.NOT_FOUND });
+    expect(await removeQueuedMessage("/r", "s1", "7")).toBe("NOT_FOUND");
+    expect(seen[0]).toMatchObject({ repo: "/r", call: "removeQueuedMessage", req: { sessionId: "s1", submissionId: "7", meta: { mutationId: expect.any(String) } } });
+    impl.removeQueuedMessage = () => {
+      throw new ConnectError("daemon down", Code.Unavailable);
+    };
+    await expect(removeQueuedMessage("/r", "s1", "7")).rejects.toThrow("daemon down");
   });
 
   it("a model or thinking change answers with the controls in the shape the views read", async () => {

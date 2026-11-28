@@ -4,6 +4,7 @@ import { toJson } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { SessionService, type TranscriptItem, type WatchTranscriptResponse } from "alinery-proto/alinery/v1/sessions_pb";
+import type { QueuedLine } from "../chat/types";
 import type { SessionControls, VinculumMessage, VinculumTranscript } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
 import { controlsOf } from "./sessions";
@@ -48,6 +49,17 @@ export function messageOf(item: TranscriptItem): VinculumMessage {
   };
 }
 
+/** The frame's waiting inputs. The field is set only when the queue changed, so `undefined` means "as it was". */
+export function queuedOf(frame: WatchTranscriptResponse): QueuedLine[] | undefined {
+  if (!frame.queued) return undefined;
+  return frame.queued.items.map((item) => ({
+    id: item.id,
+    mode: item.mode,
+    text: item.text,
+    images: item.images.map((image) => ({ name: image.name, mimeType: image.mimeType })),
+  }));
+}
+
 /**
  * Fold one frame into the list. A frame covers [nextItem - items.length, nextItem): replace or append,
  * the client keeps what comes before. `undefined` means the frame starts past our end, so we are out of
@@ -75,6 +87,8 @@ export function watchSessionTranscript(
       try {
         const client = createClient(SessionService, daemonTransport(repo));
         let needsReplay = false;
+        // The first frame of this connection, including the first after a reconnect, is ground truth for the queue.
+        let firstOfConnection = true;
         // A nudge or a completed reply can take a streaming row's index while we're disconnected.
         const firstUnfinished = items.findIndex((item) => item.streaming || item.runningToolIds?.length);
         const fromItem = BigInt(firstUnfinished < 0 ? items.length : firstUnfinished);
@@ -87,7 +101,11 @@ export function watchSessionTranscript(
           }
           items = next;
           if (frame.controls) controls = controlsOf(frame.controls);
-          if (!ac.signal.aborted) apply({ messages: items, ...controls });
+          // Presence is the signal on later frames: a frame that carries no queue says nothing about it. The first frame does not get that courtesy.
+          const queued = queuedOf(frame);
+          const authoritative = firstOfConnection;
+          firstOfConnection = false;
+          if (!ac.signal.aborted) apply({ messages: items, ...controls, ...(queued === undefined ? {} : { queued }), ...(authoritative ? { queueAuthoritative: true } : {}) });
         }
         if (history && !needsReplay) return;
       } catch (error) {
