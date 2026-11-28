@@ -11625,3 +11625,234 @@ button.chat-path-link:focus-visible {
 .custom-endpoint-foot {
   justify-content: flex-end;
 }
+/* ---- capture inbox ---- */
+.app-shell.with-captures {
+  padding-right: 320px;
+}
+.capture-sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  /* ponytail: fixed width; add a PaneResizer when someone wants it wider. */
+  width: 320px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+.capture-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 8px 0 16px;
+}
+.capture-title {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.capture-bar .chat-icon-btn,
+.capture-meta .chat-icon-btn {
+  cursor: pointer;
+}
+.capture-box {
+  flex: 0 0 auto;
+  margin: 0 12px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--canvas);
+  transition: border-color 140ms;
+}
+.capture-box:focus-within {
+  border-color: var(--accent);
+}
+.capture-box textarea.field-input {
+  display: block;
+  width: 100%;
+  padding: 10px 12px 4px;
+  border: 0;
+  background: none;
+  resize: none;
+  outline: none;
+  font-size: calc(14px * var(--ui-scale));
+  line-height: 1.45;
+}
+.capture-hint {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+}
+.capture-hint b {
+  color: var(--text);
+  font-weight: 500;
+}
+.capture-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0 0 12px;
+  list-style: none;
+}
+.capture-row {
+  position: relative;
+  padding: 10px 16px;
+  cursor: pointer;
+  /* The app's webview (WebKit) only honours the prefixed form; without it a drag selects text. */
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+  transition: background-color 140ms;
+  animation: capture-in 180ms ease-out;
+}
+/* A hairline between entries: each capture reads as its own line. */
+[data-capture-dragging] * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+.capture-row + .capture-row {
+  border-top: 1px solid var(--border);
+}
+@keyframes capture-in {
+  from {
+    opacity: 0;
+  }
+}
+.capture-row:hover {
+  background: var(--surface-subtle);
+}
+/* Time and actions float over the row's corner, and only while it is pointed at or tabbed into:
+   at rest the list is nothing but what was captured. */
+.capture-meta {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  opacity: 0;
+  transition: opacity 140ms;
+}
+.capture-row:hover .capture-meta,
+.capture-meta:focus-within {
+  opacity: 1;
+}
+.capture-meta time {
+  margin-right: 4px;
+}
+.capture-text {
+  margin: 0;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.capture-thumbs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.capture-text + .capture-thumbs {
+  margin-top: 6px;
+}
+.capture-thumb {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  object-position: top left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.capture-empty {
+  padding: 24px 10px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.capture-ghost {
+  position: fixed;
+  z-index: 200;
+  max-width: 240px;
+  padding: 6px 10px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-dialog);
+  pointer-events: none;
+}
+[data-capture-over] {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.capture-copy {
+  position: relative;
+}
+.capture-copy svg {
+  transition:
+    opacity 160ms,
+    transform 160ms;
+}
+.capture-copy .check {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  color: var(--success);
+  opacity: 0;
+  transform: scale(0.4);
+}
+.capture-copy[data-copied] .copy {
+  opacity: 0;
+  transform: scale(0.4);
+}
+.capture-copy[data-copied] .check {
+  opacity: 1;
+  transform: none;
+}
+/* The quick capture: one field near the top of the window. No scrim, so the work underneath
+   stays readable; the dialog is still modal, which is what returns focus to where it was. */
+dialog.capture-quick {
+  width: min(520px, 92vw);
+  margin-top: 18vh;
+}
+dialog.capture-quick::backdrop {
+  background: transparent;
+}
+.capture-quick .capture-box {
+  margin: 0;
+  border: 0;
+  background: none;
+}
+.capture-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.capture-toggle:hover {
+  color: var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .capture-row {
+    animation: none;
+  }
+}

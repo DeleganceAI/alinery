@@ -2,12 +2,13 @@ import { ChevronDown, Star } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { afterPaint } from "../afterPaint";
+import { appendCaptureText, useCaptureDrop } from "../captures";
 import * as ipc from "../ipc";
 import { CollectionSearch } from "../ListToolbar";
 import { PlaybookGraph, selectorsOverlap } from "../PlaybookGraph";
 import { PlaybookLibraryLink } from "../PlaybookLibraryLink";
 import { PlaybookRingMark } from "../PlaybookRing";
-import { type PastedImage, stagePastedImages } from "../pastedImages";
+import { type PastedImage, stageImageFiles, stagePastedImages } from "../pastedImages";
 import {
   Checkbox,
   Dialog,
@@ -321,6 +322,16 @@ export function CreateTaskPage({
       updateImages([...imagesRef.current, ...added]);
     }
   };
+
+  // A capture dragged from the inbox: its text joins the description, its images the attachments.
+  const captureDrop = useCaptureDrop((capture) => {
+    if (creatingRef.current) return;
+    dirtyRef.current = true;
+    setDesc((current) => appendCaptureText(current, capture.text));
+    const { added, errors } = stageImageFiles(capture.images, imagesRef.current);
+    setPasteErrors(errors);
+    if (added.length) updateImages([...imagesRef.current, ...added]);
+  });
 
   useEffect(() => {
     const t = window.setTimeout(() => titleRef.current?.focus(), 40);
@@ -1011,7 +1022,7 @@ export function CreateTaskPage({
   return (
     <div className="createpage createpage-with-preview" onKeyDown={onKey}>
       <div className="create-body">
-        <div className="create-form-panel">
+        <div className="create-form-panel" ref={captureDrop}>
           <div className="createform createform-page">
             <h1 className="create-title">New task</h1>
             <div className="create-repository-source">

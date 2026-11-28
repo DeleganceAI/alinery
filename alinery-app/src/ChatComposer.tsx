@@ -1,5 +1,6 @@
 import { ArrowUp, CornerDownLeft, Paperclip, Square } from "lucide-react";
 import { type ClipboardEvent, type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { appendCaptureText, useCaptureDrop } from "./captures";
 import type { DraftAttachment } from "./chat/attachments";
 import { groupCommands, matchCommands, parseSlash } from "./chat/commands";
 import { formatComposerStats } from "./chat/format";
@@ -139,6 +140,14 @@ export function ChatComposer({
     onPasteFiles?.(taken);
   }
 
+  // A capture dragged from the inbox lands like a paste: its text in the draft, its images staged.
+  const captureDrop = useCaptureDrop((capture) => {
+    if (readOnly) return;
+    onBodyChange(appendCaptureText(body, capture.text));
+    if (allowAttach && capture.images.length) onPasteFiles?.(capture.images);
+    ta.current?.focus();
+  });
+
   function fill(cmd: ChatCommand) {
     const next = cmd.input ? `/${cmd.name} ` : `/${cmd.name}`;
     onBodyChange(next);
@@ -225,7 +234,7 @@ export function ChatComposer({
   const files = staged.filter((a) => a.kind === "file");
 
   return (
-    <div className="chat-composer">
+    <div className="chat-composer" ref={captureDrop}>
       {palette ? <CommandList matches={matches} active={active} onPick={fill} onHover={setActive} /> : null}
 
       {metrics.large ? (

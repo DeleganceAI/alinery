@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CAPTURE_SHORTCUT, INBOX_SHORTCUT } from "./CaptureSidebar";
 import { SyncLinks } from "./SyncLinks";
 import type { DaemonStatus } from "./types";
 
@@ -55,6 +56,8 @@ export function HotkeyBar({
   gridViewName,
   gridViewShortcut,
   onOpenRepo,
+  onCapture,
+  onInbox,
 }: {
   view: string;
   daemon: DaemonStatus;
@@ -64,6 +67,10 @@ export function HotkeyBar({
   gridViewShortcut?: string;
   /** Selects a repository, so its daemon-conflict banner can be acted on. */
   onOpenRepo?: (repo: string) => void;
+  /** Opens the capture field. On every view, so a capture is always one click away. */
+  onCapture?: () => void;
+  /** Shows or hides everything captured. */
+  onInbox?: () => void;
 }) {
   const baseHints = HINTS[view] ?? HINTS.list;
   const hints = view === "grid" && gridViewName && gridViewShortcut ? [...baseHints, [gridViewShortcut, gridViewName] satisfies Hint] : baseHints;
@@ -93,6 +100,18 @@ export function HotkeyBar({
       </div>
       {showHints && (
         <div className="keys">
+          {onCapture && (
+            <button type="button" className="keyhint capture-toggle" onClick={onCapture}>
+              <b>{CAPTURE_SHORTCUT}</b>
+              Capture
+            </button>
+          )}
+          {onInbox && (
+            <button type="button" className="keyhint capture-toggle" onClick={onInbox}>
+              <b>{INBOX_SHORTCUT}</b>
+              Inbox
+            </button>
+          )}
           {hints.map(([key, label]) =>
             key === "⌘D" && !duplicateHint ? null : (
               <span className="keyhint" key={key + label}>
