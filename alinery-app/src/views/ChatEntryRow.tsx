@@ -75,8 +75,10 @@ function CompactionRow({
 }) {
   const [open, setOpen] = useState(false);
   const label = entry.reason ? `Context compacted · ${entry.reason}` : "Context compacted";
+  // The collapsed line is the chevron, the label, and the reason. The summary is not the agent's,
+  // so the row takes no agent lane and its accessible name does not say Agent, labels on or off.
   return (
-    <Msg at={entry.at} actor={entry.actor} type="compaction" stamp={stamp} copyText={open ? copyText : undefined} showActorLabels={showActorLabels} kicker={null}>
+    <Msg at={entry.at} actor={entry.actor} type="compaction" stamp={stamp} copyText={open ? copyText : undefined} showActorLabels={showActorLabels} omitActor kicker={null}>
       <button type="button" className="chat-compaction-toggle chat-work-meta" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
         <ChevronRight size={14} aria-hidden="true" data-open={open ? "true" : "false"} />
         <span>{label}</span>
@@ -93,6 +95,7 @@ function Msg({
   kicker,
   stamp,
   showActorLabels = false,
+  omitActor = false,
   reply = false,
   narration = false,
   copyText,
@@ -104,6 +107,8 @@ function Msg({
   kicker?: ReactNode;
   stamp: ChatStampParts;
   showActorLabels?: boolean;
+  /** A row that is not someone's: no lane, no who, and no actor word in the accessible name. */
+  omitActor?: boolean;
   /** Marks agent text replies so bubble CSS can target them without touching other Msg skins. */
   reply?: boolean;
   /** Agent text the agent kept working past: read as a quiet aside, with no label. */
@@ -114,17 +119,18 @@ function Msg({
 }) {
   const lane = whoLane(actor);
   const mine = lane === "you";
-  const who = whoLabel(actor);
+  const who = omitActor ? "" : whoLabel(actor);
   const when = stampFor(at, stamp);
-  const showMeta = !narration && (Boolean(when) || showActorLabels);
+  const showWho = showActorLabels && !omitActor;
+  const showMeta = !narration && (Boolean(when) || showWho);
   return (
     <article
-      className={`chat-msg chat-msg-${lane}${mine ? " chat-msg-mine" : ""}${reply ? " chat-msg-reply" : ""}${narration ? " chat-msg-narration" : ""}`}
+      className={`chat-msg${omitActor ? "" : ` chat-msg-${lane}`}${mine && !omitActor ? " chat-msg-mine" : ""}${reply ? " chat-msg-reply" : ""}${narration ? " chat-msg-narration" : ""}`}
       aria-label={`${when} ${who} ${TYPE_LABEL[type]}`.trim()}
     >
       {showMeta ? (
         <div className="chat-msg-meta">
-          {showActorLabels ? <span className="chat-msg-who">{who}</span> : null}
+          {showWho ? <span className="chat-msg-who">{who}</span> : null}
           {when && at != null ? (
             <time className="chat-msg-time" dateTime={formatIso(at)} title={new Date(at).toLocaleString()}>
               {when}

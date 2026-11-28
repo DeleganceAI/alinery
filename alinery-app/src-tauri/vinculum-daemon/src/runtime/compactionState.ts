@@ -151,11 +151,17 @@ export function handleLiveDocTick(state: LiveDocWatch, row: WatchedSession, valu
   const running = Boolean(value?.run);
   const runId = value?.run?.inputs[0]?.toString();
   // lastRunning stays true until the finish read settles, so this tick would otherwise look like another stop.
+  // The watcher will not deliver this value again. A thrown publish restores the row and leaves the
+  // signature unset, and the stop path would then stamp stop and hide the retry note. Retry once,
+  // as that path does. A second throw is logged and the tick ends.
   if (state.finishing && !running) {
-    try {
-      publishChangedCompaction(row, state.compaction, liveValue(value), deps.publish);
-    } catch (error) {
-      console.error(`turn outcome unavailable for ${row.id}: ${error}`);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        publishChangedCompaction(row, state.compaction, liveValue(value), deps.publish);
+        return;
+      } catch (error) {
+        if (attempt === 1) console.error(`turn outcome unavailable for ${row.id}: ${error}`);
+      }
     }
     return;
   }

@@ -281,4 +281,16 @@ describe("compaction row", () => {
     view.unmount();
     scroller.remove();
   });
+
+  it.each([true, false])("does not call a compaction the agent when showActorLabels is %s", (showActorLabels) => {
+    const view = render(<ChatEntryRow entry={entry} showActorLabels={showActorLabels} />);
+    const article = view.container.querySelector("article");
+    expect(article).not.toBeNull();
+    expect(article?.getAttribute("aria-label") ?? "").not.toContain("Agent");
+    expect(article?.className ?? "").not.toContain("chat-msg-agent");
+    expect(view.container.querySelector(".chat-msg-who")).toBeNull();
+    expect(view.container.textContent).not.toContain("Agent");
+    expect(screen.getByRole("button", { name: "Context compacted · manual" })).toBeTruthy();
+    view.unmount();
+  });
 });
